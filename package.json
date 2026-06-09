@@ -1,6 +1,6 @@
 {
   "name": "@plune-ai/lex-bot",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Autonomous QA agent that explores web pages and generates UI tests (@playwright/test) on LangGraph + Claude/OpenRouter, with self-improvement via Langfuse.",
   "type": "module",
   "license": "GPL-3.0-only",
