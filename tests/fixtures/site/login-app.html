@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Login — Realistic App</title>
+  </head>
+  <body>
+    <main>
+      <h1>Sign in</h1>
+      <form id="login">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" />
+
+        <label><input id="remember" type="checkbox" /> Remember me</label>
+
+        <button type="submit">Sign In</button>
+      </form>
+      <p id="status" role="status"></p>
+      <nav>
+        <a href="/list.html">View list</a>
+        <a href="/modal.html">Open modal page</a>
+      </nav>
+    </main>
+
+    <script>
+      // Конвенційна логін-поведінка: валідація + редірект на dashboard (реалістичний мок).
+      const form = document.getElementById("login");
+      const status = document.getElementById("status");
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const email = document.getElementById("email").value;
+        const password = document.getElementById("password").value;
+        status.textContent = "";
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+          status.textContent = "Invalid email format";
+          return;
+        }
+        if (!password) {
+          status.textContent = "Password is required";
+          return;
+        }
+        localStorage.setItem("qa_session", "active");
+        document.cookie = "qa_demo=1; path=/";
+        window.location.href = "dashboard.html";
+      });
+    </script>
+  </body>
+</html>

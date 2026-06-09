@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Env / secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# Browser sessions (storageState: cookies + localStorage) — secrets!
+.auth/
+*.storageState.json
+
+# Bot run artifacts
+runs/
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+blob-report/
+.playwright-cli/
+.playwright/
+
+# Logs / temp
+*.log
+.DS_Store
+.cache/
+coverage/
+
+# IDE
+.idea/
+*.swp
+
+# Internal dev / agent context — NOT for the public repo
+CLAUDE.md
+.claude-memory/
+.claude-notes/
+
+# Local ad-hoc working files (curated examples live under examples/)
+/ATC-*.md
+/test-cases-*.md
+/observe-screenshot.png
+
+# Internal dev docs — kept local, NOT in the public repo (keep only architecture/adr/runbooks)
+docs/sprints/
+docs/tasks/
+docs/research/
+docs/prompts/
+docs/PLAN.md
+docs/traceability.md
+docs/README.md

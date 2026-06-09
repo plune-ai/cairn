@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Modal — Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Modal demo</h1>
+      <button type="button" id="open">Open dialog</button>
+
+      <div id="dialog" role="dialog" aria-label="Confirm" hidden>
+        <h2>Confirm action</h2>
+        <button type="button" id="confirm">Confirm</button>
+        <button type="button" id="cancel">Cancel</button>
+      </div>
+    </main>
+
+    <script>
+      const dialog = document.getElementById("dialog");
+      document.getElementById("open").addEventListener("click", () => dialog.removeAttribute("hidden"));
+      document.getElementById("cancel").addEventListener("click", () => dialog.setAttribute("hidden", ""));
+      document.getElementById("confirm").addEventListener("click", () => dialog.setAttribute("hidden", ""));
+    </script>
+  </body>
+</html>

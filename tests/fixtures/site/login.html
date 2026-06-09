@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Login — Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Sign in</h1>
+      <form id="login">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" />
+
+        <label><input id="remember" type="checkbox" /> Remember me</label>
+
+        <button type="submit">Sign In</button>
+      </form>
+      <p id="status" role="status"></p>
+      <nav>
+        <a href="/list.html">View list</a>
+        <a href="/modal.html">Open modal page</a>
+      </nav>
+    </main>
+
+    <script>
+      // На "Sign In" зберігаємо локальну сесію — щоб storageState мав cookies + localStorage.
+      document.getElementById("login").addEventListener("submit", (e) => {
+        e.preventDefault();
+        localStorage.setItem("qa_session", "active");
+        document.cookie = "qa_demo=1; path=/";
+        document.getElementById("status").textContent = "Signed in";
+      });
+    </script>
+  </body>
+</html>

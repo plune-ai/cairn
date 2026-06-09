@@ -1,0 +1,566 @@
+import { randomUUID } from "node:crypto";
+import { resolve, dirname, basename, join } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { makeGateway } from "../browser/index.js";
+import { makeModel } from "../llm/index.js";
+import { structuredInvoker, retryInvoke, CallBudget, cappedInvoke } from "../llm/structured.js";
+import { PromptRegistry } from "../prompts/index.js";
+import { initTelemetry } from "../telemetry/index.js";
+import { ArtifactStore } from "../artifacts/index.js";
+import { renderReportMd, locatorFor } from "../artifacts/report.js";
+import { renderTestCaseMd, parseTestCaseMd, type TestCaseDoc } from "../artifacts/testcase-md.js";
+import { automateCases } from "../codegen/index.js";
+import { deterministicScores, type Score } from "../eval/scorers.js";
+import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
+import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
+import { collectPriorRuns, unionPassedTitles, formatExperience } from "../eval/collect.js";
+import { ingestChecklist, formatChecklist, coverageScore, styleDirective } from "../checklist/index.js";
+import { loadKnowledge } from "../knowledge/index.js";
+import { validateSuite, type ValidationReport } from "../validate/index.js";
+import { SessionStore, looksLikeLoginPage } from "../session/index.js";
+import { buildExploreGraph } from "./graph.js";
+import type { AppConfig } from "../config/index.js";
+import type { StorageState } from "../browser/index.js";
+import type { PageStudy } from "../observe/index.js";
+import type { PageAnalysis } from "../analyze/index.js";
+import type { TestCase } from "../design/index.js";
+import type { GeneratedSuite } from "../codegen/index.js";
+
+export { buildExploreGraph, ExploreState } from "./graph.js";
+export type { ExploreDeps } from "./graph.js";
+
+export interface ExploreInput {
+  url: string;
+  config: AppConfig;
+  checklistText?: string;
+  /** Base directory for runs/ (default ./runs in the project — needed to resolve @playwright/test). */
+  runsBaseDir?: string;
+  /** Name of the saved session (cookies+localStorage) → .auth/<name>.storageState.json. */
+  sessionName?: string;
+  /** Direct path to a storageState file (names vary across projects) — takes priority over sessionName. */
+  sessionFile?: string;
+  /** Directory of saved sessions (default ./.auth). */
+  sessionsDir?: string;
+  /** Directory of domain knowledge (.md, URL-matched; default ./knowledge). */
+  knowledgeDir?: string;
+  /** Planning style: happy | negative | coverage | all (default all). */
+  style?: string;
+  /** Test-case language (override; otherwise cfg.testCaseLanguage / env QA_TESTCASE_LANG / "English"). */
+  language?: string;
+  /** Visible browser (debug). */
+  headed?: boolean;
+  /** Live per-node progress (CLI prints to stderr). */
+  onProgress?: (event: string) => void;
+}
+
+export interface ExploreResult {
+  runId: string;
+  runDir: string;
+  study: PageStudy;
+  analysis: PageAnalysis;
+  testCases: TestCase[];
+  suite?: GeneratedSuite;
+  validation?: ValidationReport;
+  scores: Score[];
+  pilot?: PilotVerdict;
+}
+
+/**
+ * End-to-end exploration → methodological cases → runnable @playwright/test → validation/repair (MVP, Sprint 3).
+ * Artifacts land in runsBaseDir/<runId>/; everything is traced in Langfuse.
+ */
+export async function runExploration(input: ExploreInput): Promise<ExploreResult> {
+  const cfg = input.config;
+  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
+  const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
+
+  // Progress → live (CLI) + buffered into run.log.
+  const logLines: string[] = [];
+  const onProgress = (event: string): void => {
+    logLines.push(`${new Date().toISOString()}  ${event}`);
+    input.onProgress?.(event);
+  };
+
+  // Auth: load storageState into the gateway (observe) and pass the path to the runner (validate).
+  let storageState: StorageState | undefined;
+  let sessionPath: string | undefined;
+  const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
+  if (input.sessionFile) {
+    sessionPath = resolve(input.sessionFile);
+    storageState = await sessionStore.loadFile(sessionPath);
+  } else if (input.sessionName) {
+    sessionPath = sessionStore.pathFor(input.sessionName);
+    storageState = await sessionStore.loadFile(sessionPath);
+  }
+
+  const gateway = makeGateway({
+    backend: cfg.browser.backend,
+    storageState,
+    channel: cfg.browser.channel,
+    headless: !input.headed,
+  });
+  const telemetry = initTelemetry(cfg);
+  const prompts = new PromptRegistry();
+  const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
+  const runId = randomUUID();
+  const runWriter = await artifacts.openRun(runId);
+
+  // Checklist (Sprint 4): a human narrows down WHAT to test → steers the design + measures coverage.
+  const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
+  const checklistFormatted = formatChecklist(checklistItems);
+  const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
+  const experienceText = formatExperience(
+    unionPassedTitles(
+      (
+        await collectPriorRuns(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")), input.url)
+      ).filter((r) => r.runId !== runId),
+    ),
+  );
+  const styleText = styleDirective(input.style ?? "all");
+  const languageText = input.language ?? cfg.testCaseLanguage;
+
+  const visionTier = cfg.models.vision ?? cfg.models.reasoning;
+  const graph = buildExploreGraph({
+    gateway,
+    prompts,
+    analyzeInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(visionTier, keys))), budget),
+    designInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.reasoning, keys))), budget),
+    codegenInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.bulk, keys))), budget),
+    useVision: visionTier.supportsVision,
+    checklistText: checklistFormatted,
+    knowledgeText,
+    experienceText,
+    styleText,
+    languageText,
+    runWriter,
+    validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath }),
+    maxRepair: cfg.maxRepair,
+    onProgress,
+  });
+
+  try {
+    const out = await graph.invoke(
+      { url: input.url, runId },
+      {
+        callbacks: telemetry.callbackHandler ? [telemetry.callbackHandler] : [],
+        runName: "exploration",
+        metadata: { runId, backend: cfg.browser.backend, profile: cfg.llmProfile },
+      },
+    );
+    if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
+
+    // Detect an expired session: a session was provided, but we ended up on the login page.
+    if (
+      sessionPath &&
+      looksLikeLoginPage(
+        out.analysis.pageSemantics,
+        out.study.elements.map((e) => e.name ?? ""),
+      )
+    ) {
+      onProgress(
+        "⚠ looks like a redirect to LOGIN — the session is probably expired. Re-capture it: npm run session:save",
+      );
+    }
+
+    // keep-best: final = the BEST suite/validation across all attempts (repair could not make it worse).
+    const suite = out.bestSuite ?? out.suite;
+    const validation = out.bestValidation ?? out.validation;
+    if (out.bestSuite) await runWriter.writeSuite(out.bestSuite); // restore the best code on disk
+
+    // Phase 4: study prior runs of this URL + collect the best (collect-best).
+    const runsBase = resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs"));
+    const priorRuns = (await collectPriorRuns(runsBase, out.study.url)).filter((r) => r.runId !== runId);
+    const currentPassed = (validation?.results ?? [])
+      .filter((r) => r.status === "passed")
+      .map((r) => r.test);
+    const allTimePassing = unionPassedTitles([
+      ...priorRuns,
+      { runId, url: out.study.url, greenRatio: validation?.greenRatio ?? 0, passedTests: currentPassed },
+    ]);
+    const bestPriorGreen = priorRuns[0]?.greenRatio;
+    onProgress(
+      `collect — prior runs for URL: ${priorRuns.length}` +
+        (bestPriorGreen !== undefined ? `; best so far: ${Math.round(bestPriorGreen * 100)}%` : "") +
+        `; stable cases total (all-time): ${allTimePassing.length}`,
+    );
+
+    // B1: run metrics — deterministic scorers + LLM-judge (SDK-side).
+    onProgress("score — scoring (scorers + LLM-judge)…");
+    const scores: Score[] = deterministicScores({
+      study: out.study,
+      verified: out.verified,
+      testCases: out.testCases,
+      suite,
+      validation,
+    });
+    try {
+      scores.push(
+        ...(await judgeTestCases(
+          out.testCases,
+          out.analysis.pageSemantics,
+          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          prompts,
+        )),
+      );
+    } catch {
+      // the judge is not critical for the run
+    }
+    if (checklistItems.length > 0) {
+      try {
+        const cov = await judgeChecklistCoverage(
+          checklistItems,
+          out.testCases,
+          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          prompts,
+        );
+        scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
+      } catch {
+        // fallback: token-based coverage (offline / judge unavailable)
+        scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
+      }
+    }
+    onProgress(`score — ${scores.length} metrics`);
+
+    // Best-effort: write scores to Langfuse against the trace (requires a self-hosted instance).
+    const traceId = telemetry.callbackHandler?.last_trace_id;
+    if (telemetry.enabled && telemetry.client && traceId) {
+      try {
+        for (const sc of scores) {
+          telemetry.client.score.create({
+            traceId,
+            name: sc.name,
+            value: sc.value,
+            comment: sc.comment,
+            dataType: "NUMERIC",
+          });
+        }
+      } catch {
+        // best-effort
+      }
+    }
+
+    // Pilot supervisor: a holistic verdict for the run (idea from explorbot).
+    let pilot: PilotVerdict | undefined;
+    try {
+      pilot = await pilotReview(
+        out.analysis.pageSemantics,
+        validation,
+        out.testCases,
+        cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+        prompts,
+      );
+      onProgress(`pilot — verdict: ${pilot.verdict} — ${pilot.reason}`);
+    } catch {
+      // pilot is not critical
+    }
+
+    await runWriter.writeStudy(out.study);
+    if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
+    await runWriter.writeAria(out.study.ariaYaml);
+    await runWriter.writeReport({
+      runId,
+      url: out.study.url,
+      pageSemantics: out.analysis.pageSemantics,
+      testCases: out.testCases,
+      validation,
+      scores,
+      pilot,
+      history: {
+        priorRuns: priorRuns.length,
+        bestPriorGreen: bestPriorGreen ?? null,
+        allTimePassing,
+      },
+    });
+    await runWriter.writeReportMd(
+      renderReportMd({
+        runId,
+        url: out.study.url,
+        backend: cfg.browser.backend,
+        profile: cfg.llmProfile,
+        pageSemantics: out.analysis.pageSemantics,
+        elements: out.study.elements,
+        testCases: out.testCases,
+        validation,
+        scores,
+        consoleErrors: out.study.consoleErrors,
+      }),
+    );
+    const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
+    await runWriter.writeLog(
+      [...logLines, "", `summary: green=${green} testCases=${out.testCases.length} runId=${runId}`].join("\n"),
+    );
+
+    return {
+      runId,
+      runDir: runWriter.dir,
+      study: out.study,
+      analysis: out.analysis,
+      testCases: out.testCases,
+      suite,
+      validation,
+      scores,
+      pilot,
+    };
+  } finally {
+    await gateway.close();
+    await telemetry.shutdown();
+  }
+}
+
+export interface DesignResult {
+  runId: string;
+  runDir: string;
+  study: PageStudy;
+  analysis: PageAnalysis;
+  testCases: TestCase[];
+  testCaseFiles: string[];
+  scores: Score[];
+}
+
+function suiteFromUrl(url: string): string {
+  try {
+    const seg = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "page";
+    return `${seg.replace(/[^a-z0-9]+/gi, "-").toUpperCase()}-UI`;
+  } catch {
+    return "PAGE-UI";
+  }
+}
+
+/**
+ * Design-only flow (Sprint: decoupled workflow): explore the page (observe+verify+multi-state+probe),
+ * WRITE test cases in the user's format (testcases/ATC-*.md with selectors), WITHOUT codegen/validate.
+ * Automation is a separate `automate` command.
+ */
+export async function runDesign(input: ExploreInput): Promise<DesignResult> {
+  const cfg = input.config;
+  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
+  const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
+  const logLines: string[] = [];
+  const onProgress = (event: string): void => {
+    logLines.push(`${new Date().toISOString()}  ${event}`);
+    input.onProgress?.(event);
+  };
+
+  let storageState: StorageState | undefined;
+  const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
+  if (input.sessionFile) storageState = await sessionStore.loadFile(resolve(input.sessionFile));
+  else if (input.sessionName) storageState = await sessionStore.loadFile(sessionStore.pathFor(input.sessionName));
+
+  const gateway = makeGateway({
+    backend: cfg.browser.backend,
+    storageState,
+    channel: cfg.browser.channel,
+    headless: !input.headed,
+  });
+  const telemetry = initTelemetry(cfg);
+  const prompts = new PromptRegistry();
+  const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
+  const runId = randomUUID();
+  const runWriter = await artifacts.openRun(runId);
+
+  const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
+  const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
+  const experienceText = formatExperience(
+    unionPassedTitles(
+      (
+        await collectPriorRuns(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")), input.url)
+      ).filter((r) => r.runId !== runId),
+    ),
+  );
+  const styleText = styleDirective(input.style ?? "all");
+  const languageText = input.language ?? cfg.testCaseLanguage;
+  const visionTier = cfg.models.vision ?? cfg.models.reasoning;
+
+  const graph = buildExploreGraph({
+    gateway,
+    prompts,
+    analyzeInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(visionTier, keys))), budget),
+    designInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.reasoning, keys))), budget),
+    codegenInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.bulk, keys))), budget),
+    useVision: visionTier.supportsVision,
+    checklistText: formatChecklist(checklistItems),
+    knowledgeText,
+    experienceText,
+    styleText,
+    languageText,
+    runWriter,
+    validate: () => Promise.resolve({ results: [], greenRatio: 0, flakyCount: 0 }),
+    maxRepair: 0,
+    onProgress,
+    codeless: true,
+  });
+
+  try {
+    const out = await graph.invoke(
+      { url: input.url, runId },
+      {
+        callbacks: telemetry.callbackHandler ? [telemetry.callbackHandler] : [],
+        runName: "design",
+        metadata: { runId, backend: cfg.browser.backend, profile: cfg.llmProfile, mode: "design" },
+      },
+    );
+    if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
+
+    if (
+      (input.sessionName || input.sessionFile) &&
+      looksLikeLoginPage(
+        out.analysis.pageSemantics,
+        out.study.elements.map((e) => e.name ?? ""),
+      )
+    ) {
+      onProgress("⚠ looks like a redirect to LOGIN — the session is expired. Re-capture it: npm run session:save");
+    }
+
+    const suite = suiteFromUrl(out.study.url);
+    const verifiedByRef = new Map(out.verified.map((v) => [v.ref, v]));
+    let autoN = 0;
+    let manualN = 0;
+    const docs = out.testCases.map((tc) => {
+      const manual = tc.execution === "manual";
+      const n = manual ? (manualN += 1) : (autoN += 1);
+      const id = `${manual ? "MTC" : "ATC"}-${suite}-${String(n).padStart(3, "0")}`;
+      const automationPath = manual
+        ? "— (manual, not automated)"
+        : `tests/ui/${suite.toLowerCase()}/${id.toLowerCase()}.spec.ts`;
+      const status = manual ? "📋 Manual" : "❌ Not implemented";
+      const selectors = tc.elementRefs
+        .map((r) => verifiedByRef.get(r))
+        .filter((v): v is NonNullable<typeof v> => Boolean(v))
+        .map((v) => ({ label: v.name ?? v.role, locator: locatorFor(v) }));
+      const traceability = checklistItems.length > 0 ? [{ source: "Checklist", reference: "provided plan" }] : [];
+      const doc: TestCaseDoc = { id, suite, status, automationPath, selectors, traceability };
+      return { id, md: renderTestCaseMd(tc, doc) };
+    });
+    const testCaseFiles = await runWriter.writeTestCases(docs);
+    onProgress(
+      `design — wrote ${testCaseFiles.length} cases: ${autoN} auto/ATC, ${manualN} manual/MTC (${suite}) → testcases/`,
+    );
+
+    const scores: Score[] = deterministicScores({
+      study: out.study,
+      verified: out.verified,
+      testCases: out.testCases,
+    });
+    try {
+      scores.push(
+        ...(await judgeTestCases(
+          out.testCases,
+          out.analysis.pageSemantics,
+          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          prompts,
+        )),
+      );
+    } catch {
+      // judge optional
+    }
+    if (checklistItems.length > 0) {
+      try {
+        const cov = await judgeChecklistCoverage(
+          checklistItems,
+          out.testCases,
+          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          prompts,
+        );
+        scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
+      } catch {
+        scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
+      }
+    }
+
+    await runWriter.writeStudy(out.study);
+    if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
+    await runWriter.writeAria(out.study.ariaYaml);
+    await runWriter.writeReport({
+      runId,
+      url: out.study.url,
+      mode: "design",
+      suite,
+      pageSemantics: out.analysis.pageSemantics,
+      testCases: out.testCases,
+      testCaseFiles,
+      scores,
+    });
+    await runWriter.writeLog(
+      [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),
+    );
+
+    return {
+      runId,
+      runDir: runWriter.dir,
+      study: out.study,
+      analysis: out.analysis,
+      testCases: out.testCases,
+      testCaseFiles,
+      scores,
+    };
+  } finally {
+    await gateway.close();
+    await telemetry.shutdown();
+  }
+}
+
+export interface AutomateResult {
+  runDir: string;
+  specFiles: string[];
+  validation?: ValidationReport;
+}
+
+/**
+ * `automate` command: from ready cases (runDir/testcases/*.md) → @playwright/test code in runDir/tests/.
+ * The second half of the decoupled flow (design → automate). Optionally validates (requires a session).
+ */
+export async function runAutomate(input: {
+  runDir: string;
+  config: AppConfig;
+  sessionName?: string;
+  sessionFile?: string;
+  sessionsDir?: string;
+  validate?: boolean;
+  onProgress?: (event: string) => void;
+}): Promise<AutomateResult> {
+  const cfg = input.config;
+  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
+  const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
+  const onProgress = input.onProgress ?? ((): void => undefined);
+  const runDir = resolve(input.runDir);
+
+  const rep = JSON.parse(await readFile(join(runDir, "report.json"), "utf8")) as {
+    url?: string;
+    pageSemantics?: string;
+  };
+  const baseUrl = rep.url ?? "";
+  const pageSemantics = rep.pageSemantics ?? "";
+
+  const tcDir = join(runDir, "testcases");
+  const mdFiles = (await readdir(tcDir)).filter((f) => f.endsWith(".md"));
+  const allCases: ReturnType<typeof parseTestCaseMd>[] = [];
+  for (const f of mdFiles) allCases.push(parseTestCaseMd(await readFile(join(tcDir, f), "utf8")));
+  // Only auto/ATC — manual/MTC cases are NOT automated (they are manual).
+  const cases = allCases.filter((c) => c.execution !== "manual" && !c.id.startsWith("MTC"));
+  const skipped = allCases.length - cases.length;
+  onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${tcDir}`);
+
+  const suite = await automateCases(
+    cases,
+    { baseUrl, pageSemantics },
+    { invoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.bulk, keys))), budget), prompts: new PromptRegistry() },
+  );
+
+  const artifacts = new ArtifactStore(dirname(runDir));
+  const runWriter = await artifacts.openRun(basename(runDir));
+  const specFiles = await runWriter.writeSuite(suite);
+  onProgress(`automate — generated ${specFiles.length} spec files → tests/`);
+
+  let validation: ValidationReport | undefined;
+  if (input.validate) {
+    let sessionPath: string | undefined;
+    if (input.sessionFile) sessionPath = resolve(input.sessionFile);
+    else if (input.sessionName) {
+      sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
+    }
+    validation = await validateSuite(runWriter.dir, { storageStatePath: sessionPath });
+    onProgress(`automate — validation: ${Math.round(validation.greenRatio * 100)}% green`);
+  }
+
+  return { runDir: runWriter.dir, specFiles, validation };
+}

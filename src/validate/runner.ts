@@ -1,0 +1,98 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { createRequire } from "node:module";
+import { writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+
+const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+/** Run via `node <playwright>/cli.js test` — cross-platform, without npx/.cmd. */
+const PW_CLI = join(dirname(require.resolve("playwright/package.json")), "cli.js");
+/** Absolute path to @playwright/test — so the config resolves it from any runDir folder. */
+const PW_TEST = require.resolve("@playwright/test");
+
+export type TestStatus = "passed" | "failed" | "timedOut" | "skipped" | "interrupted";
+export interface RawTestResult {
+  title: string;
+  status: TestStatus;
+}
+
+function configContent(runDir: string, storageStatePath?: string): string {
+  const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
+  const use = storageStatePath
+    ? `{ headless: true, storageState: ${JSON.stringify(storageStatePath)}, ${launchOpts} }`
+    : `{ headless: true, ${launchOpts} }`;
+  return `const { defineConfig } = require(${JSON.stringify(PW_TEST)});
+module.exports = defineConfig({
+  testDir: ${JSON.stringify(join(runDir, "tests"))},
+  fullyParallel: true,
+  retries: 0,
+  reporter: 'json',
+  use: ${use},
+});
+`;
+}
+
+export interface RunSpecsOptions {
+  /** storageState file for authenticated runs (use.storageState). */
+  storageStatePath?: string;
+}
+
+interface PwSpec {
+  title: string;
+  tests?: { results?: { status?: string }[] }[];
+}
+interface PwSuite {
+  specs?: PwSpec[];
+  suites?: PwSuite[];
+}
+interface PwJson {
+  suites?: PwSuite[];
+}
+
+function extract(json: PwJson): RawTestResult[] {
+  const out: RawTestResult[] = [];
+  const walk = (s: PwSuite): void => {
+    for (const spec of s.specs ?? []) {
+      const status = (spec.tests?.[0]?.results?.[0]?.status ?? "failed") as TestStatus;
+      out.push({ title: spec.title, status });
+    }
+    for (const child of s.suites ?? []) walk(child);
+  };
+  for (const s of json.suites ?? []) walk(s);
+  return out;
+}
+
+/**
+ * Run the generated suite (runDir/tests) through the playwright test runner and return
+ * a per-test result. The JSON reporter writes to stdout; a non-zero exit code (there are failures) is not an error.
+ */
+export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Promise<RawTestResult[]> {
+  const absRunDir = resolve(runDir); // testDir in the config must be absolute
+  const configPath = join(absRunDir, "playwright.config.cjs");
+  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath), "utf8");
+
+  // Do not inherit the parent runner's NODE_OPTIONS (vitest/tsx loader) — otherwise the child
+  // playwright process tries to apply a foreign loader and crashes.
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, FORCE_COLOR: "0" };
+  delete childEnv.NODE_OPTIONS;
+
+  let stdout = "";
+  try {
+    const r = await execFileAsync(process.execPath, [PW_CLI, "test", `--config=${configPath}`], {
+      maxBuffer: 64 * 1024 * 1024,
+      env: childEnv,
+    });
+    stdout = r.stdout;
+  } catch (e) {
+    stdout = (e as { stdout?: string }).stdout ?? "";
+  }
+
+  const start = stdout.indexOf("{");
+  if (start < 0) return [];
+  try {
+    return extract(JSON.parse(stdout.slice(start)) as PwJson);
+  } catch {
+    return [];
+  }
+}
