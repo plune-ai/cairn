@@ -89,19 +89,33 @@ jobs:
           scope: "@plune-ai"
       - name: Publish to GitHub Packages
         run: |
-          npm pkg set publishConfig.registry=https://npm.pkg.github.com
-          npm publish --tag ${{ steps.dist.outputs.tag }}
-          npm pkg delete publishConfig.registry
+          VER="${{ steps.meta.outputs.version }}"
+          if npm view "@plune-ai/lex-bot@$VER" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "@plune-ai/lex-bot@$VER already in GitHub Packages — skipping (idempotent)."
+          else
+            npm pkg set publishConfig.registry=https://npm.pkg.github.com
+            npm publish --tag ${{ steps.dist.outputs.tag }}
+            npm pkg delete publishConfig.registry
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
 
       # --- Фаза 2: npm registry (з provenance) ---
+      # scope MUST be set here too: інакше @plune-ai:registry із Фази 1 (.npmrc) лишається
+      # вказувати на GitHub Packages, і `npm publish` scoped-пакета піде НЕ в npmjs.
       - name: Setup Node for npm
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+          scope: "@plune-ai"
       - name: Publish to npm
-        run: npm publish --provenance --tag ${{ steps.dist.outputs.tag }}
+        run: |
+          VER="${{ steps.meta.outputs.version }}"
+          if npm view "@plune-ai/lex-bot@$VER" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "@plune-ai/lex-bot@$VER already on npm — skipping (idempotent)."
+          else
+            npm publish --provenance --tag ${{ steps.dist.outputs.tag }}
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
