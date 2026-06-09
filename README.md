@@ -64,13 +64,38 @@ lex-bot explore --url https://app.example.com/page --session myapp --checklist p
 | `LLM_PROFILE` | `anthropic` \| `openrouter` \| `mixed` |
 | `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | provider keys (per profile) |
 | `QA_TESTCASE_LANG` | test-case language (default `English`; e.g. `Ukrainian`, `uk`) |
-| `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | self-hosted Langfuse |
+| `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse — **cloud or self-hosted** (optional; see [below](#optional-langfuse)) |
 | `BROWSER_BACKEND` | `lib` (in-process Playwright) \| `cli` |
 | `BROWSER_CHANNEL` | `chrome` to use real Chrome (helps with OAuth) |
 | `MAX_REPAIR` | repair attempts (default 2) |
 
 - **Domain knowledge:** put `*.md` files in `./knowledge/` with a `url:` front-matter to inject credentials/validation rules into design.
 - **Prompt overrides:** drop `./prompts/<name>.md` to override any built-in prompt without rebuilding.
+
+## Optional: Langfuse
+
+Langfuse is **entirely optional** — leave the `LANGFUSE_*` variables unset and the bot runs fully offline.
+Everything core still works: `observe` / `design` / `automate` / `explore`, locator grounding, the LLM judge,
+deterministic scorers, self-repair, and results-level learning (best cases are read from local
+`runs/<id>/report.json`). Prompts fall back to the built-in defaults — override any of them with `./prompts/<name>.md`.
+
+Set the three `LANGFUSE_*` variables to **additionally** get: traces in the Langfuse UI, scores/datasets
+recorded centrally, and versioned prompts (with production labels & A/B prompt experiments via `lex-bot experiment`).
+
+**Cloud or self-hosted — same setup.** Langfuse Cloud and a self-hosted instance are configured identically:
+you only pass the host URL and the API keys, nothing else changes.
+
+```bash
+# Pick ONE base URL:
+LANGFUSE_BASE_URL=https://cloud.langfuse.com       # Langfuse Cloud (EU)
+# LANGFUSE_BASE_URL=https://us.cloud.langfuse.com  # Langfuse Cloud (US)
+# LANGFUSE_BASE_URL=https://langfuse.your-host.tld # self-hosted
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+```
+
+> Enablement is all-or-nothing: Langfuse turns on only when **all three** variables are set; otherwise
+> telemetry is a no-op and the bot behaves exactly as offline.
 
 ## Library API
 
