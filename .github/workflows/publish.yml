@@ -1,0 +1,107 @@
+name: Publish to npm and GitHub Packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег для публікації (напр. v0.2.0). Має збігатися з version у package.json."
+        required: true
+
+permissions:
+  contents: read      # лише читаємо код — нічого не коммітимо назад у репо
+  id-token: write     # npm provenance (OIDC-підпис)
+  packages: write     # публікація в GitHub Packages
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.target_commitish || github.ref }}
+
+      - name: Resolve release tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      # --- Guard (fail-fast): тег має збігатися з version у package.json ---
+      - name: Verify package.json version matches tag
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          WANT="${{ steps.meta.outputs.version }}"
+          if [ "$PKG" != "$WANT" ]; then
+            echo "::error::package.json version ($PKG) != release tag ($WANT). Run 'npm version' before tagging."
+            exit 1
+          fi
+          echo "Version OK: $PKG"
+
+      # --- Перевірки (дзеркало ci.yml) ---
+      - name: Install Playwright Chromium (for integration tests)
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        run: npm run build
+      - name: Lint
+        run: npm run lint
+      - name: Test (coverage gate)
+        run: npm run test:coverage
+
+      # --- Визначення dist-tag (alpha/beta/rc/latest) — порт логіки qa-skills ---
+      - name: Determine npm dist-tag
+        id: dist
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          if   echo "$TAG" | grep -qE "alpha|-alpha|\.a\."; then echo "tag=alpha" >> "$GITHUB_OUTPUT"
+          elif echo "$TAG" | grep -qE "beta|-beta|\.b\.";  then echo "tag=beta"  >> "$GITHUB_OUTPUT"
+          elif echo "$TAG" | grep -qE "rc|-rc|\.rc\.";     then echo "tag=rc"    >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.release.prerelease }}" = "true" ]; then echo "tag=beta" >> "$GITHUB_OUTPUT"
+          else echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --- Фаза 1: GitHub Packages (без provenance; ім'я @plune-ai/lex-bot НЕ змінюється) ---
+      - name: Setup Node for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@plune-ai"
+      - name: Publish to GitHub Packages
+        run: |
+          npm pkg set publishConfig.registry=https://npm.pkg.github.com
+          npm publish --tag ${{ steps.dist.outputs.tag }}
+          npm pkg delete publishConfig.registry
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+
+      # --- Фаза 2: npm registry (з provenance) ---
+      - name: Setup Node for npm
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish to npm
+        run: npm publish --provenance --tag ${{ steps.dist.outputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
