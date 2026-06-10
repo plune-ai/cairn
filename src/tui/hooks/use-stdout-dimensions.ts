@@ -7,10 +7,11 @@ export function useStdoutDimensions(): [number, number] {
   const [size, setSize] = useState<[number, number]>([stdout.columns ?? 80, stdout.rows ?? 24]);
 
   useEffect(() => {
+    if (typeof stdout?.on !== "function") return; // headless/test stdout has no resize events
     const onResize = (): void => setSize([stdout.columns ?? 80, stdout.rows ?? 24]);
     stdout.on("resize", onResize);
     return () => {
-      stdout.off("resize", onResize);
+      stdout.off?.("resize", onResize);
     };
   }, [stdout]);
 

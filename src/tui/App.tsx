@@ -44,7 +44,8 @@ export function App() {
       <ErrorBoundary>
         <Box flexDirection="column" padding={1}>
           {renderScreen(screen)}
-          <Help canGoBack={backable} />
+          {/* The artifact viewer has its own context hint; the generic one would contradict it. */}
+          {screen.name !== "runDetail" ? <Help canGoBack={backable} /> : null}
         </Box>
       </ErrorBoundary>
     </RouterProvider>
