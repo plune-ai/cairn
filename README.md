@@ -47,6 +47,22 @@ lex-bot automate --run runs/<id> --validate --session myapp
 lex-bot explore --url https://app.example.com/page --session myapp --checklist plan.md
 ```
 
+## Interactive TUI
+
+Run `lex-bot` with **no arguments** in a terminal to open the interactive TUI (built with Ink):
+
+```bash
+lex-bot          # launches the terminal UI
+```
+
+Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style) via a
+guided form, watch a **live dashboard** of the graph nodes as the run progresses, read the result summary
+(scores, green %, Pilot verdict, test cases), and **browse past runs** in `./runs` — opening any run to
+read its test cases, report and logs.
+
+The commands below stay available for scripting/CI; in a non-interactive (piped/CI) shell, `lex-bot` with
+no arguments prints help instead of starting the UI.
+
 ## Commands
 
 | Command | Purpose |

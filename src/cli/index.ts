@@ -300,7 +300,18 @@ program
     },
   );
 
-program.parseAsync(process.argv).catch((e: unknown) => {
-  process.stderr.write(`${(e as Error).message}\n`);
-  process.exitCode = 1;
-});
+const cliArgs = process.argv.slice(2);
+if (cliArgs.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
+  // No command in an interactive terminal → launch the TUI (lazy: keeps React/Ink
+  // out of every other code path, incl. library embedders).
+  const { mountTui } = await import("../tui/index.js");
+  await mountTui();
+} else if (cliArgs.length === 0) {
+  // No command but non-TTY (pipe/CI) → print usage instead of crashing Ink raw-mode.
+  program.outputHelp();
+} else {
+  await program.parseAsync(process.argv).catch((e: unknown) => {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exitCode = 1;
+  });
+}
