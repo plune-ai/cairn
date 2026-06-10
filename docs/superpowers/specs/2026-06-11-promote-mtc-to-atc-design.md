@@ -56,8 +56,9 @@ Steps:
 1. Resolve `testcases/<caseId>.md`; require `caseId` to start with `MTC` (else: not a manual case → error).
 2. Parse suite from `MTC-<SUITE>-NNN`; scan `testcases/` for existing `ATC-<SUITE>-*`; `newNum = max + 1`
    (zero-padded to 3). `newId = ATC-<SUITE>-<newNum>`.
-3. If the parsed `## Selectors` is empty → look up the case's `elementRefs` in `report.json`
-   (`testCases[].elementRefs` by id) and call `collectSelectors` (below).
+3. If the parsed `## Selectors` is empty → recover the case's `elementRefs` from `report.json` by matching the
+   case **title** (the `.md` doesn't store elementRefs, and its id `MTC-…` differs from report's `tc-…` id), then
+   call `collectSelectors` (below).
 4. Rewrite frontmatter: `id: <newId>`, `execution: auto`, `status: ❌ Not implemented`,
    `automation: tests/ui/<suite-lower>/<newId-lower>.spec.ts`. Append/extend `## Traceability` with
    `| Promoted from | <oldId> |`.
