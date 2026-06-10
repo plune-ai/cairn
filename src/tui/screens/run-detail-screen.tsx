@@ -35,7 +35,7 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
   let body: ReactNode;
   if (tab === "cases") {
     body = current ? (
-      <ScrollableText text={current.text} height={viewHeight} />
+      <ScrollableText key={caseIdx} text={current.text} height={viewHeight} />
     ) : (
       <Text dimColor>No test cases in this run.</Text>
     );
@@ -47,8 +47,8 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
 
   const hint =
     tab === "cases" && arts.cases.length > 1
-      ? `1/2/3 or ←→ switch tab · ↑↓ scroll · n/p case · esc back`
-      : `1/2/3 or ←→ switch tab · ↑↓ scroll · esc back`;
+      ? `↑↓ scroll · n/p next·prev case · 1/2/3 or ←→ tab · esc back`
+      : `↑↓ scroll · 1/2/3 or ←→ tab · esc back`;
 
   return (
     <Box flexDirection="column">
@@ -69,8 +69,14 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
 
       <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingX={1} marginTop={1}>
         {tab === "cases" && current ? (
-          <Text dimColor>
-            case {caseIdx + 1}/{arts.cases.length} · {current.name}
+          <Text>
+            <Text color="cyan">
+              case {caseIdx + 1}/{arts.cases.length}
+            </Text>
+            <Text dimColor> · {current.name}</Text>
+            {arts.cases.length > 1 ? (
+              <Text color="yellow">  ·  press n/p for next/prev</Text>
+            ) : null}
           </Text>
         ) : null}
         {body}
