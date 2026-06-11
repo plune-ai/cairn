@@ -16,6 +16,7 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
   const [tab, setTab] = useState<Tab>("cases");
   const [caseIdx, setCaseIdx] = useState(0);
   const [note, setNote] = useState<string>("");
+  const [promoted, setPromoted] = useState(false);
 
   // Derive current case here (before useInput) so the key handler can reference it.
   const current = arts.cases[caseIdx];
@@ -30,10 +31,13 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
       setCaseIdx((i) => Math.min(i + 1, Math.max(0, arts.cases.length - 1)));
     } else if (tab === "cases" && input === "p") {
       setCaseIdx((i) => Math.max(i - 1, 0));
-    } else if (tab === "cases" && input === "a" && current?.name.startsWith("MTC")) {
+    } else if (tab === "cases" && input === "a" && !promoted && current?.name.startsWith("MTC")) {
       const id = current.name.replace(/\.md$/, "");
       void promoteCase(runDir, id, {})
-        .then((r) => setNote(`Promoted ${r.oldId} → ${r.newId}${r.warning ? ` (⚠ ${r.warning})` : ""}`))
+        .then((r) => {
+          setPromoted(true);
+          setNote(`Promoted ${r.oldId} → ${r.newId}${r.warning ? ` (⚠ ${r.warning})` : ""}`);
+        })
         .catch((e: unknown) => setNote(`Promote failed: ${e instanceof Error ? e.message : String(e)}`));
     }
   });
@@ -54,7 +58,7 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
     body = <ScrollableText text={arts.log} height={viewHeight} />;
   }
 
-  const isMtc = tab === "cases" && current?.name.startsWith("MTC") === true;
+  const isMtc = tab === "cases" && (current?.name.startsWith("MTC") ?? false);
   const hint =
     tab === "cases" && arts.cases.length > 1
       ? `↑↓ scroll · n/p next·prev case${isMtc ? " · a promote→ATC" : ""} · 1/2/3 or ←→ tab · esc back`

@@ -28,12 +28,23 @@ import { RunDetailScreen } from "../../../src/tui/screens/run-detail-screen.js";
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 describe("RunDetailScreen promote", () => {
-  it("pressing 'a' on an MTC case calls promoteCase", async () => {
-    const { stdin, unmount } = render(<RunDetailScreen runDir="runs/x" />);
+  it("pressing 'a' on an MTC case calls promoteCase and shows success note", async () => {
+    const { lastFrame, stdin, unmount } = render(<RunDetailScreen runDir="runs/x" />);
     await delay(30);
     stdin.write("a");
     await delay(40);
     expect(promoteCase).toHaveBeenCalledWith("runs/x", "MTC-DEMO-001", {});
+    expect(lastFrame() ?? "").toContain("Promoted MTC-DEMO-001 → ATC-DEMO-003");
+    unmount();
+  });
+
+  it("shows a failure note when promote rejects", async () => {
+    promoteCase.mockRejectedValueOnce(new Error("disk error"));
+    const { lastFrame, stdin, unmount } = render(<RunDetailScreen runDir="runs/x" />);
+    await delay(30);
+    stdin.write("a");
+    await delay(40);
+    expect(lastFrame() ?? "").toContain("Promote failed: disk error");
     unmount();
   });
 });
