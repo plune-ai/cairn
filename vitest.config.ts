@@ -1,19 +1,19 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  // .tsx (Ink TUI) трансформуються вбудованим oxc-трансформером vitest 4 (JSX automatic).
+  // .tsx (Ink TUI) are transformed by the built-in oxc transformer in vitest 4 (JSX automatic).
   test: {
     globals: true,
     environment: "node",
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
-    // Інтеграційні тести піднімають реальний Chromium — потрібні щедріші таймаути.
+    // Integration tests spin up real Chromium — generous timeouts are needed.
     testTimeout: 30000,
     hookTimeout: 30000,
-    // Власні тести бота. Без живих LLM-викликів у CI — мок/replay.
+    // The bot's own tests. No live LLM calls in CI — mock/replay.
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "text"],
-      // Поріг — на ПУРЕ-ЛОГІЦІ (юніт-покритій). Браузер/агент/cli — інтеграційні, поза гейтом.
+      // Threshold — on PURE LOGIC (unit-covered). Browser/agent/cli — integration, outside the gate.
       include: [
         "src/eval/**",
         "src/checklist/**",

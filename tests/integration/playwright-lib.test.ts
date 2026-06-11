@@ -29,7 +29,7 @@ describe("playwright-lib backend (integration, real Chromium)", () => {
     const els = parseAriaSnapshot(obs.ariaSnapshot);
     const email = els.find((e) => e.role === "textbox" && e.name === "Email");
     const signIn = els.find((e) => e.role === "button" && e.name === "Sign In");
-    if (!email || !signIn) throw new Error("Не знайдено email/signIn у снапшоті");
+    if (!email || !signIn) throw new Error("email/signIn not found in the snapshot");
 
     await backend.act({ kind: "fill", ref: email.ref, value: "a@b.com" });
     const clicked = await backend.act({ kind: "click", ref: signIn.ref });

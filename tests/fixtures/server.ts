@@ -17,7 +17,7 @@ export interface FixtureServer {
   close: () => Promise<void>;
 }
 
-/** Піднімає статичний http-сервер для fixture-сайту на випадковому порту (реальний localhost-origin). */
+/** Starts a static HTTP server for the fixture site on a random port (real localhost origin). */
 export async function startFixtureServer(): Promise<FixtureServer> {
   const server = createServer((req, res) => {
     void (async () => {

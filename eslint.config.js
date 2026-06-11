@@ -5,7 +5,7 @@ export default tseslint.config(
   { ignores: ["dist/**", "node_modules/**", "coverage/**", "runs/**", ".auth/**", ".playwright-cli/**"] },
   ...tseslint.configs.recommended,
   {
-    // Правило межі (ADR-0007): бекенди браузера — ТІЛЬКИ через browser/gateway.ts.
+    // Boundary rule (ADR-0007): browser backends — ONLY through browser/gateway.ts.
     rules: {
       "no-restricted-imports": [
         "error",
@@ -14,7 +14,7 @@ export default tseslint.config(
             {
               group: ["**/browser/backends/*"],
               message:
-                "Бекенди браузера імпортуй лише через src/browser/gateway.ts (ADR-0007).",
+                "Import browser backends only through src/browser/gateway.ts (ADR-0007).",
             },
           ],
         },
@@ -22,7 +22,7 @@ export default tseslint.config(
     },
   },
   {
-    // Виняток: gateway/backends — самі; тести й спайк-скрипти — тестують бекенди в ізоляції.
+    // Exception: gateway/backends themselves; tests and spike scripts — test backends in isolation.
     files: ["src/browser/**", "tests/**", "scripts/**"],
     rules: { "no-restricted-imports": "off" },
   },

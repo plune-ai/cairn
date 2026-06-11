@@ -1,7 +1,7 @@
 /**
- * Spike S5 — Langfuse v5 (OTel) + LangGraph трейсинг (ЖИВИЙ; потрібні LANGFUSE_* + ключ LLM).
- * Доводить: CallbackHandler вкладає виклики 2 нод LangGraph в ОДИН trace на self-hosted Langfuse.
- *   Запуск: npm run spike:s5-langfuse
+ * Spike S5 — Langfuse v5 (OTel) + LangGraph tracing (LIVE; requires LANGFUSE_* + an LLM key).
+ * Proves: CallbackHandler nests the calls of 2 LangGraph nodes into ONE trace on self-hosted Langfuse.
+ *   Run: npm run spike:s5-langfuse
  */
 import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
 import { HumanMessage } from "@langchain/core/messages";
@@ -11,7 +11,7 @@ import { makeModel } from "../src/llm/index.js";
 
 const c = cfg();
 if (!c.langfuse.enabled) {
-  console.error("Langfuse вимкнено. Заповни LANGFUSE_BASE_URL/PUBLIC_KEY/SECRET_KEY (self-hosted) у .env.");
+  console.error("Langfuse is disabled. Fill in LANGFUSE_BASE_URL/PUBLIC_KEY/SECRET_KEY (self-hosted) in .env.");
   process.exit(1);
 }
 
@@ -26,10 +26,10 @@ const S = Annotation.Root({
 
 const graph = new StateGraph(S)
   .addNode("nodeA", async (s) => ({
-    a: String((await model.invoke([new HumanMessage(`Одне слово про ${s.topic}`)])).content),
+    a: String((await model.invoke([new HumanMessage(`One word about ${s.topic}`)])).content),
   }))
   .addNode("nodeB", async (s) => ({
-    b: String((await model.invoke([new HumanMessage(`Ще одне слово про ${s.topic}`)])).content),
+    b: String((await model.invoke([new HumanMessage(`Another word about ${s.topic}`)])).content),
   }))
   .addEdge(START, "nodeA")
   .addEdge("nodeA", "nodeB")
@@ -37,12 +37,12 @@ const graph = new StateGraph(S)
   .compile();
 
 const out = await graph.invoke(
-  { topic: "тестування" },
+  { topic: "testing" },
   { callbacks: tel.callbackHandler ? [tel.callbackHandler] : [], runName: "spike-s5" },
 );
 
 console.log("S5 graph out:", out);
 await tel.shutdown();
 console.log(
-  `S5 OK — відкрий self-hosted Langfuse (${c.langfuse.baseUrl}); має бути 1 trace 'spike-s5' із вкладеними generations nodeA/nodeB.`,
+  `S5 OK — open self-hosted Langfuse (${c.langfuse.baseUrl}); there should be 1 trace 'spike-s5' with nested generations nodeA/nodeB.`,
 );

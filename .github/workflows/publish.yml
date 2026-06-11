@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Тег для публікації (напр. v0.2.0). Має збігатися з version у package.json."
+        description: "Tag to publish (e.g. v0.2.0). Must match the version in package.json."
         required: true
 
 permissions:
-  contents: read      # лише читаємо код — нічого не коммітимо назад у репо
-  id-token: write     # npm provenance (OIDC-підпис)
-  packages: write     # публікація в GitHub Packages
+  contents: read      # read-only access to code — nothing is committed back to the repo
+  id-token: write     # npm provenance (OIDC signing)
+  packages: write     # publish to GitHub Packages
 
 concurrency:
   group: publish
@@ -47,7 +47,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # --- Guard (fail-fast): тег має збігатися з version у package.json ---
+      # --- Guard (fail-fast): tag must match the version in package.json ---
       - name: Verify package.json version matches tag
         run: |
           PKG=$(node -p "require('./package.json').version")
@@ -58,7 +58,7 @@ jobs:
           fi
           echo "Version OK: $PKG"
 
-      # --- Перевірки (дзеркало ci.yml) ---
+      # --- Checks (mirror of ci.yml) ---
       - name: Install Playwright Chromium (for integration tests)
         run: npx playwright install --with-deps chromium
       - name: Build
@@ -68,7 +68,7 @@ jobs:
       - name: Test (coverage gate)
         run: npm run test:coverage
 
-      # --- Визначення dist-tag (alpha/beta/rc/latest) — порт логіки qa-skills ---
+      # --- Determine dist-tag (alpha/beta/rc/latest) — ported logic from qa-skills ---
       - name: Determine npm dist-tag
         id: dist
         run: |
@@ -80,7 +80,7 @@ jobs:
           else echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      # --- Фаза 1: GitHub Packages (без provenance; ім'я @plune-ai/lex-bot НЕ змінюється) ---
+      # --- Phase 1: GitHub Packages (no provenance; package name @plune-ai/lex-bot does NOT change) ---
       - name: Setup Node for GitHub Packages
         uses: actions/setup-node@v4
         with:
@@ -100,9 +100,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
 
-      # --- Фаза 2: npm registry (з provenance) ---
-      # scope MUST be set here too: інакше @plune-ai:registry із Фази 1 (.npmrc) лишається
-      # вказувати на GitHub Packages, і `npm publish` scoped-пакета піде НЕ в npmjs.
+      # --- Phase 2: npm registry (with provenance) ---
+      # scope MUST be set here too: otherwise @plune-ai:registry from Phase 1 (.npmrc) keeps
+      # pointing at GitHub Packages, and `npm publish` for the scoped package will NOT go to npmjs.
       - name: Setup Node for npm
         uses: actions/setup-node@v4
         with:

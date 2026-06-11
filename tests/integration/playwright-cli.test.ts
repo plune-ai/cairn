@@ -35,7 +35,7 @@ describe("playwright-cli backend (integration, Spike S3)", () => {
     const signIn = parseAriaSnapshot(obs.ariaSnapshot).find(
       (e) => e.role === "button" && e.name === "Sign In",
     );
-    if (!signIn) throw new Error("Не знайдено кнопку Sign In у cli-снапшоті");
+    if (!signIn) throw new Error("Sign In button not found in the cli snapshot");
     const res = await backend.act({ kind: "click", ref: signIn.ref });
     expect(res.ok).toBe(true);
   });

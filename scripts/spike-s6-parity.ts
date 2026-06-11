@@ -1,7 +1,7 @@
 /**
- * Spike S6 — паритет structured output Anthropic vs OpenRouter (ЖИВИЙ; потрібні ключі).
- * Доводить/міряє: чи DeepSeek/Qwen через OpenRouter тримають JSON-схему так само, як Anthropic.
- *   Запуск: npm run spike:s6-parity
+ * Spike S6 — structured output parity Anthropic vs OpenRouter (LIVE; requires keys).
+ * Proves/measures: whether DeepSeek/Qwen via OpenRouter adhere to the JSON schema as well as Anthropic.
+ *   Run: npm run spike:s6-parity
  */
 import { z } from "zod";
 import { HumanMessage } from "@langchain/core/messages";
@@ -12,7 +12,7 @@ import type { ModelTier } from "../src/config/index.js";
 const c = cfg();
 const keys = keysOf(c);
 if (!keys.anthropicApiKey && !keys.openrouterApiKey) {
-  console.error("Немає жодного ключа (ANTHROPIC_API_KEY / OPENROUTER_API_KEY).");
+  console.error("No API key found (ANTHROPIC_API_KEY / OPENROUTER_API_KEY).");
   process.exit(1);
 }
 
@@ -21,7 +21,7 @@ const schema = z.object({
   steps: z.array(z.string()),
   priority: z.enum(["low", "medium", "high"]),
 });
-const prompt = "Згенеруй один UI тест-кейс для форми логіну у структурованому вигляді.";
+const prompt = "Generate one UI test case for a login form in a structured form.";
 
 async function tryTier(label: string, tier: ModelTier): Promise<void> {
   try {
@@ -52,4 +52,4 @@ if (keys.openrouterApiKey) {
     supportsVision: false,
   });
 }
-console.log("S6 — порівняй валідність/структуру виводу між провайдерами; занотуй у звіт спайку.");
+console.log("S6 — compare the validity/structure of output across providers; record in the spike report.");

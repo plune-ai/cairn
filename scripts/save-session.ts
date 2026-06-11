@@ -1,10 +1,10 @@
 /**
- * Інтерактивний capture сесії (cookies + localStorage) для authed-дослідження.
- * Відкриває HEADED-браузер, чекає поки ви залогінитесь, зберігає storageState у .auth/<name>.storageState.json.
+ * Interactive session capture (cookies + localStorage) for authenticated exploration.
+ * Opens a HEADED browser, waits for you to log in, saves storageState to .auth/<name>.storageState.json.
  *
  *   npm run session:save -- --url https://app.example.com/login --name myapp
  *
- * Запускай через `!` у Claude Code (потрібен інтерактивний термінал + видиме вікно браузера).
+ * Run via `!` in Claude Code (requires an interactive terminal + a visible browser window).
  */
 import { chromium, type Browser } from "playwright";
 import { createInterface } from "node:readline/promises";
@@ -19,7 +19,7 @@ function arg(name: string): string | undefined {
 
 const url = arg("--url");
 if (!url) {
-  console.error("Вкажи --url <login-url>");
+  console.error("Provide --url <login-url>");
   process.exit(1);
 }
 const name = arg("--name") ?? new URL(url).hostname.replace(/[^a-z0-9]+/gi, "-");
@@ -30,14 +30,14 @@ const statePath = join(authDir, `${name}.storageState.json`);
 
 const waitSec = Number(arg("--wait") ?? "150");
 
-// Google OAuth блокує автоматизовані браузери → реальний Chrome + приховуємо webdriver-прапор.
+// Google OAuth blocks automated browsers → use real Chrome + hide the webdriver flag.
 const channel = arg("--channel") ?? "chrome";
 const launchArgs = ["--disable-blink-features=AutomationControlled"];
 let browser: Browser;
 try {
   browser = await chromium.launch({ headless: false, channel, args: launchArgs });
 } catch {
-  console.log(`Канал '${channel}' недоступний — використовую bundled chromium.`);
+  console.log(`Channel '${channel}' is not available — falling back to bundled chromium.`);
   browser = await chromium.launch({ headless: false, args: launchArgs });
 }
 const context = await browser.newContext();
@@ -47,12 +47,12 @@ await page.goto(url);
 if (input.isTTY) {
   const rl = createInterface({ input, output });
   await rl.question(
-    `\nВідкрито браузер на ${url}\nЗалогіньтесь у вікні. Коли опинитесь УСЕРЕДИНІ застосунку — натисніть Enter тут… `,
+    `\nBrowser opened at ${url}\nLog in via the browser window. Once you are INSIDE the application — press Enter here… `,
   );
   rl.close();
 } else {
   console.log(
-    `\nВідкрито браузер на ${url}\nЗалогіньтесь у вікні протягом ${waitSec}с — стан збережеться автоматично.\n(stdin не інтерактивний; за потреби збільш час: --wait <секунди>)`,
+    `\nBrowser opened at ${url}\nLog in via the browser window within ${waitSec}s — state will be saved automatically.\n(stdin is not interactive; increase the timeout if needed: --wait <seconds>)`,
   );
   await new Promise((r) => setTimeout(r, waitSec * 1000));
 }
@@ -60,6 +60,6 @@ if (input.isTTY) {
 await context.storageState({ path: statePath });
 await browser.close();
 
-console.log(`\n✓ Сесію збережено: ${statePath}`);
-console.log(`  Ім'я сесії: ${name}`);
-console.log(`  Далі: qa-bot explore --url ${url} --session ${name}`);
+console.log(`\n✓ Session saved: ${statePath}`);
+console.log(`  Session name: ${name}`);
+console.log(`  Next: qa-bot explore --url ${url} --session ${name}`);

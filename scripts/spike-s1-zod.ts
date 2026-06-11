@@ -1,8 +1,8 @@
 /**
- * Spike S1 — zod ↔ withStructuredOutput (БЕЗ мережі).
- * Доводить, що біндинг типізується й конструюється на встановленій версії zod (4.x) з langchain 1.x.
- * Це дублює юніт-тест (tests/unit/llm.test.ts), але як окремий operator-скрипт для звіту.
- *   Запуск: npm run spike:s1-zod
+ * Spike S1 — zod ↔ withStructuredOutput (NO network).
+ * Proves that the binding is typed and constructed on the installed zod version (4.x) with langchain 1.x.
+ * This duplicates the unit test (tests/unit/llm.test.ts) but as a standalone operator script for the report.
+ *   Run: npm run spike:s1-zod
  */
 import { z } from "zod";
 import { makeModel } from "../src/llm/index.js";
@@ -14,5 +14,5 @@ const model = makeModel(
 );
 const structured = model.withStructuredOutput(schema);
 
-console.log("S1 OK — zod біндиться з withStructuredOutput (langchain 1.x), без мережі.");
+console.log("S1 OK — zod binds with withStructuredOutput (langchain 1.x), no network.");
 console.log("typeof structured:", typeof structured);

@@ -26,7 +26,7 @@
     </main>
 
     <script>
-      // На "Sign In" зберігаємо локальну сесію — щоб storageState мав cookies + localStorage.
+      // On "Sign In" we save a local session — so storageState has cookies + localStorage.
       document.getElementById("login").addEventListener("submit", (e) => {
         e.preventDefault();
         localStorage.setItem("qa_session", "active");
