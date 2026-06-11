@@ -3,6 +3,7 @@ import { Box, Text, useInput } from "ink";
 import { useRunArtifacts } from "../hooks/use-run-artifacts.js";
 import { useStdoutDimensions } from "../hooks/use-stdout-dimensions.js";
 import { ScrollableText } from "../components/scrollable-text.js";
+import { promoteCase } from "../../promote/index.js";
 
 const TABS = ["cases", "report", "logs"] as const;
 type Tab = (typeof TABS)[number];
@@ -14,6 +15,10 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
   const [, rows] = useStdoutDimensions();
   const [tab, setTab] = useState<Tab>("cases");
   const [caseIdx, setCaseIdx] = useState(0);
+  const [note, setNote] = useState<string>("");
+
+  // Derive current case here (before useInput) so the key handler can reference it.
+  const current = arts.cases[caseIdx];
 
   useInput((input, key) => {
     if (input === "1") setTab("cases");
@@ -25,13 +30,17 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
       setCaseIdx((i) => Math.min(i + 1, Math.max(0, arts.cases.length - 1)));
     } else if (tab === "cases" && input === "p") {
       setCaseIdx((i) => Math.max(i - 1, 0));
+    } else if (tab === "cases" && input === "a" && current?.name.startsWith("MTC")) {
+      const id = current.name.replace(/\.md$/, "");
+      void promoteCase(runDir, id, {})
+        .then((r) => setNote(`Promoted ${r.oldId} → ${r.newId}${r.warning ? ` (⚠ ${r.warning})` : ""}`))
+        .catch((e: unknown) => setNote(`Promote failed: ${e instanceof Error ? e.message : String(e)}`));
     }
   });
 
   if (arts.loading) return <Text dimColor>loading artifacts…</Text>;
   const viewHeight = Math.max(6, rows - 10);
 
-  const current = arts.cases[caseIdx];
   let body: ReactNode;
   if (tab === "cases") {
     body = current ? (
@@ -45,10 +54,11 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
     body = <ScrollableText text={arts.log} height={viewHeight} />;
   }
 
+  const isMtc = tab === "cases" && current?.name.startsWith("MTC") === true;
   const hint =
     tab === "cases" && arts.cases.length > 1
-      ? `↑↓ scroll · n/p next·prev case · 1/2/3 or ←→ tab · esc back`
-      : `↑↓ scroll · 1/2/3 or ←→ tab · esc back`;
+      ? `↑↓ scroll · n/p next·prev case${isMtc ? " · a promote→ATC" : ""} · 1/2/3 or ←→ tab · esc back`
+      : `↑↓ scroll${isMtc ? " · a promote→ATC" : ""} · 1/2/3 or ←→ tab · esc back`;
 
   return (
     <Box flexDirection="column">
@@ -82,6 +92,7 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
         {body}
       </Box>
 
+      {note ? <Text color="green">{note}</Text> : null}
       <Text dimColor>{hint}</Text>
     </Box>
   );
