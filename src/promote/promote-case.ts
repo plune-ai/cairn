@@ -73,7 +73,7 @@ function appendTraceability(md: string, oldId: string): string {
   const m = md.match(/## Traceability\b[\s\S]*?(?=\n## |\n*$)/);
   if (m) {
     const section = m[0].trimEnd();
-    return md.replace(m[0], `${section}\n${row}`);
+    return md.replace(m[0], () => `${section}\n${row}`);
   }
   return `${md.trimEnd()}\n\n## Traceability\n\n| Source | Reference |\n| --- | --- |\n${row}\n`;
 }

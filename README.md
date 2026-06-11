@@ -70,6 +70,7 @@ no arguments prints help instead of starting the UI.
 | `lex-bot observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
 | `lex-bot design --url <u> --session <s> [--checklist <f>] [--style <s>]` | Test cases only (ATC/MTC `.md` + selectors), no code |
 | `lex-bot automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
+| `lex-bot promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
 | `lex-bot explore --url <u> --session <s> [--checklist <f>]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `lex-bot experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
