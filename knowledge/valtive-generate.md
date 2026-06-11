@@ -2,11 +2,11 @@
 url: /generate
 ---
 
-# Доменні знання: сторінка Generate CV
+# Domain knowledge: Generate CV page
 
-- Три вкладки вводу: **Text** (textarea), **URL** (поле посилання), **File** (drop-зона; формати .md/.txt/.pdf).
-- Кнопка **Generate CV** неактивна, доки немає валідного вводу у поточній вкладці.
-- Порожній ввід / лише пробіли → помилка валідації, генерація не стартує.
-- Невалідний URL → помилка; валідний URL → система завантажує сторінку вакансії.
-- Успішна генерація: видно лоадер, потім згенероване CV; запис з'являється в History/Generated.
-- XSS у полях має екрануватися (скрипт не виконується).
+- Three input tabs: **Text** (textarea), **URL** (link field), **File** (drop zone; .md/.txt/.pdf formats).
+- The **Generate CV** button is disabled until there is valid input in the current tab.
+- Empty input / whitespace only → validation error, generation does not start.
+- Invalid URL → error; a valid URL → the system loads the job-posting page.
+- Successful generation: a loader is shown, then the generated CV; a record appears in History/Generated.
+- XSS in fields must be escaped (the script does not execute).

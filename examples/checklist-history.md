@@ -1,8 +1,8 @@
-# Чекліст: сторінка History (приклад)
+# Checklist: History page (example)
 
-- Перевірити список конвертацій (history items) видимий
-- Кнопка Clear all history доступна
-- Кнопки Download PDF на записах
-- Кнопка Delete на записах
-- Навігація між розділами (Dashboard, Generate, Admin)
-- Кнопка Log out
+- Verify the conversions list (history items) is visible
+- The "Clear all history" button is available
+- "Download PDF" buttons on records
+- "Delete" button on records
+- Navigation between sections (Dashboard, Generate, Admin)
+- The "Log out" button
