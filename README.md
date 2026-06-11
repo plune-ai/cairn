@@ -47,6 +47,22 @@ lex-bot automate --run runs/<id> --validate --session myapp
 lex-bot explore --url https://app.example.com/page --session myapp --checklist plan.md
 ```
 
+## Interactive TUI
+
+Run `lex-bot` with **no arguments** in a terminal to open the interactive TUI (built with Ink):
+
+```bash
+lex-bot          # launches the terminal UI
+```
+
+Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style) via a
+guided form, watch a **live dashboard** of the graph nodes as the run progresses, read the result summary
+(scores, green %, Pilot verdict, test cases), and **browse past runs** in `./runs` — opening any run to
+read its test cases, report and logs.
+
+The commands below stay available for scripting/CI; in a non-interactive (piped/CI) shell, `lex-bot` with
+no arguments prints help instead of starting the UI.
+
 ## Commands
 
 | Command | Purpose |
@@ -54,6 +70,7 @@ lex-bot explore --url https://app.example.com/page --session myapp --checklist p
 | `lex-bot observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
 | `lex-bot design --url <u> --session <s> [--checklist <f>] [--style <s>]` | Test cases only (ATC/MTC `.md` + selectors), no code |
 | `lex-bot automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
+| `lex-bot promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
 | `lex-bot explore --url <u> --session <s> [--checklist <f>]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `lex-bot experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 

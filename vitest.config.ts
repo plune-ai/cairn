@@ -1,10 +1,11 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // .tsx (Ink TUI) трансформуються вбудованим oxc-трансформером vitest 4 (JSX automatic).
   test: {
     globals: true,
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     // Інтеграційні тести піднімають реальний Chromium — потрібні щедріші таймаути.
     testTimeout: 30000,
     hookTimeout: 30000,

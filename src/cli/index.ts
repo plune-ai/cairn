@@ -13,6 +13,8 @@ import { capture } from "../observe/index.js";
 import { SessionStore } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
 import { runExploration, runDesign, runAutomate } from "../agent/index.js";
+import { promoteCase, locatorFor } from "../promote/index.js";
+import type { PromoteDeps } from "../promote/index.js";
 import { makeModel } from "../llm/index.js";
 import { structuredInvoker } from "../llm/structured.js";
 import { PromptRegistry, LOCAL_PROMPTS } from "../prompts/index.js";
@@ -300,7 +302,60 @@ program
     },
   );
 
-program.parseAsync(process.argv).catch((e: unknown) => {
-  process.stderr.write(`${(e as Error).message}\n`);
-  process.exitCode = 1;
-});
+program
+  .command("promote")
+  .description("Promote manual MTC case(s) to automatable ATC (.md only; run `automate` to generate code)")
+  .requiredOption("--run <dir>", "run folder (runs/<id>)")
+  .requiredOption("--cases <ids>", "comma-separated MTC ids, e.g. MTC-DEMO-001,MTC-DEMO-003")
+  .option("--session <name>", "session for the live selector fallback")
+  .option("--session-file <path>", "storageState path for the live selector fallback")
+  .action(
+    async (opts: { run: string; cases: string; session?: string; sessionFile?: string }) => {
+      const config = loadConfig(process.env);
+      const runDir = resolve(opts.run);
+      const ids = opts.cases.split(",").map((s) => s.trim()).filter(Boolean);
+
+      // Live fallback only when a session is provided (best-effort — see note).
+      let collectLive: PromoteDeps["collectLive"];
+      let storageState: StorageState | undefined;
+      if (opts.sessionFile) storageState = await new SessionStore(resolve(".auth")).loadFile(resolve(opts.sessionFile));
+      else if (opts.session) storageState = await new SessionStore(resolve(".auth")).load(opts.session);
+      if (storageState) {
+        collectLive = async (url: string, refs: string[]): Promise<Map<string, string>> => {
+          const gateway = makeGateway({ backend: config.browser.backend, storageState, channel: config.browser.channel });
+          try {
+            await gateway.observe({ url });
+            const verified = await gateway.verify(refs.map((ref) => ({ ref, role: "", name: undefined, interactive: true, rank: 0 })));
+            const out = new Map<string, string>();
+            for (const v of verified) if (v.verified) out.set(v.ref, locatorFor(v));
+            return out;
+          } finally {
+            await gateway.close();
+          }
+        };
+      }
+
+      process.stderr.write(`▸ Promoting ${String(ids.length)} case(s) from ${opts.run}…\n`);
+      for (const id of ids) {
+        const res = await promoteCase(runDir, id, { collectLive });
+        process.stdout.write(`${res.oldId} → ${res.newId}${res.warning ? ` (⚠ ${res.warning})` : ""}\n`);
+      }
+      process.stdout.write(`\nDone. Run \`lex-bot automate --run ${opts.run}\` to generate code for the new ATC case(s).\n`);
+    },
+  );
+
+const cliArgs = process.argv.slice(2);
+if (cliArgs.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
+  // No command in an interactive terminal → launch the TUI (lazy: keeps React/Ink
+  // out of every other code path, incl. library embedders).
+  const { mountTui } = await import("../tui/index.js");
+  await mountTui();
+} else if (cliArgs.length === 0) {
+  // No command but non-TTY (pipe/CI) → print usage instead of crashing Ink raw-mode.
+  program.outputHelp();
+} else {
+  await program.parseAsync(process.argv).catch((e: unknown) => {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exitCode = 1;
+  });
+}
