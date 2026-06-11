@@ -30,16 +30,20 @@ async function nextAtcNumber(tcDir: string, suite: string): Promise<number> {
   let max = 0;
   for (const f of files) {
     const m = f.match(re);
-    if (m?.[1]) max = Math.max(max, Number(m[1]));
+    if (m?.[1] != null) max = Math.max(max, Number(m[1]));
   }
   return max + 1;
 }
 
 /** Replace (or insert) a key in the leading `---` frontmatter block. */
 function setFrontmatter(md: string, key: string, value: string): string {
+  const fmEnd = md.indexOf("\n---\n");
+  if (fmEnd === -1) return md; // no frontmatter — bail
+  const fm = md.slice(0, fmEnd);
+  const rest = md.slice(fmEnd);
   const re = new RegExp(`^(${escapeRe(key)}:).*$`, "m");
-  if (re.test(md)) return md.replace(re, `$1 ${value}`);
-  return md.replace(/\n---\n/, `\n${key}: ${value}\n---\n`);
+  if (re.test(fm)) return fm.replace(re, `$1 ${value}`) + rest;
+  return `${fm}\n${key}: ${value}${rest}`;
 }
 
 /** Recover elementRefs by matching the case title against report.json. */
@@ -63,11 +67,13 @@ function injectSelectors(md: string, selectors: { label: string; locator: string
   return md.trimEnd() + "\n" + block;
 }
 
-/** Append a "Promoted from" row to a `## Traceability` table (create the section if absent). */
+/** Append a "Promoted from" row to the ## Traceability section (create it if absent). */
 function appendTraceability(md: string, oldId: string): string {
   const row = `| Promoted from | ${oldId} |`;
-  if (md.includes("## Traceability")) {
-    return md.replace(/(## Traceability[\s\S]*?\n)(\n|$)/, (m) => `${m.trimEnd()}\n${row}\n`);
+  const m = md.match(/## Traceability\b[\s\S]*?(?=\n## |\n*$)/);
+  if (m) {
+    const section = m[0].trimEnd();
+    return md.replace(m[0], `${section}\n${row}`);
   }
   return `${md.trimEnd()}\n\n## Traceability\n\n| Source | Reference |\n| --- | --- |\n${row}\n`;
 }
@@ -106,6 +112,7 @@ export async function promoteCase(
   updated = setFrontmatter(updated, "execution", "auto");
   updated = setFrontmatter(updated, "status", "❌ Not implemented");
   updated = setFrontmatter(updated, "automation", automation);
+  updated = updated.replace(/^(#\s+)(?:MTC|ATC)-[A-Za-z0-9-]+-\d+(:)/m, `$1${newId}$2`);
   updated = appendTraceability(updated, caseId);
 
   await writeFile(newFile, updated, "utf8");
@@ -113,7 +120,7 @@ export async function promoteCase(
 
   const warning =
     missingRefs.length > 0
-      ? `${String(missingRefs.length)} ref(s) without a selector — generated code will be incomplete.`
+      ? `${missingRefs.length} ref(s) without a selector — generated code will be incomplete.`
       : undefined;
   return { oldId: caseId, newId, oldFile, newFile, selectorsFilled, missingRefs, warning };
 }
