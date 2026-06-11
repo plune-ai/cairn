@@ -52,4 +52,23 @@ describe("collectSelectors", () => {
     expect(missing).toEqual([]);
     expect(selectors[0]?.locator).toContain("getByRole('link')");
   });
+
+  it("treats all refs as missing when study.json is absent", async () => {
+    await rm(join(dir, "study.json"), { force: true });
+    const { selectors, missing } = await collectSelectors(dir, ["e45"]);
+    expect(selectors).toHaveLength(0);
+    expect(missing).toEqual(["e45"]);
+  });
+
+  it("skips the live fallback when report.json has no url", async () => {
+    await rm(join(dir, "report.json"), { force: true });
+    const calls: string[][] = [];
+    const collectLive = async (_url: string, refs: string[]): Promise<Map<string, string>> => {
+      calls.push(refs);
+      return new Map();
+    };
+    const { missing } = await collectSelectors(dir, ["e99"], { collectLive });
+    expect(calls).toHaveLength(0); // collectLive must NOT be called without a url
+    expect(missing).toEqual(["e99"]);
+  });
 });

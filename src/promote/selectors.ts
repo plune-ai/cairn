@@ -4,7 +4,13 @@ import { locatorFor } from "../artifacts/report.js";
 import type { ElementRef } from "../browser/index.js";
 
 export interface PromoteDeps {
-  /** Live browser fallback for refs missing from study.json. Omit → offline-only. */
+  /**
+   * Live browser fallback for refs missing from study.json. Omit → offline-only.
+   *
+   * Returns a `Map<ref, locator>` only — element names are not available in the
+   * live path, so any selector produced here will be labeled by its ref string
+   * (e.g. `"e99"`) rather than a human-readable name.
+   */
   collectLive?: (url: string, refs: string[]) => Promise<Map<string, string>>;
 }
 
@@ -13,7 +19,16 @@ export interface CollectedSelectors {
   missing: string[];
 }
 
-/** Build selectors for elementRefs: study.json (offline) first, then an optional live fallback. */
+/**
+ * Build selectors for the given elementRefs.
+ *
+ * Resolution order: study.json (offline) → optional live browser fallback.
+ *
+ * **Label convention:**
+ * - Elements found in study.json → `label` is `name ?? role` (human-readable).
+ * - Elements found only via `collectLive` → `label` is the ref string (e.g. `"e99"`),
+ *   because the live path returns locators only and does not expose element names.
+ */
 export async function collectSelectors(
   runDir: string,
   elementRefs: string[],
@@ -47,7 +62,10 @@ export async function collectSelectors(
   } catch {
     // no report.json → cannot navigate
   }
-  if (!url) return { selectors, missing };
+  if (!url) {
+    // collectLive provided but no url available → cannot navigate; leave refs in missing
+    return { selectors, missing };
+  }
 
   const live = await deps.collectLive(url, missing);
   const stillMissing: string[] = [];
