@@ -13,9 +13,8 @@ import { capture } from "../observe/index.js";
 import { SessionStore } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
 import { runExploration, runDesign, runAutomate } from "../agent/index.js";
-import { promoteCase } from "../promote/index.js";
+import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
-import { locatorFor } from "../artifacts/report.js";
 import { makeModel } from "../llm/index.js";
 import { structuredInvoker } from "../llm/structured.js";
 import { PromptRegistry, LOCAL_PROMPTS } from "../prompts/index.js";
@@ -336,6 +335,7 @@ program
         };
       }
 
+      process.stderr.write(`▸ Promoting ${String(ids.length)} case(s) from ${opts.run}…\n`);
       for (const id of ids) {
         const res = await promoteCase(runDir, id, { collectLive });
         process.stdout.write(`${res.oldId} → ${res.newId}${res.warning ? ` (⚠ ${res.warning})` : ""}\n`);
