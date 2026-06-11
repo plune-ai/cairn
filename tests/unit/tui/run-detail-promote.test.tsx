@@ -1,5 +1,5 @@
 import { render } from "ink-testing-library";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { promoteCase } = vi.hoisted(() => ({
   promoteCase: vi.fn(async () => ({
@@ -12,6 +12,8 @@ const { promoteCase } = vi.hoisted(() => ({
   })),
 }));
 
+const { reload } = vi.hoisted(() => ({ reload: vi.fn() }));
+
 vi.mock("../../../src/promote/index.js", () => ({ promoteCase }));
 
 vi.mock("../../../src/tui/hooks/use-run-artifacts.js", () => ({
@@ -20,6 +22,7 @@ vi.mock("../../../src/tui/hooks/use-run-artifacts.js", () => ({
     report: "r",
     log: "l",
     loading: false,
+    reload,
   }),
 }));
 
@@ -28,6 +31,10 @@ import { RunDetailScreen } from "../../../src/tui/screens/run-detail-screen.js";
 const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 describe("RunDetailScreen promote", () => {
+  beforeEach(() => {
+    reload.mockClear();
+  });
+
   it("pressing 'a' on an MTC case calls promoteCase and shows success note", async () => {
     const { lastFrame, stdin, unmount } = render(<RunDetailScreen runDir="runs/x" />);
     await delay(30);
@@ -35,6 +42,7 @@ describe("RunDetailScreen promote", () => {
     await delay(40);
     expect(promoteCase).toHaveBeenCalledWith("runs/x", "MTC-DEMO-001", {});
     expect(lastFrame() ?? "").toContain("Promoted MTC-DEMO-001 → ATC-DEMO-003");
+    expect(reload).toHaveBeenCalled();
     unmount();
   });
 
@@ -45,6 +53,7 @@ describe("RunDetailScreen promote", () => {
     stdin.write("a");
     await delay(40);
     expect(lastFrame() ?? "").toContain("Promote failed: disk error");
+    expect(reload).not.toHaveBeenCalled();
     unmount();
   });
 });

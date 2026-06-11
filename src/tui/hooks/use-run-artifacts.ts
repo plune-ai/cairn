@@ -10,8 +10,9 @@ export interface RunArtifacts {
 }
 
 /** Loads one run's viewable artifacts: testcases/*.md, report.md, run.log. All best-effort. */
-export function useRunArtifacts(dir: string): RunArtifacts {
+export function useRunArtifacts(dir: string): RunArtifacts & { reload: () => void } {
   const [state, setState] = useState<RunArtifacts>({ cases: [], report: "", log: "", loading: true });
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +37,7 @@ export function useRunArtifacts(dir: string): RunArtifacts {
     return () => {
       cancelled = true;
     };
-  }, [dir]);
+  }, [dir, tick]);
 
-  return state;
+  return { ...state, reload: () => setTick((t) => t + 1) };
 }

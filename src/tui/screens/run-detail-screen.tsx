@@ -37,6 +37,7 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
         .then((r) => {
           setPromoted(true);
           setNote(`Promoted ${r.oldId} → ${r.newId}${r.warning ? ` (⚠ ${r.warning})` : ""}`);
+          arts.reload();
         })
         .catch((e: unknown) => setNote(`Promote failed: ${e instanceof Error ? e.message : String(e)}`));
     }
