@@ -21,6 +21,23 @@ Point it at a URL (behind login, with a saved Playwright `storageState`) and it 
 - **`automate`** — generate `@playwright/test` code from approved `ATC-*` cases (skips `MTC-*` manual ones).
 - **`explore`** — the full pipeline at once (cases → code → validation → repair → Pilot verdict).
 
+## How it works — the full cycle
+
+New to this? The bot writes two kinds of test case:
+- **ATC** (*Automatable Test Case*) — the bot is confident it can drive reliably (read-only checks, verified locators) → it generates Playwright code for these.
+- **MTC** (*Manual Test Case*) — needs a human (full form submits, security/XSS, visual/UX, irreversible actions) → left for you to run by hand.
+
+The typical flow:
+
+1. **Capture a session** (once) — log in so the bot can reach pages behind auth.
+2. **Design** — the bot studies the page and writes test cases (`ATC-*` / `MTC-*` `.md` files with recorded selectors). No code yet.
+3. **Review** — you read the cases (in the TUI: *Browse past runs* → open a run → *Cases*).
+4. **Promote** *(optional)* — reviewed an `MTC` and decided it's actually automatable? `lex-bot promote …` (or `a` in the TUI) converts it to an `ATC` in place. It's then picked up by automate.
+5. **Automate** — generate `@playwright/test` code from the `ATC` cases.
+6. **Validate** — run the generated tests, classify pass/fail/flaky, and self-repair failures.
+
+`explore` runs steps 2–6 in one go; `design` + `automate` split them so you can review (and promote) in between. Full walkthrough: **[docs/getting-started.md](docs/getting-started.md)**.
+
 ## Install
 
 ```bash
@@ -40,12 +57,17 @@ npm run session:save -- --url https://app.example.com/ --name myapp
 # 2. Design test cases (no code) — review the .md files it writes
 lex-bot design --url https://app.example.com/page --session myapp --checklist plan.md
 
-# 3. Automate the approved cases
+# 3. (optional) Promote a manual case you decided is automatable: MTC → ATC
+lex-bot promote --run runs/<id> --cases MTC-LOGIN-001
+
+# 4. Automate the approved (ATC) cases → @playwright/test code, and run them
 lex-bot automate --run runs/<id> --validate --session myapp
 
 # …or do everything at once:
 lex-bot explore --url https://app.example.com/page --session myapp --checklist plan.md
 ```
+
+New here? Read the **[Getting started guide](docs/getting-started.md)** — it walks the whole cycle with explanations.
 
 ## Interactive TUI
 
@@ -132,6 +154,12 @@ npm test             # vitest (unit + integration; LLM/browser are mocked in uni
 npm run test:coverage
 npm run lint
 ```
+
+## Documentation
+
+- **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate), written for people new to the tool.
+- **[Architecture overview](docs/architecture/overview.md)** — how the agent works inside (the LangGraph state machine, locator grounding, self-improvement).
+- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0009, incl. the interactive TUI and the `@playwright/test` output format).
 
 ## License
 
