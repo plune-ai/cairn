@@ -22,9 +22,19 @@ DEMO_PAUSE=2 CAIRN=cairn asciinema rec docs/demo/cairn.cast -c ./scripts/demo.sh
 asciinema play docs/demo/cairn.cast
 ```
 
-## Publish + embed
+## Regenerate (no asciinema needed)
 
-Upload to get a cast id, then point the README hero badge at it:
+The committed `cairn.cast` is generated deterministically from `scripts/demo.sh` against the built CLI
+(`jq`-built asciicast v2 — no live PTY). Re-run after any CLI-surface change:
+
+```bash
+./scripts/gen-cast.sh
+```
+
+## Publish + embed (optional — inline player in the README)
+
+GitHub doesn't render `.cast` files inline, so the README hero links to the file. For an animated player
+badge, upload to asciinema.org and swap the id into the README hero:
 
 ```bash
 asciinema upload docs/demo/cairn.cast
@@ -34,6 +44,5 @@ asciinema upload docs/demo/cairn.cast
 [![Cairn demo](https://asciinema.org/a/<id>.svg)](https://asciinema.org/a/<id>)
 ```
 
-> The cast file (`cairn.cast`) is intentionally **not committed yet** — record it right before launch so it
-> reflects the shipped CLI. Until then the README hero carries a placeholder marker
-> (`<!-- asciinema: docs/demo/cairn.cast (record before launch) -->`) and a `REPLACE_ME` badge.
+> `cairn.cast` **is committed** (generated from the demo script — see *Regenerate* above). For a live,
+> human-paced recording instead, use the `asciinema rec` command at the top; it overwrites the same file.
