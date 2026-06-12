@@ -7,8 +7,9 @@
 [![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
 [![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 
-<!-- asciinema: docs/demo/cairn.cast (record before launch — see docs/demo/README.md) -->
-[![Cairn demo](https://asciinema.org/a/REPLACE_ME.svg)](https://asciinema.org/a/REPLACE_ME)
+<!-- Inline player badge (optional): `asciinema upload docs/demo/cairn.cast`, then replace the line below
+     with [![Cairn demo](https://asciinema.org/a/<id>.svg)](https://asciinema.org/a/<id>) — see docs/demo/. -->
+▶ **Demo:** [`docs/demo/cairn.cast`](docs/demo/cairn.cast) — play with `asciinema play docs/demo/cairn.cast`
 
 > Autonomous QA agent (Node.js / TypeScript) that logs into a web app with a saved session, explores
 > pages (ARIA snapshot + screenshot), designs methodology-based UI test cases (ISO/IEC/IEEE 29119-4),
