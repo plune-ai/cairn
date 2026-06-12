@@ -35,7 +35,7 @@ export function LauncherScreen() {
   return (
     <Box flexDirection="column">
       <Text color="cyan" bold>
-        lex-bot
+        Cairn
       </Text>
       <Text dimColor>Interactive UI-test generation — pick a command</Text>
       <Box marginTop={1}>

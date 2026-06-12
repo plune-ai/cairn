@@ -62,4 +62,4 @@ await browser.close();
 
 console.log(`\n✓ Session saved: ${statePath}`);
 console.log(`  Session name: ${name}`);
-console.log(`  Next: qa-bot explore --url ${url} --session ${name}`);
+console.log(`  Next: cairn explore --url ${url} --session ${name}`);

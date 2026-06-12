@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { loadConfig } from "../../src/config/index.js";
 
 /** Base valid env for the anthropic profile. */
@@ -70,6 +70,34 @@ describe("loadConfig — Langfuse (ADR-0006, self-hosted)", () => {
     });
     expect(cfg.langfuse.enabled).toBe(true);
     expect(cfg.langfuse.baseUrl).toBe("https://lf.my-server.example");
+  });
+});
+
+describe("loadConfig — CAIRN_ prefix + legacy env back-compat (C0-06)", () => {
+  it("reads the new CAIRN_LLM_PROFILE", () => {
+    const cfg = loadConfig({ ...baseEnv, CAIRN_LLM_PROFILE: "mixed" });
+    expect(cfg.llmProfile).toBe("mixed");
+  });
+
+  it("CAIRN_-prefixed provider keys satisfy validation", () => {
+    const cfg = loadConfig({ CAIRN_ANTHROPIC_API_KEY: "x", CAIRN_OPENROUTER_API_KEY: "y" });
+    expect(cfg.llmProfile).toBe("anthropic");
+    expect(cfg.anthropicApiKey).toBe("x");
+  });
+
+  it("legacy LEXBOT_LLM_PROFILE still works and warns toward CAIRN_LLM_PROFILE", () => {
+    const warn = vi.fn();
+    const cfg = loadConfig({ ...baseEnv, LEXBOT_LLM_PROFILE: "openrouter" }, { warn });
+    expect(cfg.llmProfile).toBe("openrouter");
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toContain("CAIRN_LLM_PROFILE");
+  });
+
+  it("current bare names keep working with no deprecation warning", () => {
+    const warn = vi.fn();
+    const cfg = loadConfig({ ...baseEnv, LLM_PROFILE: "mixed" }, { warn });
+    expect(cfg.llmProfile).toBe("mixed");
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

@@ -1,11 +1,12 @@
 {
-  "name": "@plune-ai/lex-bot",
+  "name": "@plune-ai/cairn",
   "version": "0.2.1",
-  "description": "Autonomous QA agent that explores web pages and generates UI tests (@playwright/test) on LangGraph + Claude/OpenRouter, with self-improvement via Langfuse.",
+  "description": "Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent (UI today; API/unit/docs planned) on LangGraph + Claude/OpenRouter, with self-improvement via Langfuse.",
   "type": "module",
   "license": "GPL-3.0-only",
   "author": "plune-ai",
   "keywords": [
+    "cairn",
     "qa",
     "testing",
     "test-generation",
@@ -14,21 +15,23 @@
     "langgraph",
     "ai-agent",
     "langfuse",
-    "anthropic"
+    "anthropic",
+    "openrouter"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/plune-ai/lex-bot.git"
+    "url": "git+https://github.com/plune-ai/cairn.git"
   },
-  "homepage": "https://github.com/plune-ai/lex-bot#readme",
+  "homepage": "https://github.com/plune-ai/cairn#readme",
   "bugs": {
-    "url": "https://github.com/plune-ai/lex-bot/issues"
+    "url": "https://github.com/plune-ai/cairn/issues"
   },
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "lex-bot": "dist/cli/index.js"
+    "cairn": "dist/cli/index.js",
+    "lex-bot": "dist/cli/lex-bot.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

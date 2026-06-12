@@ -8,9 +8,9 @@ import { App } from "../../../src/tui/App.js";
  * this fails first.
  */
 describe("TUI App skeleton", () => {
-  it("renders the lex-bot banner", () => {
+  it("renders the cairn banner", () => {
     const { lastFrame, unmount } = render(<App />);
-    expect(lastFrame()).toContain("lex-bot");
+    expect(lastFrame()).toContain("Cairn");
     unmount();
   });
 });

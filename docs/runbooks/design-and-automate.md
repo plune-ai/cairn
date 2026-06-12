@@ -9,7 +9,7 @@ First we write test cases (a human-valuable artifact in the ATC/MTC format), and
 
 ## 2. `design` — test cases only (no code)
 ```
-lex-bot design --url https://app.example.com/page --session myapp --checklist plan.md
+cairn design --url https://app.example.com/page --session myapp --checklist plan.md
 ```
 Writes `runs/<id>/testcases/*.md`:
 - **ATC-<SUITE>-NNN.md** — `execution: auto` (read-only, verified locators) → can be automated; `status: ❌ Not implemented`.
@@ -22,13 +22,13 @@ Metrics: grounding, verified_ratio, test_case_quality, methodology_adherence, **
 
 ## 3. `automate` — code from approved cases
 ```
-lex-bot automate --run runs/<id> [--validate --session myapp]
+cairn automate --run runs/<id> [--validate --session myapp]
 ```
 - Reads `testcases/*.md`, **skips MTC/manual**, generates `@playwright/test` from the ATC cases (locators are taken from the Selectors section) → `runs/<id>/tests/`.
 - `--validate` — runs the generated tests (a session is required).
 
 ## 4. Alternative — `explore` (everything at once)
 ```
-lex-bot explore --url ... --session ... [--checklist ...]
+cairn explore --url ... --session ... [--checklist ...]
 ```
 observe→design→code→validation→repair (keep-best)→Pilot verdict — a validated suite + metrics right away.

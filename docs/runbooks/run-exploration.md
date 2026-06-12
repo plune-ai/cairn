@@ -12,7 +12,7 @@
 ## Basic run
 
 ```bash
-lex-bot explore --url https://app.example.com/login \
+cairn explore --url https://app.example.com/login \
   --session demo \           # storageState name (opt.)
   --backend lib \            # lib | cli (default lib)
   --profile openrouter \     # anthropic | openrouter | mixed (default anthropic; OpenRouter — economical)

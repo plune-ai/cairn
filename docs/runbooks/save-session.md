@@ -20,11 +20,11 @@ await page.goto('https://app.example.com/login');
 await ctx.storageState({ path: './.auth/demo.storageState.json' });
 ```
 
-Then: `lex-bot explore --url ... --session demo` (the bot reads `./.auth/demo.storageState.json`).
+Then: `cairn explore --url ... --session demo` (the bot reads `./.auth/demo.storageState.json`).
 
 ## Option B — interactive login by the bot (S6)
 
-`lex-bot session login --url ... --session demo` opens a browser, waits for a manual login, and saves the state.
+`cairn session login --url ... --session demo` opens a browser, waits for a manual login, and saves the state.
 
 ## Security (MANDATORY)
 

@@ -14,7 +14,7 @@ Prove (or disprove) that a new prompt version is better than production, on the 
 ## Run
 
 ```bash
-lex-bot experiment \
+cairn experiment \
   --dataset bot-regression-v1 \
   --prompt qa-testcase-from-ui \
   --prompt-version candidate \

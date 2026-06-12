@@ -80,7 +80,7 @@ jobs:
           else echo "tag=latest" >> "$GITHUB_OUTPUT"
           fi
 
-      # --- Phase 1: GitHub Packages (no provenance; package name @plune-ai/lex-bot does NOT change) ---
+      # --- Phase 1: GitHub Packages (no provenance; package name @plune-ai/cairn does NOT change) ---
       - name: Setup Node for GitHub Packages
         uses: actions/setup-node@v4
         with:
@@ -90,8 +90,8 @@ jobs:
       - name: Publish to GitHub Packages
         run: |
           VER="${{ steps.meta.outputs.version }}"
-          if npm view "@plune-ai/lex-bot@$VER" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
-            echo "@plune-ai/lex-bot@$VER already in GitHub Packages — skipping (idempotent)."
+          if npm view "@plune-ai/cairn@$VER" version --registry https://npm.pkg.github.com >/dev/null 2>&1; then
+            echo "@plune-ai/cairn@$VER already in GitHub Packages — skipping (idempotent)."
           else
             npm pkg set publishConfig.registry=https://npm.pkg.github.com
             npm publish --tag ${{ steps.dist.outputs.tag }}
@@ -112,8 +112,8 @@ jobs:
       - name: Publish to npm
         run: |
           VER="${{ steps.meta.outputs.version }}"
-          if npm view "@plune-ai/lex-bot@$VER" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
-            echo "@plune-ai/lex-bot@$VER already on npm — skipping (idempotent)."
+          if npm view "@plune-ai/cairn@$VER" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "@plune-ai/cairn@$VER already on npm — skipping (idempotent)."
           else
             npm publish --provenance --tag ${{ steps.dist.outputs.tag }}
           fi

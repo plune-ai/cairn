@@ -1,11 +1,11 @@
 /**
  * QA Explorer Bot — public library API (Sprint 6: frozen for embedding).
  *
- * Example: import { runDesign, runAutomate, runExploration } from "@plune-ai/lex-bot";
+ * Example: import { runDesign, runAutomate, runExploration } from "@plune-ai/cairn";
  * Three entry points: explore (everything), design (cases only), automate (code from cases).
  */
 
-export const BOT_NAME = "@plune-ai/lex-bot" as const;
+export const BOT_NAME = "@plune-ai/cairn" as const;
 export const BOT_VERSION = "0.1.0" as const;
 
 // Entry points.
