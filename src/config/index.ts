@@ -5,6 +5,7 @@ import {
 } from "./schema.js";
 import type { AppConfig, Provider } from "./schema.js";
 import { PROFILES } from "./profiles.js";
+import { createEnvReader } from "./env.js";
 
 export type { AppConfig, ModelsConfig, ModelTier, Provider, LlmProfile, BrowserBackend } from "./schema.js";
 
@@ -14,11 +15,17 @@ type Env = Record<string, string | undefined>;
  * Read and validate configuration from env. Pure function (env is injected for tests).
  * Throws a clear error on an invalid profile/backend or a missing key for a required provider.
  */
-export function loadConfig(env: Env = process.env): AppConfig {
-  const profileResult = LlmProfileSchema.safeParse(env.LLM_PROFILE ?? "anthropic");
+export function loadConfig(
+  env: Env = process.env,
+  opts: { warn?: (msg: string) => void } = {},
+): AppConfig {
+  // Resolve every var via CAIRN_ → LEXBOT_/LEX_ (deprecated) → bare name (C0-06).
+  const read = createEnvReader(env, opts.warn);
+  const llmProfileRaw = read("LLM_PROFILE");
+  const profileResult = LlmProfileSchema.safeParse(llmProfileRaw ?? "anthropic");
   if (!profileResult.success) {
     throw new Error(
-      `Invalid LLM_PROFILE='${env.LLM_PROFILE}'. Allowed: anthropic | openrouter | mixed.`,
+      `Invalid LLM_PROFILE='${llmProfileRaw}'. Allowed: anthropic | openrouter | mixed.`,
     );
   }
   const llmProfile = profileResult.data;
@@ -29,8 +36,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
   if (models.vision) tiers.push(models.vision);
   const providers = new Set<Provider>(tiers.map((t) => t.provider));
 
-  const anthropicApiKey = env.ANTHROPIC_API_KEY;
-  const openrouterApiKey = env.OPENROUTER_API_KEY;
+  const anthropicApiKey = read("ANTHROPIC_API_KEY");
+  const openrouterApiKey = read("OPENROUTER_API_KEY");
   if (providers.has("anthropic") && !anthropicApiKey) {
     throw new Error(
       `Profile '${llmProfile}' uses Anthropic, but ANTHROPIC_API_KEY is not set.`,
@@ -42,22 +49,25 @@ export function loadConfig(env: Env = process.env): AppConfig {
     );
   }
 
-  const backendResult = BrowserBackendSchema.safeParse(env.BROWSER_BACKEND ?? "lib");
+  const browserBackendRaw = read("BROWSER_BACKEND");
+  const backendResult = BrowserBackendSchema.safeParse(browserBackendRaw ?? "lib");
   if (!backendResult.success) {
-    throw new Error(`Invalid BROWSER_BACKEND='${env.BROWSER_BACKEND}'. Allowed: lib | cli.`);
+    throw new Error(`Invalid BROWSER_BACKEND='${browserBackendRaw}'. Allowed: lib | cli.`);
   }
 
-  const langfuseEnabled = Boolean(
-    env.LANGFUSE_BASE_URL && env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY,
-  );
+  const langfuseBaseUrl = read("LANGFUSE_BASE_URL");
+  const langfusePublicKey = read("LANGFUSE_PUBLIC_KEY");
+  const langfuseSecretKey = read("LANGFUSE_SECRET_KEY");
+  const langfuseEnabled = Boolean(langfuseBaseUrl && langfusePublicKey && langfuseSecretKey);
 
-  const maxRepair = env.MAX_REPAIR === undefined ? 2 : Number(env.MAX_REPAIR);
+  const maxRepairRaw = read("MAX_REPAIR");
+  const maxRepair = maxRepairRaw === undefined ? 2 : Number(maxRepairRaw);
   if (!Number.isInteger(maxRepair) || maxRepair < 0) {
-    throw new Error(`Invalid MAX_REPAIR='${env.MAX_REPAIR}'. Must be a non-negative integer.`);
+    throw new Error(`Invalid MAX_REPAIR='${maxRepairRaw}'. Must be a non-negative integer.`);
   }
 
   // Test-case language: default English; env override accepts a name or a code (en/uk/ua).
-  const langRaw = (env.QA_TESTCASE_LANG ?? "English").trim();
+  const langRaw = (read("QA_TESTCASE_LANG") ?? "English").trim();
   const LANG_ALIASES: Record<string, string> = {
     en: "English",
     eng: "English",
@@ -77,11 +87,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
     openrouterApiKey,
     langfuse: {
       enabled: langfuseEnabled,
-      baseUrl: env.LANGFUSE_BASE_URL,
-      publicKey: env.LANGFUSE_PUBLIC_KEY,
-      secretKey: env.LANGFUSE_SECRET_KEY,
+      baseUrl: langfuseBaseUrl,
+      publicKey: langfusePublicKey,
+      secretKey: langfuseSecretKey,
     },
-    browser: { backend: backendResult.data, channel: env.BROWSER_CHANNEL },
+    browser: { backend: backendResult.data, channel: read("BROWSER_CHANNEL") },
     maxRepair,
     testCaseLanguage,
   };

@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
- * CLI `lex-bot`. Commands: observe · explore · design · automate · dataset-add · experiment.
+ * CLI `cairn`. Commands: observe · explore · design · automate · dataset-add · experiment.
+ * `lex-bot` stays as a hidden, deprecated alias (see ./lex-bot.ts) → same code path.
  */
 import "dotenv/config";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { BOT_NAME, BOT_VERSION } from "../index.js";
 import { makeGateway } from "../browser/index.js";
@@ -23,7 +25,7 @@ import type { PageStudy } from "../observe/index.js";
 
 const program = new Command();
 program
-  .name("lex-bot")
+  .name("cairn")
   .description(`${BOT_NAME} — autonomous UI test generator`)
   .version(BOT_VERSION);
 
@@ -340,22 +342,36 @@ program
         const res = await promoteCase(runDir, id, { collectLive });
         process.stdout.write(`${res.oldId} → ${res.newId}${res.warning ? ` (⚠ ${res.warning})` : ""}\n`);
       }
-      process.stdout.write(`\nDone. Run \`lex-bot automate --run ${opts.run}\` to generate code for the new ATC case(s).\n`);
+      process.stdout.write(`\nDone. Run \`cairn automate --run ${opts.run}\` to generate code for the new ATC case(s).\n`);
     },
   );
 
-const cliArgs = process.argv.slice(2);
-if (cliArgs.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
-  // No command in an interactive terminal → launch the TUI (lazy: keeps React/Ink
-  // out of every other code path, incl. library embedders).
-  const { mountTui } = await import("../tui/index.js");
-  await mountTui();
-} else if (cliArgs.length === 0) {
-  // No command but non-TTY (pipe/CI) → print usage instead of crashing Ink raw-mode.
-  program.outputHelp();
-} else {
-  await program.parseAsync(process.argv).catch((e: unknown) => {
-    process.stderr.write(`${(e as Error).message}\n`);
-    process.exitCode = 1;
-  });
+/**
+ * Run the CLI. Shared by the primary `cairn` entry (this file) and the deprecated
+ * `lex-bot` alias shim (./lex-bot.ts), so both go through the exact same code path.
+ */
+export async function runCli(): Promise<void> {
+  const cliArgs = process.argv.slice(2);
+  if (cliArgs.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
+    // No command in an interactive terminal → launch the TUI (lazy: keeps React/Ink
+    // out of every other code path, incl. library embedders).
+    const { mountTui } = await import("../tui/index.js");
+    await mountTui();
+  } else if (cliArgs.length === 0) {
+    // No command but non-TTY (pipe/CI) → print usage instead of crashing Ink raw-mode.
+    program.outputHelp();
+  } else {
+    await program.parseAsync(process.argv).catch((e: unknown) => {
+      process.stderr.write(`${(e as Error).message}\n`);
+      process.exitCode = 1;
+    });
+  }
+}
+
+// Auto-run only when invoked directly as the `cairn` bin — NOT when imported by the
+// `lex-bot` alias shim (which calls runCli() itself after printing the deprecation notice).
+const invokedDirectly =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  await runCli();
 }

@@ -1,9 +1,9 @@
-# Getting started with lex-bot
+# Getting started with cairn
 
-New to lex-bot — or to UI test automation in general? This guide takes you from zero to a generated,
+New to cairn — or to UI test automation in general? This guide takes you from zero to a generated,
 validated `@playwright/test` suite, explaining each step as you go.
 
-## What lex-bot does (in one paragraph)
+## What cairn does (in one paragraph)
 
 You point it at a web page; it logs in (with a saved session), studies the page, and writes **test cases**
 in a human-readable Markdown format. Cases it's confident it can automate become **ATC** files; cases that
@@ -29,7 +29,7 @@ If you review an MTC and decide it really is safe to automate, **promote** it �
 ## Step 1 — Install and configure
 
 ```bash
-npm install -g @plune-ai/lex-bot
+npm install -g @plune-ai/cairn
 ```
 
 Create a `.env` (copy `.env.example`) with at least your LLM key:
@@ -53,7 +53,7 @@ Skip this step for public pages.
 The easiest way to start is the **interactive TUI** — run the bot with no arguments:
 
 ```bash
-lex-bot
+cairn
 ```
 
 Pick **Design** (writes test cases, no code yet), fill in the URL and pick your session, and watch the live
@@ -63,7 +63,7 @@ dashboard as it works. When it finishes you'll see the cases and where they were
 Prefer the command line?
 
 ```bash
-lex-bot design --url https://app.example.com/page --session myapp
+cairn design --url https://app.example.com/page --session myapp
 ```
 
 ## Step 4 — Review the cases
@@ -81,7 +81,7 @@ Decided an `MTC` case is actually automatable? Promote it to `ATC`:
 - **In the TUI:** on the Cases tab, with an MTC case open, press **`a`**.
 - **On the CLI:**
   ```bash
-  lex-bot promote --run runs/<id> --cases MTC-LOGIN-001,MTC-LOGIN-002
+  cairn promote --run runs/<id> --cases MTC-LOGIN-001,MTC-LOGIN-002
   ```
 
 Promote renames the file to the next free `ATC-*` number, flips it to automatable, and refills selectors
@@ -93,7 +93,7 @@ add `--session <name>` so it can verify locators live in a browser.)
 Generate `@playwright/test` code from the approved `ATC` cases, and run them:
 
 ```bash
-lex-bot automate --run runs/<id> --validate --session myapp
+cairn automate --run runs/<id> --validate --session myapp
 ```
 
 You get `.spec.ts` files under `runs/<id>/tests/`, a pass/fail/flaky report, and automatic repair of
@@ -104,7 +104,7 @@ failures (a repair never makes the suite worse).
 If you just want the full pipeline without stopping to review:
 
 ```bash
-lex-bot explore --url https://app.example.com/page --session myapp
+cairn explore --url https://app.example.com/page --session myapp
 ```
 
 This runs design → code → validate → repair → a holistic "Pilot" verdict in one go.

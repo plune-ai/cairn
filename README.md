@@ -1,9 +1,21 @@
-# @plune-ai/lex-bot
+# Cairn
+
+> **Cairn — an AI that walks your system and leaves a trail of tests: UI, API, unit, docs.**
+
+<!-- asciinema: docs/demo/cairn.cast (record before launch — see docs/demo/README.md) -->
+[![Cairn demo](https://asciinema.org/a/REPLACE_ME.svg)](https://asciinema.org/a/REPLACE_ME)
 
 > Autonomous QA agent (Node.js / TypeScript) that logs into a web app with a saved session, explores
 > pages (ARIA snapshot + screenshot), designs methodology-based UI test cases (ISO/IEC/IEEE 29119-4),
 > generates runnable `@playwright/test` code, self-validates and self-repairs, and **self-improves**
 > via Langfuse. A portable utility (CLI + library) for embedding into other TypeScript projects.
+
+**Cairn is the generation layer** — it produces tests across surfaces (UI today; API / unit / docs planned),
+each arriving by demand, one at a time. A separate **Plune** layer owns record / management / eval.
+
+> **Renamed from Lex-Bot → Cairn.** The old `lex-bot` command and the `@plune-ai/lex-bot` package still
+> work — the CLI prints a one-line deprecation notice — but switch to `cairn` / `@plune-ai/cairn`; the old
+> names will be removed in 1–2 releases. Legacy `LEX_`/`LEXBOT_` env vars still work too; prefer `CAIRN_`.
 
 ## What it does
 
@@ -32,7 +44,7 @@ The typical flow:
 1. **Capture a session** (once) — log in so the bot can reach pages behind auth.
 2. **Design** — the bot studies the page and writes test cases (`ATC-*` / `MTC-*` `.md` files with recorded selectors). No code yet.
 3. **Review** — you read the cases (in the TUI: *Browse past runs* → open a run → *Cases*).
-4. **Promote** *(optional)* — reviewed an `MTC` and decided it's actually automatable? `lex-bot promote …` (or `a` in the TUI) converts it to an `ATC` in place. It's then picked up by automate.
+4. **Promote** *(optional)* — reviewed an `MTC` and decided it's actually automatable? `cairn promote …` (or `a` in the TUI) converts it to an `ATC` in place. It's then picked up by automate.
 5. **Automate** — generate `@playwright/test` code from the `ATC` cases.
 6. **Validate** — run the generated tests, classify pass/fail/flaky, and self-repair failures.
 
@@ -41,9 +53,9 @@ The typical flow:
 ## Install
 
 ```bash
-npm install -g @plune-ai/lex-bot     # CLI
+npm install -g @plune-ai/cairn     # CLI
 # or as a library:
-npm install @plune-ai/lex-bot
+npm install @plune-ai/cairn
 ```
 
 Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
@@ -55,26 +67,26 @@ Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
 npm run session:save -- --url https://app.example.com/ --name myapp
 
 # 2. Design test cases (no code) — review the .md files it writes
-lex-bot design --url https://app.example.com/page --session myapp --checklist plan.md
+cairn design --url https://app.example.com/page --session myapp --checklist plan.md
 
 # 3. (optional) Promote a manual case you decided is automatable: MTC → ATC
-lex-bot promote --run runs/<id> --cases MTC-LOGIN-001
+cairn promote --run runs/<id> --cases MTC-LOGIN-001
 
 # 4. Automate the approved (ATC) cases → @playwright/test code, and run them
-lex-bot automate --run runs/<id> --validate --session myapp
+cairn automate --run runs/<id> --validate --session myapp
 
 # …or do everything at once:
-lex-bot explore --url https://app.example.com/page --session myapp --checklist plan.md
+cairn explore --url https://app.example.com/page --session myapp --checklist plan.md
 ```
 
 New here? Read the **[Getting started guide](docs/getting-started.md)** — it walks the whole cycle with explanations.
 
 ## Interactive TUI
 
-Run `lex-bot` with **no arguments** in a terminal to open the interactive TUI (built with Ink):
+Run `cairn` with **no arguments** in a terminal to open the interactive TUI (built with Ink):
 
 ```bash
-lex-bot          # launches the terminal UI
+cairn          # launches the terminal UI
 ```
 
 Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style) via a
@@ -82,19 +94,21 @@ guided form, watch a **live dashboard** of the graph nodes as the run progresses
 (scores, green %, Pilot verdict, test cases), and **browse past runs** in `./runs` — opening any run to
 read its test cases, report and logs.
 
-The commands below stay available for scripting/CI; in a non-interactive (piped/CI) shell, `lex-bot` with
+The commands below stay available for scripting/CI; in a non-interactive (piped/CI) shell, `cairn` with
 no arguments prints help instead of starting the UI.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `lex-bot observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
-| `lex-bot design --url <u> --session <s> [--checklist <f>] [--style <s>]` | Test cases only (ATC/MTC `.md` + selectors), no code |
-| `lex-bot automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
-| `lex-bot promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
-| `lex-bot explore --url <u> --session <s> [--checklist <f>]` | Full pipeline (cases → code → validate → repair → Pilot) |
-| `lex-bot experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
+| `cairn observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
+| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>]` | Test cases only (ATC/MTC `.md` + selectors), no code |
+| `cairn automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
+| `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
+| `cairn explore --url <u> --session <s> [--checklist <f>]` | Full pipeline (cases → code → validate → repair → Pilot) |
+| `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
+
+> `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).
 
 ## Configuration (env)
 
@@ -108,6 +122,7 @@ no arguments prints help instead of starting the UI.
 | `BROWSER_CHANNEL` | `chrome` to use real Chrome (helps with OAuth) |
 | `MAX_REPAIR` | repair attempts (default 2) |
 
+- **Env var prefix:** every variable above is read as-is **or** with a `CAIRN_` prefix (e.g. `CAIRN_LLM_PROFILE`, `CAIRN_MAX_REPAIR`). Legacy `LEX_`/`LEXBOT_` prefixes still work but print a one-time deprecation warning — prefer `CAIRN_`.
 - **Domain knowledge:** put `*.md` files in `./knowledge/` with a `url:` front-matter to inject credentials/validation rules into design.
 - **Prompt overrides:** drop `./prompts/<name>.md` to override any built-in prompt without rebuilding.
 
@@ -119,7 +134,7 @@ deterministic scorers, self-repair, and results-level learning (best cases are r
 `runs/<id>/report.json`). Prompts fall back to the built-in defaults — override any of them with `./prompts/<name>.md`.
 
 Set the three `LANGFUSE_*` variables to **additionally** get: traces in the Langfuse UI, scores/datasets
-recorded centrally, and versioned prompts (with production labels & A/B prompt experiments via `lex-bot experiment`).
+recorded centrally, and versioned prompts (with production labels & A/B prompt experiments via `cairn experiment`).
 
 **Cloud or self-hosted — same setup.** Langfuse Cloud and a self-hosted instance are configured identically:
 you only pass the host URL and the API keys, nothing else changes.
@@ -139,7 +154,7 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 ## Library API
 
 ```ts
-import { runDesign, runAutomate, runExploration, loadConfig } from "@plune-ai/lex-bot";
+import { runDesign, runAutomate, runExploration, loadConfig } from "@plune-ai/cairn";
 
 const config = loadConfig(process.env);
 const result = await runDesign({ url, config, sessionName: "myapp", checklistText });
@@ -159,7 +174,7 @@ npm run lint
 
 - **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate), written for people new to the tool.
 - **[Architecture overview](docs/architecture/overview.md)** — how the agent works inside (the LangGraph state machine, locator grounding, self-improvement).
-- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0009, incl. the interactive TUI and the `@playwright/test` output format).
+- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0010, incl. the interactive TUI, the `@playwright/test` output format, and the Lex-Bot → Cairn rename).
 
 ## License
 

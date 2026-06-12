@@ -1,6 +1,6 @@
 # Module Map
 
-One layered npm package `@plune-ai/lex-bot` (ADR-0007). Layer boundaries = directories + barrel exports +
+One layered npm package `@plune-ai/cairn` (ADR-0007). Layer boundaries = directories + barrel exports +
 ESLint `no-restricted-imports`. **Browser backends are imported ONLY through `browser/gateway.ts`.**
 
 ## `src/` structure

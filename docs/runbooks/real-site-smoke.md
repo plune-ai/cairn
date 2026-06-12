@@ -14,11 +14,11 @@
 3. **(Opt.) Checklist:** `.md`/text or `## TC-XX` — steers what to test.
 4. **First design (no code — the safest):**
    ```
-   lex-bot design --url https://app.example.com/page --session myapp --checklist plan.md
+   cairn design --url https://app.example.com/page --session myapp --checklist plan.md
    ```
    → review `runs/<id>/testcases/ATC-*.md` (+ MTC-* manual).
-5. **Then — automate the approved ones:** `lex-bot automate --run runs/<id> --validate --session myapp`.
-   Or the full flow at once: `lex-bot explore --url ... --session myapp` (code+validation+repair+Pilot).
+5. **Then — automate the approved ones:** `cairn automate --run runs/<id> --validate --session myapp`.
+   Or the full flow at once: `cairn explore --url ... --session myapp` (code+validation+repair+Pilot).
 
 ## Robustness
 - **Rate limit / 5xx:** `retryInvoke` auto-retries transient errors (backoff).

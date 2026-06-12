@@ -1,4 +1,4 @@
-# Contributing to @plune-ai/lex-bot
+# Contributing to @plune-ai/cairn
 
 Thanks for your interest in improving the bot! This guide covers local setup, the
 development workflow, and conventions.
@@ -41,7 +41,7 @@ npm run test:coverage  # coverage gate on core logic
 - `src/observe`, `src/analyze`, `src/design`, `src/codegen`, `src/validate` — the pipeline stages.
 - `src/eval/` — deterministic scorers, LLM judge, Pilot supervisor, experiments.
 - `src/prompts/local/*.ts` — the methodology prompts (the bot's "brain").
-- `src/cli/` — the `lex-bot` CLI.
+- `src/cli/` — the `cairn` CLI.
 
 ## Editing prompts
 
