@@ -4,9 +4,15 @@
  * Example: import { runDesign, runAutomate, runExploration } from "@plune-ai/cairn";
  * Three entry points: explore (everything), design (cases only), automate (code from cases).
  */
+import { readFileSync } from "node:fs";
+
+const pkg = JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
 
 export const BOT_NAME = "@plune-ai/cairn" as const;
-export const BOT_VERSION = "0.1.0" as const;
+/** Read from package.json at load time — single source of truth, no manual drift. */
+export const BOT_VERSION: string = pkg.version;
 
 // Entry points.
 export { runExploration, runDesign, runAutomate, buildExploreGraph, ExploreState } from "./agent/index.js";
