@@ -2,6 +2,11 @@
 
 > **Cairn — an AI that walks your system and leaves a trail of tests: UI, API, unit, docs.**
 
+[![CI](https://github.com/plune-ai/cairn/actions/workflows/ci.yml/badge.svg)](https://github.com/plune-ai/cairn/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@plune-ai/cairn)](https://www.npmjs.com/package/@plune-ai/cairn)
+[![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
+[![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+
 <!-- asciinema: docs/demo/cairn.cast (record before launch — see docs/demo/README.md) -->
 [![Cairn demo](https://asciinema.org/a/REPLACE_ME.svg)](https://asciinema.org/a/REPLACE_ME)
 
