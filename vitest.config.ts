@@ -31,6 +31,7 @@ export default defineConfig({
         "src/agent/observe-guard.ts",
         "src/agent/finalize.ts",
         "src/agent/repair-loop.ts",
+        "src/agent/testcase-docs.ts",
         "scripts/benchmark-core.ts",
       ],
       thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },

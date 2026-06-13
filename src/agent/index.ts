@@ -7,8 +7,8 @@ import { CallBudget } from "../llm/structured.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { initTelemetry } from "../telemetry/index.js";
 import { ArtifactStore } from "../artifacts/index.js";
-import { renderReportMd, locatorFor } from "../artifacts/report.js";
-import { renderTestCaseMd, parseTestCaseMd, type TestCaseDoc } from "../artifacts/testcase-md.js";
+import { renderReportMd } from "../artifacts/report.js";
+import { parseTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases } from "../codegen/index.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
@@ -21,6 +21,7 @@ import { SessionStore } from "../session/index.js";
 import { buildExploreGraph } from "./graph.js";
 import { finalizeFailure } from "./finalize.js";
 import { runRepairLoop } from "./repair-loop.js";
+import { buildTestCaseDocs } from "./testcase-docs.js";
 import type { BudgetReport } from "./summary.js";
 import type { AppConfig } from "../config/index.js";
 import type { StorageState } from "../browser/index.js";
@@ -72,6 +73,8 @@ export interface ExploreResult {
   budget: BudgetReport;
   /** The repair loop bailed early because it stopped making progress (L1-04, Box 2). */
   stoppedEarly: boolean;
+  /** ATC/MTC case docs written to testcases/ (#39 — explore now emits them like design). */
+  testCaseFiles: string[];
 }
 
 /**
@@ -291,6 +294,16 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
     const budgetReport: BudgetReport = { used: budget.spent, max: budget.max }; // L1-04 (Box 3)
     const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
+
+    // #39: also emit ATC/MTC case docs (.md) — explore now produces the human-readable cases like
+    // design, so manual MTC cases are visible deliverables (not just buried inside report.md).
+    const caseSuite = suiteFromUrl(out.study.url);
+    const caseDocs = buildTestCaseDocs(out.testCases, out.verified, caseSuite, checklistItems.length > 0);
+    const testCaseFiles = await runWriter.writeTestCases(caseDocs.docs);
+    onProgress(
+      `explore — wrote ${testCaseFiles.length} cases: ${caseDocs.autoN} ATC, ${caseDocs.manualN} MTC → testcases/`,
+    );
+
     await runWriter.writeStudy(out.study);
     if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
     await runWriter.writeAria(out.study.ariaYaml);
@@ -346,6 +359,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       cost,
       budget: budgetReport,
       stoppedEarly,
+      testCaseFiles,
     };
   } catch (err) {
     // L1-04 (Box 1/3/4): the single failure path — write a partial report + a readable, actionable
@@ -473,25 +487,12 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
 
     const suite = suiteFromUrl(out.study.url);
-    const verifiedByRef = new Map(out.verified.map((v) => [v.ref, v]));
-    let autoN = 0;
-    let manualN = 0;
-    const docs = out.testCases.map((tc) => {
-      const manual = tc.execution === "manual";
-      const n = manual ? (manualN += 1) : (autoN += 1);
-      const id = `${manual ? "MTC" : "ATC"}-${suite}-${String(n).padStart(3, "0")}`;
-      const automationPath = manual
-        ? "— (manual, not automated)"
-        : `tests/ui/${suite.toLowerCase()}/${id.toLowerCase()}.spec.ts`;
-      const status = manual ? "📋 Manual" : "❌ Not implemented";
-      const selectors = tc.elementRefs
-        .map((r) => verifiedByRef.get(r))
-        .filter((v): v is NonNullable<typeof v> => Boolean(v))
-        .map((v) => ({ label: v.name ?? v.role, locator: locatorFor(v) }));
-      const traceability = checklistItems.length > 0 ? [{ source: "Checklist", reference: "provided plan" }] : [];
-      const doc: TestCaseDoc = { id, suite, status, automationPath, selectors, traceability };
-      return { id, md: renderTestCaseMd(tc, doc) };
-    });
+    const { docs, autoN, manualN } = buildTestCaseDocs(
+      out.testCases,
+      out.verified,
+      suite,
+      checklistItems.length > 0,
+    );
     const testCaseFiles = await runWriter.writeTestCases(docs);
     onProgress(
       `design — wrote ${testCaseFiles.length} cases: ${autoN} auto/ATC, ${manualN} manual/MTC (${suite}) → testcases/`,
