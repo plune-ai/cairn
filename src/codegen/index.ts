@@ -80,6 +80,8 @@ export async function automateCases(
   cases: ParsedTestCase[],
   ctx: { baseUrl: string; pageSemantics: string },
   deps: CodegenDeps,
+  /** Repair context: failing test names from the previous attempt (#40 — automate now repairs). */
+  repairHint?: string,
 ): Promise<GeneratedSuite> {
   const seen = new Map<string, string>();
   for (const c of cases) for (const s of c.selectors) if (!seen.has(s.locator)) seen.set(s.locator, s.label);
@@ -99,6 +101,9 @@ export async function automateCases(
     transitions: "(from the case steps)",
     language: detectLanguage(testCases),
   });
-  const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(prompt.text)]);
+  const text = repairHint
+    ? `${prompt.text}\n\nREPAIR: the previous generation failed the tests: ${repairHint}\nFix the locators/navigation/assertions so the tests pass.`
+    : prompt.text;
+  const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(text)]);
   return { files: suite.files.map((f) => ({ path: sanitizePath(f.path), content: f.content })) };
 }

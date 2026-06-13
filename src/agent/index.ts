@@ -20,6 +20,7 @@ import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
 import { buildExploreGraph } from "./graph.js";
 import { finalizeFailure } from "./finalize.js";
+import { runRepairLoop } from "./repair-loop.js";
 import type { BudgetReport } from "./summary.js";
 import type { AppConfig } from "../config/index.js";
 import type { StorageState } from "../browser/index.js";
@@ -566,8 +567,12 @@ export interface AutomateResult {
   runDir: string;
   specFiles: string[];
   validation?: ValidationReport;
-  /** Per-role cost + tokens for the codegen step (L1-01). */
+  /** Per-role cost + tokens for the codegen step(s) (L1-01). */
   cost: CostReport;
+  /** Per-run LLM-call budget usage (L1-04, Box 3). */
+  budget: BudgetReport;
+  /** The repair loop bailed early because it stopped making progress (L1-04 #40). */
+  stoppedEarly: boolean;
 }
 
 /**
@@ -586,8 +591,16 @@ export async function runAutomate(input: {
   const cfg = input.config;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
-  const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const onProgress = input.onProgress ?? ((): void => undefined);
+  // #40: automate now repairs (multiple codegen calls) → warn as it nears the budget, like explore.
+  let warnedBudget = false;
+  const onCharge = (used: number, max: number): void => {
+    if (!warnedBudget && max > 0 && used / max >= 0.8) {
+      warnedBudget = true;
+      onProgress(`⚠ approaching the LLM-call budget (${used}/${max} calls — cost guardrail)`);
+    }
+  };
+  const router = new RoleRouter(cfg, keys, budget, undefined, undefined, onCharge); // L1-01 routing + ledger
   const runDir = resolve(input.runDir);
 
   const rep = JSON.parse(await readFile(join(runDir, "report.json"), "utf8")) as {
@@ -606,28 +619,50 @@ export async function runAutomate(input: {
   const skipped = allCases.length - cases.length;
   onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${tcDir}`);
 
-  const suite = await automateCases(
-    cases,
-    { baseUrl, pageSemantics },
-    { invoke: router.invoke("worker", router.tierFor("worker", cfg.models.bulk)), prompts: new PromptRegistry() },
-  );
+  const invoke = router.invoke("worker", router.tierFor("worker", cfg.models.bulk));
+  const prompts = new PromptRegistry();
+  const buildSuite = (repairHint?: string): Promise<GeneratedSuite> =>
+    automateCases(cases, { baseUrl, pageSemantics }, { invoke, prompts }, repairHint);
 
   const artifacts = new ArtifactStore(dirname(runDir));
   const runWriter = await artifacts.openRun(basename(runDir));
-  const specFiles = await runWriter.writeSuite(suite);
-  onProgress(`automate — generated ${specFiles.length} spec files → tests/`);
 
-  let validation: ValidationReport | undefined;
-  if (input.validate) {
-    let sessionPath: string | undefined;
-    if (input.sessionFile) sessionPath = resolve(input.sessionFile);
-    else if (input.sessionName) {
-      sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
-    }
-    validation = await validateSuite(runWriter.dir, { storageStatePath: sessionPath });
-    onProgress(`automate — validation: ${Math.round(validation.greenRatio * 100)}% green`);
+  let sessionPath: string | undefined;
+  if (input.sessionFile) sessionPath = resolve(input.sessionFile);
+  else if (input.sessionName) {
+    sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
   }
 
-  const cost = router.ledger.report(); // L1-01: per-role cost + tokens for the codegen step
-  return { runDir: runWriter.dir, specFiles, validation, cost };
+  let suite: GeneratedSuite;
+  let validation: ValidationReport | undefined;
+  let stoppedEarly = false;
+  if (input.validate) {
+    // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
+    // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
+    const result = await runRepairLoop({
+      generate: async (hint) => {
+        const s = await buildSuite(hint);
+        await runWriter.writeSuite(s);
+        return s;
+      },
+      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath }),
+      maxRepair: cfg.maxRepair,
+      onProgress,
+    });
+    suite = result.bestSuite;
+    validation = result.bestValidation;
+    stoppedEarly = result.stoppedEarly;
+    onProgress(
+      `automate — validation: ${Math.round(validation.greenRatio * 100)}% green${stoppedEarly ? " · stopped early (no progress)" : ""}`,
+    );
+  } else {
+    suite = await buildSuite(); // single pass — repair needs validation to measure progress
+  }
+
+  const specFiles = await runWriter.writeSuite(suite); // final/best suite on disk
+  onProgress(`automate — ${specFiles.length} spec file(s) → tests/`);
+
+  const cost = router.ledger.report(); // L1-01: per-role cost + tokens for the codegen step(s)
+  const budgetReport: BudgetReport = { used: budget.spent, max: budget.max };
+  return { runDir: runWriter.dir, specFiles, validation, stoppedEarly, cost, budget: budgetReport };
 }

@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { generateSuite } from "../../src/codegen/index.js";
+import { generateSuite, automateCases } from "../../src/codegen/index.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
 import type { StructuredInvoke } from "../../src/llm/structured.js";
 import type { PageStudy } from "../../src/observe/index.js";
 import type { TestCase } from "../../src/design/index.js";
+import type { ParsedTestCase } from "../../src/artifacts/testcase-md.js";
 
 const study: PageStudy = {
   url: "http://x/login",
@@ -65,5 +66,48 @@ describe("generateSuite", () => {
     );
     expect(suite.files[0]?.path).not.toContain("..");
     expect(suite.files[1]?.path.startsWith("/")).toBe(false);
+  });
+});
+
+describe("automateCases (decoupled automate — repair support, #40)", () => {
+  const cases: ParsedTestCase[] = [
+    {
+      id: "ATC-1",
+      execution: "auto",
+      title: "Login works",
+      steps: ["Click Sign In"],
+      expected: ["Logged in"],
+      selectors: [{ label: "Sign In", locator: "page.getByRole('button', { name: 'Sign In' })" }],
+    },
+  ];
+
+  it("adds a REPAIR instruction carrying the failing tests when a repairHint is given", async () => {
+    let captured = "";
+    const fakeInvoke: StructuredInvoke = async (schema, messages) => {
+      captured = JSON.stringify(messages);
+      return schema.parse({ files: [{ path: "a.spec.ts", content: "import { test } from '@playwright/test';" }] });
+    };
+    await automateCases(
+      cases,
+      { baseUrl: "http://x", pageSemantics: "p" },
+      { invoke: fakeInvoke, prompts: new PromptRegistry() },
+      "Login works",
+    );
+    expect(captured).toContain("REPAIR");
+    expect(captured).toContain("Login works");
+  });
+
+  it("omits the REPAIR instruction on the initial pass (no hint)", async () => {
+    let captured = "";
+    const fakeInvoke: StructuredInvoke = async (schema, messages) => {
+      captured = JSON.stringify(messages);
+      return schema.parse({ files: [{ path: "a.spec.ts", content: "x" }] });
+    };
+    await automateCases(
+      cases,
+      { baseUrl: "http://x", pageSemantics: "p" },
+      { invoke: fakeInvoke, prompts: new PromptRegistry() },
+    );
+    expect(captured).not.toContain("REPAIR");
   });
 });
