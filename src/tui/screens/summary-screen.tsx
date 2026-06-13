@@ -5,7 +5,7 @@ import { ScoresTable } from "../components/scores-table.js";
 import { PilotBadge } from "../components/pilot-badge.js";
 import { TestCaseList } from "../components/test-case-list.js";
 import type { Command, AnyResult, FormValues } from "../types.js";
-import type { Score, TestCase, PilotVerdict, ValidationReport } from "../../index.js";
+import type { Score, TestCase, PilotVerdict, ValidationReport, CostReport, BudgetReport } from "../../index.js";
 
 /** Rebuild form prefill from a finished run so re-run starts with the same target. */
 function rerunInitial(command: Command, result: AnyResult): Partial<FormValues> {
@@ -30,6 +30,15 @@ function scoresOf(r: AnyResult): Score[] {
 function specCountOf(r: AnyResult): number | undefined {
   return "specFiles" in r ? r.specFiles.length : undefined;
 }
+function costOf(r: AnyResult): CostReport | undefined {
+  return "cost" in r ? r.cost : undefined;
+}
+function budgetOf(r: AnyResult): BudgetReport | undefined {
+  return "budget" in r ? (r as { budget?: BudgetReport }).budget : undefined;
+}
+function stoppedEarlyOf(r: AnyResult): boolean {
+  return "stoppedEarly" in r && Boolean((r as { stoppedEarly?: boolean }).stoppedEarly);
+}
 
 interface ActionItem {
   label: string;
@@ -43,6 +52,9 @@ export function SummaryScreen({ command, result }: { command: Command; result: A
   const cases = testCasesOf(result);
   const scores = scoresOf(result);
   const specs = specCountOf(result);
+  const cost = costOf(result);
+  const budget = budgetOf(result);
+  const stoppedEarly = stoppedEarlyOf(result);
 
   const actions: ActionItem[] = [
     { label: "View artifacts (cases · report · logs)", value: "artifacts" },
@@ -77,6 +89,20 @@ export function SummaryScreen({ command, result }: { command: Command; result: A
           <Text>{specs} spec file(s) generated</Text>
         </Box>
       ) : null}
+
+      {cost ? (
+        <Box>
+          <Text dimColor>
+            {cost.totalTokens} tokens · {cost.totalCostUsd === null ? "$—" : `$${cost.totalCostUsd.toFixed(4)}`}
+          </Text>
+          {budget ? (
+            <Text color={budget.max > 0 && budget.used / budget.max >= 0.8 ? "yellow" : undefined} dimColor>
+              {`  · LLM calls ${budget.used}/${budget.max}`}
+            </Text>
+          ) : null}
+        </Box>
+      ) : null}
+      {stoppedEarly ? <Text color="yellow">⚠ stopped early: no progress across repair attempts</Text> : null}
 
       {pilot ? <PilotBadge pilot={pilot} /> : null}
       <ScoresTable scores={scores} />

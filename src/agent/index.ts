@@ -19,6 +19,8 @@ import { loadKnowledge } from "../knowledge/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
 import { buildExploreGraph } from "./graph.js";
+import { finalizeFailure } from "./finalize.js";
+import type { BudgetReport } from "./summary.js";
 import type { AppConfig } from "../config/index.js";
 import type { StorageState } from "../browser/index.js";
 import type { PageStudy } from "../observe/index.js";
@@ -65,6 +67,10 @@ export interface ExploreResult {
   pilot?: PilotVerdict;
   /** Per-role cost + tokens for the run (L1-01, ADR-0011). */
   cost: CostReport;
+  /** Per-run LLM-call budget usage (L1-04, Box 3) — surfaced so a run can't silently burn out. */
+  budget: BudgetReport;
+  /** The repair loop bailed early because it stopped making progress (L1-04, Box 2). */
+  stoppedEarly: boolean;
 }
 
 /**
@@ -75,7 +81,6 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const cfg = input.config;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
-  const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
 
   // Progress → live (CLI) + buffered into run.log.
   const logLines: string[] = [];
@@ -83,6 +88,16 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     logLines.push(`${new Date().toISOString()}  ${event}`);
     input.onProgress?.(event);
   };
+
+  // L1-04 (Box 3): warn ONCE when the run nears the call budget, so it can't silently burn out.
+  let warnedBudget = false;
+  const onCharge = (used: number, max: number): void => {
+    if (!warnedBudget && max > 0 && used / max >= 0.8) {
+      warnedBudget = true;
+      onProgress(`⚠ approaching the LLM-call budget (${used}/${max} calls — cost guardrail)`);
+    }
+  };
+  const router = new RoleRouter(cfg, keys, budget, undefined, undefined, onCharge); // L1-01: routing + cost ledger
 
   // Auth: load storageState into the gateway (observe) and pass the path to the runner (validate).
   let storageState: StorageState | undefined;
@@ -257,6 +272,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     }
 
     const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
+    const budgetReport: BudgetReport = { used: budget.spent, max: budget.max }; // L1-04 (Box 3)
+    const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
     await runWriter.writeStudy(out.study);
     if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
     await runWriter.writeAria(out.study.ariaYaml);
@@ -269,6 +286,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       scores,
       pilot,
       cost,
+      budget: budgetReport,
+      stoppedEarly,
       history: {
         priorRuns: priorRuns.length,
         bestPriorGreen: bestPriorGreen ?? null,
@@ -288,6 +307,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         scores,
         consoleErrors: out.study.consoleErrors,
         cost,
+        budget: budgetReport,
+        stoppedEarly,
       }),
     );
     const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
@@ -306,7 +327,21 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       scores,
       pilot,
       cost,
+      budget: budgetReport,
+      stoppedEarly,
     };
+  } catch (err) {
+    // L1-04 (Box 1/3/4): the single failure path — write a partial report + a readable, actionable
+    // summary, then throw a friendly Error. The user never sees a raw traceback or a silent halt.
+    throw await finalizeFailure(runWriter, {
+      runId,
+      url: input.url,
+      error: err,
+      cost: router.ledger.report(),
+      budget: { used: budget.spent, max: budget.max },
+      sessionName: input.sessionName,
+      onProgress,
+    });
   } finally {
     await gateway.close();
     await telemetry.shutdown();

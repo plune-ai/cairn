@@ -31,6 +31,10 @@ export type { AppConfig, Role, RolesConfig } from "./config/index.js";
 // Cost/token reporting (L1-01, ADR-0011).
 export type { CostReport, RoleCost } from "./llm/cost.js";
 
+// Run summary + LLM-call budget surfacing (L1-04, Box 3/4).
+export { renderRunSummary } from "./agent/summary.js";
+export type { BudgetReport, RunSummaryInput } from "./agent/summary.js";
+
 // Domain types (output contracts).
 export type { TestCase, DesignedCase } from "./design/index.js";
 export type { PageStudy } from "./observe/index.js";
