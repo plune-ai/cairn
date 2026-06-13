@@ -5,6 +5,7 @@ import type { StructuredInvoke } from "../../src/llm/structured.js";
 import type { RunWriter } from "../../src/artifacts/index.js";
 import type { BrowserGateway, Observation, Action } from "../../src/browser/index.js";
 import type { ValidationReport } from "../../src/validate/index.js";
+import type { PageStudy } from "../../src/observe/index.js";
 
 /** A StructuredInvoke that ignores its args and yields a fixed value (no LLM). */
 const fixed = (value: unknown): StructuredInvoke =>
@@ -184,5 +185,53 @@ describe("buildExploreGraph — browser/observe degradation (L1-04, Box 1)", () 
     expect(clicks).toHaveLength(1);
     expect(clicks[0]).toMatchObject({ kind: "click", ref: "e2" });
     expect(state.observe).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
+  it("hands the study to onStudy as soon as observe succeeds, before a later node can fail", async () => {
+    const seen: PageStudy[] = [];
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const graph = buildExploreGraph(
+      makeDeps({
+        gateway,
+        onStudy: async (s) => {
+          seen.push(s);
+        },
+        // a later node throws → proves the study was already persisted before the failure.
+        validate: async () => {
+          throw new Error("boom after observe");
+        },
+      }),
+    );
+
+    await graph.invoke({ url: "https://app.test/page", runId: "r" }).catch(() => undefined);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.elements.length).toBeGreaterThan(0);
+  });
+
+  it("persists the POST-consent study (the wall is already gone)", async () => {
+    const seen: PageStudy[] = [];
+    const { gateway } = fakeGateway((call) =>
+      call === 1
+        ? obs('- button "Reject all"\n- button "Sign in"')
+        : obs('- button "Sign in"\n- textbox "Email"'),
+    );
+    const graph = buildExploreGraph(
+      makeDeps({
+        gateway,
+        onStudy: async (s) => {
+          seen.push(s);
+        },
+        validate: async () => ({ results: [{ test: "A", status: "passed" }], greenRatio: 1, flakyCount: 0 }),
+      }),
+    );
+
+    await graph.invoke({ url: "https://app.test/page", runId: "r" });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.elements.some((e) => e.name === "Reject all")).toBe(false); // re-observed after dismissal
+    expect(seen[0]?.elements.some((e) => e.name === "Email")).toBe(true);
   });
 });

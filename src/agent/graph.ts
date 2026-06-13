@@ -33,6 +33,12 @@ export interface ExploreDeps {
   maxRepair: number;
   /** Live per-node progress (for CLI/log). */
   onProgress?: (event: string) => void;
+  /**
+   * Called with the page study the moment `observe` succeeds (after any consent-wall dismissal) —
+   * lets the caller persist study/snapshots immediately so a mid-run kill doesn't lose everything
+   * (L1-04, #38). Best-effort: a throw here must not break the run.
+   */
+  onStudy?: (study: PageStudy) => void | Promise<void>;
   /** Codeless mode: stop after designTestCases (cases only, no codegen/validate). */
   codeless?: boolean;
   /**
@@ -115,6 +121,12 @@ export function buildExploreGraph(deps: ExploreDeps) {
         } catch {
           // consent dismissal is best-effort — continue with what we already have.
         }
+      }
+      // #38: persist the study/snapshots NOW (best-effort) so a later kill still leaves them on disk.
+      try {
+        await deps.onStudy?.(study);
+      } catch {
+        // durability is best-effort — never let it break the run.
       }
       deps.onProgress?.(`observe — done: ${study.elements.length} elements, screenshot taken`);
       return { study };
