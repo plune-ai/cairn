@@ -52,4 +52,49 @@ describe("renderReportMd", () => {
     expect(md).toContain("Metrics");
     expect(md).toContain("grounding");
   });
+
+  it("renders a per-role Cost section when cost is provided (L1-01)", () => {
+    const md = renderReportMd({
+      runId: "r2",
+      url: "http://x/app",
+      backend: "lib",
+      profile: "anthropic",
+      pageSemantics: "App",
+      elements: [btn],
+      testCases: [],
+      cost: {
+        perRole: [
+          { role: "worker", models: ["deepseek/deepseek-chat"], calls: 2, inputTokens: 1000, outputTokens: 500, totalTokens: 1500, costUsd: 0.001 },
+          { role: "reasoner", models: ["claude-opus-4-8"], calls: 1, inputTokens: 800, outputTokens: 400, totalTokens: 1200, costUsd: 0.014 },
+        ],
+        totalTokens: 2700,
+        totalCostUsd: 0.015,
+      },
+    });
+    expect(md).toContain("Cost (per role)");
+    expect(md).toContain("worker");
+    expect(md).toContain("reasoner");
+    expect(md).toContain("deepseek/deepseek-chat");
+    expect(md).toContain("$0.0140");
+    expect(md).toContain("$0.0150"); // total
+  });
+
+  it("renders '—' for an unknown (null) cost without crashing", () => {
+    const md = renderReportMd({
+      runId: "r3",
+      url: "http://x/app",
+      backend: "lib",
+      profile: "openrouter",
+      pageSemantics: "App",
+      elements: [],
+      testCases: [],
+      cost: {
+        perRole: [{ role: "worker", models: ["mystery"], calls: 1, inputTokens: 10, outputTokens: 5, totalTokens: 15, costUsd: null }],
+        totalTokens: 15,
+        totalCostUsd: null,
+      },
+    });
+    expect(md).toContain("Cost (per role)");
+    expect(md).toMatch(/\bworker\b.*—/);
+  });
 });

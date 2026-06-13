@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename, join } from "node:path";
 import { readFile, readdir } from "node:fs/promises";
 import { makeGateway } from "../browser/index.js";
-import { makeModel } from "../llm/index.js";
-import { structuredInvoker, retryInvoke, CallBudget, cappedInvoke } from "../llm/structured.js";
+import { RoleRouter, type CostReport } from "../llm/index.js";
+import { CallBudget } from "../llm/structured.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { initTelemetry } from "../telemetry/index.js";
 import { ArtifactStore } from "../artifacts/index.js";
@@ -63,6 +63,8 @@ export interface ExploreResult {
   validation?: ValidationReport;
   scores: Score[];
   pilot?: PilotVerdict;
+  /** Per-role cost + tokens for the run (L1-01, ADR-0011). */
+  cost: CostReport;
 }
 
 /**
@@ -73,6 +75,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const cfg = input.config;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
+  const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
 
   // Progress → live (CLI) + buffered into run.log.
   const logLines: string[] = [];
@@ -119,14 +122,18 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const styleText = styleDirective(input.style ?? "all");
   const languageText = input.language ?? cfg.testCaseLanguage;
 
+  // L1-01: resolve per-role tiers (override ?? profile tier), then build metered invokers.
   const visionTier = cfg.models.vision ?? cfg.models.reasoning;
+  const analyzeTier = router.tierFor("worker", visionTier);
+  const designTier = router.tierFor("reasoner", cfg.models.reasoning);
+  const codegenTier = router.tierFor("worker", cfg.models.bulk);
   const graph = buildExploreGraph({
     gateway,
     prompts,
-    analyzeInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(visionTier, keys))), budget),
-    designInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.reasoning, keys))), budget),
-    codegenInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.bulk, keys))), budget),
-    useVision: visionTier.supportsVision,
+    analyzeInvoke: router.invoke("worker", analyzeTier),
+    designInvoke: router.invoke("reasoner", designTier),
+    codegenInvoke: router.invoke("worker", codegenTier),
+    useVision: analyzeTier.supportsVision,
     checklistText: checklistFormatted,
     knowledgeText,
     experienceText,
@@ -198,7 +205,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         ...(await judgeTestCases(
           out.testCases,
           out.analysis.pageSemantics,
-          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          router.invoke("judge", cfg.models.judge),
           prompts,
         )),
       );
@@ -210,7 +217,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const cov = await judgeChecklistCoverage(
           checklistItems,
           out.testCases,
-          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          router.invoke("judge", cfg.models.judge),
           prompts,
         );
         scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
@@ -246,7 +253,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         out.analysis.pageSemantics,
         validation,
         out.testCases,
-        cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+        // L1-01: Pilot verdict now runs on the strong `reasoner` role (was the cheap `judge` tier) —
+        // intended behavior change toward a "smart judge". See ADR-0011.
+        router.invoke("reasoner", router.tierFor("reasoner", cfg.models.reasoning)),
         prompts,
       );
       onProgress(`pilot — verdict: ${pilot.verdict} — ${pilot.reason}`);
@@ -254,6 +263,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       // pilot is not critical
     }
 
+    const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
     await runWriter.writeStudy(out.study);
     if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
     await runWriter.writeAria(out.study.ariaYaml);
@@ -265,6 +275,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       validation,
       scores,
       pilot,
+      cost,
       history: {
         priorRuns: priorRuns.length,
         bestPriorGreen: bestPriorGreen ?? null,
@@ -283,6 +294,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         validation,
         scores,
         consoleErrors: out.study.consoleErrors,
+        cost,
       }),
     );
     const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
@@ -300,6 +312,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       validation,
       scores,
       pilot,
+      cost,
     };
   } finally {
     await gateway.close();
@@ -315,6 +328,8 @@ export interface DesignResult {
   testCases: TestCase[];
   testCaseFiles: string[];
   scores: Score[];
+  /** Per-role cost + tokens for the run (L1-01). */
+  cost: CostReport;
 }
 
 function suiteFromUrl(url: string): string {
@@ -335,6 +350,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const cfg = input.config;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
+  const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const logLines: string[] = [];
   const onProgress = (event: string): void => {
     logLines.push(`${new Date().toISOString()}  ${event}`);
@@ -369,15 +385,19 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   );
   const styleText = styleDirective(input.style ?? "all");
   const languageText = input.language ?? cfg.testCaseLanguage;
+  // L1-01: resolve per-role tiers (override ?? profile tier), then build metered invokers.
   const visionTier = cfg.models.vision ?? cfg.models.reasoning;
+  const analyzeTier = router.tierFor("worker", visionTier);
+  const designTier = router.tierFor("reasoner", cfg.models.reasoning);
+  const codegenTier = router.tierFor("worker", cfg.models.bulk);
 
   const graph = buildExploreGraph({
     gateway,
     prompts,
-    analyzeInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(visionTier, keys))), budget),
-    designInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.reasoning, keys))), budget),
-    codegenInvoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.bulk, keys))), budget),
-    useVision: visionTier.supportsVision,
+    analyzeInvoke: router.invoke("worker", analyzeTier),
+    designInvoke: router.invoke("reasoner", designTier),
+    codegenInvoke: router.invoke("worker", codegenTier),
+    useVision: analyzeTier.supportsVision,
     checklistText: formatChecklist(checklistItems),
     knowledgeText,
     experienceText,
@@ -446,7 +466,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         ...(await judgeTestCases(
           out.testCases,
           out.analysis.pageSemantics,
-          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          router.invoke("judge", cfg.models.judge),
           prompts,
         )),
       );
@@ -458,7 +478,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         const cov = await judgeChecklistCoverage(
           checklistItems,
           out.testCases,
-          cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.judge, keys))), budget),
+          router.invoke("judge", cfg.models.judge),
           prompts,
         );
         scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
@@ -470,6 +490,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     await runWriter.writeStudy(out.study);
     if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
     await runWriter.writeAria(out.study.ariaYaml);
+    const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
     await runWriter.writeReport({
       runId,
       url: out.study.url,
@@ -479,6 +500,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
       testCases: out.testCases,
       testCaseFiles,
       scores,
+      cost,
     });
     await runWriter.writeLog(
       [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),
@@ -492,6 +514,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
       testCases: out.testCases,
       testCaseFiles,
       scores,
+      cost,
     };
   } finally {
     await gateway.close();
@@ -503,6 +526,8 @@ export interface AutomateResult {
   runDir: string;
   specFiles: string[];
   validation?: ValidationReport;
+  /** Per-role cost + tokens for the codegen step (L1-01). */
+  cost: CostReport;
 }
 
 /**
@@ -521,6 +546,7 @@ export async function runAutomate(input: {
   const cfg = input.config;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
+  const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const onProgress = input.onProgress ?? ((): void => undefined);
   const runDir = resolve(input.runDir);
 
@@ -543,7 +569,7 @@ export async function runAutomate(input: {
   const suite = await automateCases(
     cases,
     { baseUrl, pageSemantics },
-    { invoke: cappedInvoke(retryInvoke(structuredInvoker(makeModel(cfg.models.bulk, keys))), budget), prompts: new PromptRegistry() },
+    { invoke: router.invoke("worker", router.tierFor("worker", cfg.models.bulk)), prompts: new PromptRegistry() },
   );
 
   const artifacts = new ArtifactStore(dirname(runDir));
@@ -562,5 +588,6 @@ export async function runAutomate(input: {
     onProgress(`automate — validation: ${Math.round(validation.greenRatio * 100)}% green`);
   }
 
-  return { runDir: runWriter.dir, specFiles, validation };
+  const cost = router.ledger.report(); // L1-01: per-role cost + tokens for the codegen step
+  return { runDir: runWriter.dir, specFiles, validation, cost };
 }

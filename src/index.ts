@@ -26,7 +26,10 @@ export type {
 
 // Config.
 export { loadConfig } from "./config/index.js";
-export type { AppConfig } from "./config/index.js";
+export type { AppConfig, Role, RolesConfig } from "./config/index.js";
+
+// Cost/token reporting (L1-01, ADR-0011).
+export type { CostReport, RoleCost } from "./llm/cost.js";
 
 // Domain types (output contracts).
 export type { TestCase, DesignedCase } from "./design/index.js";

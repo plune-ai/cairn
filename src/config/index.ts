@@ -2,12 +2,14 @@ import {
   BrowserBackendSchema,
   LlmProfileSchema,
   ModelsConfigSchema,
+  ProviderSchema,
+  RoleSchema,
 } from "./schema.js";
-import type { AppConfig, Provider } from "./schema.js";
-import { PROFILES } from "./profiles.js";
+import type { AppConfig, Provider, ModelTier, RolesConfig } from "./schema.js";
+import { PROFILES, ROUTING_PRESETS } from "./profiles.js";
 import { createEnvReader } from "./env.js";
 
-export type { AppConfig, ModelsConfig, ModelTier, Provider, LlmProfile, BrowserBackend } from "./schema.js";
+export type { AppConfig, ModelsConfig, ModelTier, Provider, LlmProfile, BrowserBackend, Role, RoleModel, RolesConfig } from "./schema.js";
 
 type Env = Record<string, string | undefined>;
 
@@ -49,6 +51,23 @@ export function loadConfig(
     );
   }
 
+  // L1-01 (ADR-0011): optional per-role routing, additive over the tier map. Preset via
+  // LLM_ROUTING + explicit CAIRN_ROLE_<NAME> overrides. Unknown roles/presets warn and fall
+  // back to the tier default; a routed role with a missing provider key errors by role+provider.
+  const warn = opts.warn ?? ((msg: string): void => { process.stderr.write(`${msg}\n`); });
+  const roles = parseRoles(env, read, warn);
+  if (roles) {
+    for (const [role, tier] of Object.entries(roles)) {
+      if (!tier) continue;
+      if (tier.provider === "anthropic" && !anthropicApiKey) {
+        throw new Error(`Role '${role}' uses Anthropic, but ANTHROPIC_API_KEY is not set.`);
+      }
+      if (tier.provider === "openrouter" && !openrouterApiKey) {
+        throw new Error(`Role '${role}' uses OpenRouter, but OPENROUTER_API_KEY is not set.`);
+      }
+    }
+  }
+
   const browserBackendRaw = read("BROWSER_BACKEND");
   const backendResult = BrowserBackendSchema.safeParse(browserBackendRaw ?? "lib");
   if (!backendResult.success) {
@@ -83,6 +102,7 @@ export function loadConfig(
   return {
     llmProfile,
     models,
+    roles,
     anthropicApiKey,
     openrouterApiKey,
     langfuse: {
@@ -95,4 +115,70 @@ export function loadConfig(
     maxRepair,
     testCaseLanguage,
   };
+}
+
+/**
+ * L1-01: build the optional per-role routing map (worker/reasoner) from a named preset
+ * (`LLM_ROUTING`) plus explicit `CAIRN_ROLE_<NAME>=provider:model` overrides (which win over
+ * the preset). Unknown presets and unknown role names warn and are ignored (graceful fallback
+ * to the tier default). Returns undefined when no routing is configured.
+ */
+function parseRoles(
+  env: Env,
+  read: (name: string) => string | undefined,
+  warn: (msg: string) => void,
+): RolesConfig | undefined {
+  const roles: Record<string, ModelTier> = {};
+
+  // 1) Named preset via LLM_ROUTING (e.g. "volume").
+  const presetName = read("LLM_ROUTING");
+  if (presetName) {
+    const preset = ROUTING_PRESETS[presetName];
+    if (preset) {
+      for (const [role, tier] of Object.entries(preset)) {
+        if (tier) roles[role] = { ...tier };
+      }
+    } else {
+      warn(
+        `[cairn] unknown LLM_ROUTING routing preset '${presetName}' — ignored ` +
+          `(known: ${Object.keys(ROUTING_PRESETS).join(", ")}).`,
+      );
+    }
+  }
+
+  // 2) Explicit per-role overrides via CAIRN_ROLE_<NAME>=provider:model (override the preset).
+  const known = RoleSchema.options as readonly string[];
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith("CAIRN_ROLE_")) continue;
+    const value = env[key];
+    if (value === undefined || value.trim() === "") continue;
+    const role = key.slice("CAIRN_ROLE_".length).toLowerCase();
+    if (!known.includes(role)) {
+      warn(`[cairn] unknown role '${role}' in ${key} — ignored (known roles: ${known.join(", ")}).`);
+      continue;
+    }
+    roles[role] = parseRoleSpec(role, value);
+  }
+
+  return Object.keys(roles).length > 0 ? (roles as RolesConfig) : undefined;
+}
+
+/** Parse a `provider:model` role spec; throws a clear error on a bad provider or empty model. */
+function parseRoleSpec(role: string, value: string): ModelTier {
+  const i = value.indexOf(":");
+  const providerRaw = (i === -1 ? value : value.slice(0, i)).trim();
+  const model = (i === -1 ? "" : value.slice(i + 1)).trim();
+  const provider = ProviderSchema.safeParse(providerRaw);
+  if (!provider.success) {
+    throw new Error(
+      `Invalid provider '${providerRaw}' for role '${role}' (allowed: anthropic | openrouter). ` +
+        `Use CAIRN_ROLE_${role.toUpperCase()}=provider:model.`,
+    );
+  }
+  if (!model) {
+    throw new Error(
+      `Missing model for role '${role}' — use CAIRN_ROLE_${role.toUpperCase()}=${providerRaw}:<model>.`,
+    );
+  }
+  return { provider: provider.data, model, supportsVision: false };
 }

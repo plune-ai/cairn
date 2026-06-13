@@ -24,6 +24,7 @@ export default defineConfig({
         "src/validate/index.ts",
         "src/prompts/index.ts",
         "src/llm/structured.ts",
+        "src/llm/cost.ts",
       ],
       thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },
     },
