@@ -1,6 +1,6 @@
 /**
  * Methodology block for test-case design (ISO/IEC/IEEE 29119-4).
- * Provenance: ported from AZANIR/qa-skills → `qa-manual-test-designer` (GPL-3.0, author — the user). ADR-0008.
+ * Provenance: ported from AZANIR/qa-skills → `qa-manual-test-designer` (authored by the maintainer; included here under Apache-2.0). ADR-0008.
  * Mixed into `qa-testcase-from-ui` via the {{methodology}} variable.
  */
 export const QA_MANUAL_TEST_DESIGNER = `Apply ISO/IEC/IEEE 29119-4 test design techniques where appropriate:

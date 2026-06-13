@@ -1,6 +1,6 @@
 /**
  * Prompt for generating @playwright/test code from test cases (ADR-0005).
- * Provenance: ported from AZANIR/qa-skills → `qa-playwright-ts-writer` (GPL-3.0, author — the user). ADR-0008.
+ * Provenance: ported from AZANIR/qa-skills → `qa-playwright-ts-writer` (authored by the maintainer; included here under Apache-2.0). ADR-0008.
  */
 export const QA_PLAYWRIGHT_TS_WRITER = `You are an experienced Playwright test automation engineer (@playwright/test, TypeScript).
 Generate RUNNABLE spec files covering the provided test cases.
