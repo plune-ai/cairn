@@ -1,6 +1,6 @@
 # ADR-0002: Multi-provider LLM layer (Anthropic + OpenRouter) with tier×provider mapping
 
-- **Status:** Accepted · **Revised:** 2026-06-08 (expanded from "Anthropic only" to multi-provider)
+- **Status:** Accepted · **Revised:** 2026-06-13 (L1-02: Groq added as a third OpenAI-compatible provider) · 2026-06-08 (expanded from "Anthropic only" to multi-provider)
 - **Decision in code:** `src/llm/` (provider-agnostic model factory)
 
 ## Context
@@ -17,6 +17,9 @@ A provider-agnostic factory `makeModel(tier)` that returns a LangChain `BaseChat
 - **Anthropic:** `ChatAnthropic` (`@langchain/anthropic`).
 - **OpenRouter:** `ChatOpenAI` (`@langchain/openai`) with `configuration.baseURL = "https://openrouter.ai/api/v1"`
   and `apiKey = OPENROUTER_API_KEY` (OpenRouter is an OpenAI-compatible API). Optional headers `HTTP-Referer`/`X-Title`.
+- **Groq (L1-02):** also `ChatOpenAI` with `configuration.baseURL = "https://api.groq.com/openai/v1"` and
+  `apiKey = GROQ_API_KEY` — Groq is OpenAI-compatible too, so it **reuses the same adapter, no new dependency**.
+  Surfaced as the `fast` routing preset's worker (lowest latency/cost); see the ADR-0011 addendum.
 
 The config maps **each tier → `{ provider, model, supportsVision }`**. Profiles (examples, configurable):
 

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
-import { resolveModelSpec, makeModel, imageBlock, OPENROUTER_BASE_URL } from "../../src/llm/index.js";
+import { resolveModelSpec, makeModel, imageBlock, OPENROUTER_BASE_URL, GROQ_BASE_URL } from "../../src/llm/index.js";
 import type { ModelTier } from "../../src/config/index.js";
 
 const anthropicTier: ModelTier = {
@@ -15,7 +15,12 @@ const openrouterTier: ModelTier = {
   model: "deepseek/deepseek-r1",
   supportsVision: false,
 };
-const keys = { anthropicApiKey: "sk-ant-test", openrouterApiKey: "sk-or-test" };
+const groqTier: ModelTier = {
+  provider: "groq",
+  model: "llama-3.3-70b-versatile",
+  supportsVision: false,
+};
+const keys = { anthropicApiKey: "sk-ant-test", openrouterApiKey: "sk-or-test", groqApiKey: "gsk-test" };
 
 describe("resolveModelSpec — pure provider resolution", () => {
   it("anthropic tier → spec without baseURL, with the Anthropic key", () => {
@@ -34,9 +39,18 @@ describe("resolveModelSpec — pure provider resolution", () => {
     expect(spec.provider === "openrouter" && spec.baseURL).toBe(OPENROUTER_BASE_URL);
   });
 
+  it("groq tier → spec with the Groq baseURL and Groq key (L1-02)", () => {
+    const spec = resolveModelSpec(groqTier, keys);
+    expect(spec.provider).toBe("groq");
+    expect(spec.model).toBe("llama-3.3-70b-versatile");
+    expect(spec.apiKey).toBe("gsk-test");
+    expect(spec.provider === "groq" && spec.baseURL).toBe(GROQ_BASE_URL);
+  });
+
   it("throws if the required provider key is missing", () => {
     expect(() => resolveModelSpec(anthropicTier, { openrouterApiKey: "x" })).toThrow(/ANTHROPIC_API_KEY/);
     expect(() => resolveModelSpec(openrouterTier, { anthropicApiKey: "x" })).toThrow(/OPENROUTER_API_KEY/);
+    expect(() => resolveModelSpec(groqTier, { anthropicApiKey: "x" })).toThrow(/GROQ_API_KEY/);
   });
 });
 
@@ -47,6 +61,10 @@ describe("makeModel — LangChain model instantiation", () => {
 
   it("openrouter tier → ChatOpenAI instance (via baseURL)", () => {
     expect(makeModel(openrouterTier, keys)).toBeInstanceOf(ChatOpenAI);
+  });
+
+  it("groq tier → ChatOpenAI instance (OpenAI-compatible, via baseURL) (L1-02)", () => {
+    expect(makeModel(groqTier, keys)).toBeInstanceOf(ChatOpenAI);
   });
 });
 

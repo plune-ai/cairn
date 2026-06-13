@@ -73,7 +73,7 @@ export interface ExploreResult {
  */
 export async function runExploration(input: ExploreInput): Promise<ExploreResult> {
   const cfg = input.config;
-  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
+  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
 
@@ -341,7 +341,7 @@ function suiteFromUrl(url: string): string {
  */
 export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const cfg = input.config;
-  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
+  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const logLines: string[] = [];
@@ -533,7 +533,7 @@ export async function runAutomate(input: {
   onProgress?: (event: string) => void;
 }): Promise<AutomateResult> {
   const cfg = input.config;
-  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey };
+  const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const onProgress = input.onProgress ?? ((): void => undefined);

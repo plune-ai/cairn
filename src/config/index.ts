@@ -40,6 +40,7 @@ export function loadConfig(
 
   const anthropicApiKey = read("ANTHROPIC_API_KEY");
   const openrouterApiKey = read("OPENROUTER_API_KEY");
+  const groqApiKey = read("GROQ_API_KEY"); // L1-02 — Groq key (also via CAIRN_GROQ_API_KEY).
   if (providers.has("anthropic") && !anthropicApiKey) {
     throw new Error(
       `Profile '${llmProfile}' uses Anthropic, but ANTHROPIC_API_KEY is not set.`,
@@ -64,6 +65,9 @@ export function loadConfig(
       }
       if (tier.provider === "openrouter" && !openrouterApiKey) {
         throw new Error(`Role '${role}' uses OpenRouter, but OPENROUTER_API_KEY is not set.`);
+      }
+      if (tier.provider === "groq" && !groqApiKey) {
+        throw new Error(`Role '${role}' uses Groq, but GROQ_API_KEY is not set.`);
       }
     }
   }
@@ -105,6 +109,7 @@ export function loadConfig(
     roles,
     anthropicApiKey,
     openrouterApiKey,
+    groqApiKey,
     langfuse: {
       enabled: langfuseEnabled,
       baseUrl: langfuseBaseUrl,
@@ -171,7 +176,7 @@ function parseRoleSpec(role: string, value: string): ModelTier {
   const provider = ProviderSchema.safeParse(providerRaw);
   if (!provider.success) {
     throw new Error(
-      `Invalid provider '${providerRaw}' for role '${role}' (allowed: anthropic | openrouter). ` +
+      `Invalid provider '${providerRaw}' for role '${role}' (allowed: anthropic | openrouter | groq). ` +
         `Use CAIRN_ROLE_${role.toUpperCase()}=provider:model.`,
     );
   }

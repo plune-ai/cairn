@@ -30,6 +30,9 @@ export const DEFAULT_PRICING: Record<string, ModelPrice> = {
   "deepseek/deepseek-r1": { inputPer1M: 0.55, outputPer1M: 2.19 },
   "qwen/qwen-2.5-72b-instruct": { inputPer1M: 0.35, outputPer1M: 0.4 },
   "qwen/qwen-2-vl-72b-instruct": { inputPer1M: 0.4, outputPer1M: 0.4 },
+  // Groq — approximate, movable (L1-02; the lowest-latency `fast`-preset worker).
+  // Any Groq model absent here still yields a null cost (graceful), tokens are still counted.
+  "llama-3.3-70b-versatile": { inputPer1M: 0.59, outputPer1M: 0.79 },
 };
 
 export function priceFor(
