@@ -49,9 +49,10 @@ export const ROUTING_PRESETS: Record<string, RolesConfig> = {
     reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
   },
   fast: {
-    // worker → Groq llama-3.3-70b-versatile: a current production model with tool/function-calling
-    // support (required by withStructuredOutput includeRaw). supportsVision:false → identifyElements
-    // falls back to aria-only (ADR-0002, vision-optional). Model id overridable via CAIRN_ROLE_WORKER.
+    // worker → Groq llama-3.3-70b-versatile: lowest latency/cost. This model does NOT support
+    // response_format=json_schema, so structured output goes via tool/function-calling
+    // (structuredMethodFor("groq") → "functionCalling", L1-02 fix). supportsVision:false →
+    // identifyElements falls back to aria-only (ADR-0002). Model id overridable via CAIRN_ROLE_WORKER.
     worker: { provider: "groq", model: "llama-3.3-70b-versatile", supportsVision: false },
     // reasoner = designTestCases + Pilot verdict → keep the quality model (Anthropic Opus).
     reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },

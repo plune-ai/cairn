@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
-import { resolveModelSpec, makeModel, imageBlock, OPENROUTER_BASE_URL, GROQ_BASE_URL } from "../../src/llm/index.js";
+import { resolveModelSpec, makeModel, imageBlock, structuredMethodFor, OPENROUTER_BASE_URL, GROQ_BASE_URL } from "../../src/llm/index.js";
 import type { ModelTier } from "../../src/config/index.js";
 
 const anthropicTier: ModelTier = {
@@ -65,6 +65,16 @@ describe("makeModel — LangChain model instantiation", () => {
 
   it("groq tier → ChatOpenAI instance (OpenAI-compatible, via baseURL) (L1-02)", () => {
     expect(makeModel(groqTier, keys)).toBeInstanceOf(ChatOpenAI);
+  });
+});
+
+describe("structuredMethodFor — provider → withStructuredOutput method (L1-02 Groq fix)", () => {
+  it("forces functionCalling for Groq (llama-3.3-70b lacks json_schema response_format)", () => {
+    expect(structuredMethodFor("groq")).toBe("functionCalling");
+  });
+  it("leaves Anthropic and OpenRouter on the LangChain default (undefined)", () => {
+    expect(structuredMethodFor("anthropic")).toBeUndefined();
+    expect(structuredMethodFor("openrouter")).toBeUndefined();
   });
 });
 

@@ -2,6 +2,17 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { ModelTier } from "../config/index.js";
+import type { StructuredMethod } from "./structured.js";
+
+/**
+ * Which `withStructuredOutput` method to use for a provider. Groq's OpenAI-compatible endpoint
+ * rejects `response_format: json_schema` for most models (e.g. llama-3.3-70b-versatile → HTTP 400),
+ * so force `functionCalling` (tool-calling), which those models support (L1-02 fix). Anthropic and
+ * OpenRouter keep the LangChain default (`undefined`).
+ */
+export function structuredMethodFor(provider: ModelTier["provider"]): StructuredMethod | undefined {
+  return provider === "groq" ? "functionCalling" : undefined;
+}
 
 /** OpenRouter — OpenAI-compatible API; we connect via the ChatOpenAI baseURL (ADR-0002). */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";

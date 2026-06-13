@@ -17,7 +17,7 @@ import { loadConfig } from "../config/index.js";
 import { runExploration, runDesign, runAutomate } from "../agent/index.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
-import { makeModel } from "../llm/index.js";
+import { makeModel, structuredMethodFor } from "../llm/index.js";
 import { structuredInvoker } from "../llm/structured.js";
 import { PromptRegistry, LOCAL_PROMPTS } from "../prompts/index.js";
 import { runExperiment, type DatasetItem, type Variant } from "../eval/experiment.js";
@@ -215,8 +215,14 @@ program
       ds.items,
       variants,
       {
-        designInvoke: structuredInvoker(makeModel(config.models.reasoning, keys)),
-        judgeInvoke: structuredInvoker(makeModel(config.models.judge, keys)),
+        designInvoke: structuredInvoker(
+          makeModel(config.models.reasoning, keys),
+          structuredMethodFor(config.models.reasoning.provider),
+        ),
+        judgeInvoke: structuredInvoker(
+          makeModel(config.models.judge, keys),
+          structuredMethodFor(config.models.judge.provider),
+        ),
       },
       { target: opts.target },
     );

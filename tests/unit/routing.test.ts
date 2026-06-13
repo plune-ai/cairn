@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { meteredInvoker, CallBudget } from "../../src/llm/structured.js";
+import { meteredInvoker, structuredInvoker, CallBudget } from "../../src/llm/structured.js";
 import { resolveRoleTier, RoleRouter, KNOWN_ROLES } from "../../src/llm/routing.js";
 import type { AppConfig, ModelTier } from "../../src/config/index.js";
 
@@ -13,6 +13,17 @@ const okSchema = z.object({ ok: z.number() });
 function fakeModel(parsed: unknown, raw: unknown): BaseChatModel {
   return {
     withStructuredOutput: () => ({ invoke: async () => ({ raw, parsed }) }),
+  } as unknown as BaseChatModel;
+}
+
+/** Fake that records the options passed to withStructuredOutput (to assert the structured method). */
+function recordingModel(parsed: unknown, raw: unknown, sink: { opts?: unknown }): BaseChatModel {
+  return {
+    withStructuredOutput: (_schema: unknown, opts?: { includeRaw?: boolean; method?: string }) => {
+      sink.opts = opts;
+      // Mirror LangChain: includeRaw → {raw, parsed}; otherwise the parsed value directly.
+      return { invoke: async () => (opts?.includeRaw ? { raw, parsed } : parsed) };
+    },
   } as unknown as BaseChatModel;
 }
 
@@ -84,5 +95,51 @@ describe("RoleRouter — meters per role, falls back per tier", () => {
     expect(reasoner?.calls).toBe(1);
     expect(reasoner?.inputTokens).toBe(4);
     expect(reasoner?.outputTokens).toBe(2);
+  });
+
+  it("invoke routes a Groq tier through functionCalling (structured-output fix, L1-02)", async () => {
+    const sink: { opts?: unknown } = {};
+    const groqTier: ModelTier = { provider: "groq", model: "llama-3.3-70b-versatile", supportsVision: false };
+    const router = new RoleRouter(
+      baseCfg,
+      { groqApiKey: "k", anthropicApiKey: "k" },
+      new CallBudget(80),
+      undefined,
+      () => recordingModel({ ok: 1 }, { usage_metadata: { input_tokens: 1, output_tokens: 1 } }, sink),
+    );
+    await router.invoke("worker", groqTier)(okSchema, []);
+    expect(sink.opts).toMatchObject({ method: "functionCalling" });
+  });
+});
+
+describe("structured-output method forwarding (L1-02 Groq fix)", () => {
+  it("meteredInvoker forwards the method into withStructuredOutput alongside includeRaw", async () => {
+    const sink: { opts?: unknown } = {};
+    const model = recordingModel({ ok: 1 }, { usage_metadata: { input_tokens: 1, output_tokens: 1 } }, sink);
+    await meteredInvoker(model, () => undefined, "llama-3.3-70b-versatile", "functionCalling")(okSchema, []);
+    expect(sink.opts).toMatchObject({ includeRaw: true, method: "functionCalling" });
+  });
+
+  it("meteredInvoker omits method when none is given (default behavior unchanged)", async () => {
+    const sink: { opts?: unknown } = {};
+    const model = recordingModel({ ok: 1 }, {}, sink);
+    await meteredInvoker(model, () => undefined, "m")(okSchema, []);
+    expect(sink.opts).toEqual({ includeRaw: true });
+  });
+
+  it("structuredInvoker forwards the method and returns the parsed result", async () => {
+    const sink: { opts?: unknown } = {};
+    const model = recordingModel({ ok: 7 }, {}, sink);
+    const out = await structuredInvoker(model, "functionCalling")(okSchema, []);
+    expect(out).toEqual({ ok: 7 });
+    expect(sink.opts).toEqual({ method: "functionCalling" });
+  });
+
+  it("structuredInvoker without a method keeps the LangChain default call", async () => {
+    const sink: { opts?: unknown } = {};
+    const model = recordingModel({ ok: 9 }, {}, sink);
+    const out = await structuredInvoker(model)(okSchema, []);
+    expect(out).toEqual({ ok: 9 });
+    expect(sink.opts).toBeUndefined();
   });
 });
