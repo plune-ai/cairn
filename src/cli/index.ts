@@ -15,6 +15,7 @@ import { capture } from "../observe/index.js";
 import { SessionStore, captureSession } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
 import { runExploration, runDesign, runAutomate } from "../agent/index.js";
+import { renderRunSummary } from "../agent/summary.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
 import { makeModel, structuredMethodFor } from "../llm/index.js";
@@ -152,7 +153,18 @@ program
       );
     }
     printCost(result.cost);
-    process.stdout.write(`\nArtifacts: ${result.runDir}\n`);
+    // L1-04 (Box 4): one unambiguous footer — pass/fail · cost+tokens · budget used · artifact path.
+    process.stdout.write("\n");
+    for (const line of renderRunSummary({
+      runDir: result.runDir,
+      validation: result.validation,
+      cost: result.cost,
+      budget: result.budget,
+      testCaseCount: result.testCases.length,
+      stoppedEarly: result.stoppedEarly,
+    })) {
+      process.stdout.write(`${line}\n`);
+    }
   });
 
 program

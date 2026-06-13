@@ -25,6 +25,11 @@ export default defineConfig({
         "src/prompts/index.ts",
         "src/llm/structured.ts",
         "src/llm/cost.ts",
+        // L1-04 — pure hardening helpers (no-progress detection · run summary · observe degrade · failure path).
+        "src/agent/progress.ts",
+        "src/agent/summary.ts",
+        "src/agent/observe-guard.ts",
+        "src/agent/finalize.ts",
         "scripts/benchmark-core.ts",
       ],
       thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },

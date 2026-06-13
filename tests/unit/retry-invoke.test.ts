@@ -47,4 +47,36 @@ describe("retryInvoke (Sprint 6 robustness)", () => {
     await expect(capped(S, [])).rejects.toThrow(/limit/);
     expect(budget.spent).toBe(3);
   });
+
+  it("CallBudget exposes max + remaining so a run can surface it (L1-04, Box 3)", () => {
+    const b = new CallBudget(80);
+    expect(b.max).toBe(80);
+    expect(b.spent).toBe(0);
+    expect(b.remaining).toBe(80);
+    b.charge();
+    b.charge();
+    expect(b.spent).toBe(2);
+    expect(b.remaining).toBe(78);
+  });
+
+  it("CallBudget.remaining never goes negative once the cap trips", () => {
+    const b = new CallBudget(1);
+    b.charge();
+    expect(() => b.charge()).toThrow(/budget|limit/i);
+    expect(b.remaining).toBe(0); // spent=2, max=1 → clamped to 0
+  });
+
+  it("cappedInvoke fires onCharge after each successful charge, not when it trips (L1-04, Box 3)", async () => {
+    const inner: StructuredInvoke = async (schema) => schema.parse({ ok: true });
+    const budget = new CallBudget(2);
+    const seen: Array<[number, number]> = [];
+    const capped = cappedInvoke(inner, budget, (used, max) => seen.push([used, max]));
+    await capped(S, []);
+    await capped(S, []);
+    await expect(capped(S, [])).rejects.toThrow();
+    expect(seen).toEqual([
+      [1, 2],
+      [2, 2],
+    ]); // never called for the 3rd (over-cap) call
+  });
 });

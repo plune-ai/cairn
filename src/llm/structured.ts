@@ -83,24 +83,42 @@ export function retryInvoke(inner: StructuredInvoke, opts: RetryOptions = {}): S
 /** Cost-guardrail (Sprint 6): shared LLM-call counter per run — a safeguard against runaway cost. */
 export class CallBudget {
   private n = 0;
-  constructor(private readonly max: number) {}
+  constructor(private readonly cap: number) {}
   charge(): void {
     this.n += 1;
-    if (this.n > this.max) {
+    if (this.n > this.cap) {
       throw new Error(
-        `LLM-call limit per run exceeded (${this.max}) — cost-guardrail. Increase maxLlmCalls or check the loop.`,
+        `LLM-call budget limit reached (${this.cap} calls) — cost-guardrail. Increase maxLlmCalls or check for a loop.`,
       );
     }
   }
+  /** Calls charged so far (counts the over-cap call that threw, too). */
   get spent(): number {
     return this.n;
   }
+  /** The configured cap — surfaced so a run can show used/remaining (L1-04, Box 3). */
+  get max(): number {
+    return this.cap;
+  }
+  /** Calls left before the cap trips (never negative). */
+  get remaining(): number {
+    return Math.max(0, this.cap - this.n);
+  }
 }
 
-/** Cost-guardrail wrapper: counts the call against the shared CallBudget (throws when exceeded). */
-export function cappedInvoke(inner: StructuredInvoke, budget: CallBudget): StructuredInvoke {
+/**
+ * Cost-guardrail wrapper: counts the call against the shared CallBudget (throws when exceeded).
+ * `onCharge` (L1-04, Box 3) fires after each *successful* charge with (used, max) — never for the
+ * over-cap call that throws — so a run can warn as it nears the budget.
+ */
+export function cappedInvoke(
+  inner: StructuredInvoke,
+  budget: CallBudget,
+  onCharge?: (used: number, max: number) => void,
+): StructuredInvoke {
   return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
     budget.charge();
+    onCharge?.(budget.spent, budget.max);
     return inner(schema, messages);
   };
 }

@@ -23,6 +23,10 @@ export interface ReportInput {
   consoleErrors?: string[];
   /** Per-role cost + tokens (L1-01); rendered as a table when present. */
   cost?: CostReport;
+  /** Per-run LLM-call budget usage (L1-04, Box 3) — rendered as a header bullet when present. */
+  budget?: { used: number; max: number };
+  /** The repair loop bailed early because it stopped making progress (L1-04, Box 2). */
+  stoppedEarly?: boolean;
 }
 
 function mark(status: string): string {
@@ -40,6 +44,13 @@ export function renderReportMd(r: ReportInput): string {
     lines.push(
       `- **Validation:** ${Math.round(r.validation.greenRatio * 100)}% green (flaky: ${r.validation.flakyCount})`,
     );
+  }
+  if (r.budget) {
+    const remaining = Math.max(0, r.budget.max - r.budget.used);
+    lines.push(`- **LLM calls:** ${r.budget.used} / ${r.budget.max} (${remaining} remaining — cost guardrail)`);
+  }
+  if (r.stoppedEarly) {
+    lines.push("- **⚠ Repair:** stopped early — no progress across attempts (best-so-far suite kept)");
   }
   lines.push("");
 

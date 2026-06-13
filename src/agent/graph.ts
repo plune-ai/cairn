@@ -6,6 +6,8 @@ import { designTestCases, type TestCase } from "../design/index.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
+import { progressSnapshot, madeProgress, type ProgressSnapshot } from "./progress.js";
+import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
 import type { BrowserGateway, VerifiedElement } from "../browser/index.js";
@@ -31,6 +33,12 @@ export interface ExploreDeps {
   maxRepair: number;
   /** Live per-node progress (for CLI/log). */
   onProgress?: (event: string) => void;
+  /**
+   * Called with the page study the moment `observe` succeeds (after any consent-wall dismissal) —
+   * lets the caller persist study/snapshots immediately so a mid-run kill doesn't lose everything
+   * (L1-04, #38). Best-effort: a throw here must not break the run.
+   */
+  onStudy?: (study: PageStudy) => void | Promise<void>;
   /** Codeless mode: stop after designTestCases (cases only, no codegen/validate). */
   codeless?: boolean;
   /**
@@ -57,6 +65,9 @@ export const ExploreState = Annotation.Root({
   bestSuite: Annotation<GeneratedSuite | undefined>,
   bestValidation: Annotation<ValidationReport | undefined>,
   bestGreen: Annotation<number>({ default: () => -1, reducer: (_, next) => next }),
+  // No-progress detection (L1-04, Box 2): the previous attempt's snapshot + whether we bailed early.
+  prevSnapshot: Annotation<ProgressSnapshot | undefined>,
+  stoppedEarly: Annotation<boolean>({ default: () => false, reducer: (_, next) => next }),
 });
 
 type S = typeof ExploreState.State;
@@ -81,15 +92,42 @@ export function buildExploreGraph(deps: ExploreDeps) {
   };
 
   const routeAfterValidate = (s: S): "repair" | "done" => {
-    const green = s.bestGreen >= 1; // evaluate by the BEST, not the latest
-    if (!green && s.attempts < deps.maxRepair) return "repair";
+    if (s.bestGreen >= 1) return "done"; // fully green (by the BEST, not the latest) — done
+    if (s.stoppedEarly) return "done"; // no-progress — bail early instead of burning maxRepair (Box 2)
+    if (s.attempts < deps.maxRepair) return "repair";
     return "done";
   };
 
   return new StateGraph(ExploreState)
     .addNode("observe", async (s) => {
       deps.onProgress?.("observe — opening browser + navigating…");
-      const study = await capture(deps.gateway, s.url);
+      let study: PageStudy;
+      try {
+        study = await capture(deps.gateway, s.url);
+      } catch (e) {
+        // can't proceed: navigation/observe failed → a readable one-liner, never a raw stack (Box 1).
+        const line = describeObserveError(e, s.url);
+        deps.onProgress?.(`observe — ${line}`);
+        throw new Error(line);
+      }
+      // best-effort: decline an obvious cookie/consent wall BEFORE studying the page (privacy-
+      // preserving default — Box 1). A failed dismissal is non-fatal: keep the original study.
+      const consent = findConsentDismiss(study.elements);
+      if (consent) {
+        try {
+          deps.onProgress?.(`observe — dismissing consent wall ("${consent.name ?? consent.ref}")`);
+          const clicked = await deps.gateway.act({ kind: "click", ref: consent.ref });
+          if (clicked.ok) study = await capture(deps.gateway, ""); // re-observe (no re-navigation)
+        } catch {
+          // consent dismissal is best-effort — continue with what we already have.
+        }
+      }
+      // #38: persist the study/snapshots NOW (best-effort) so a later kill still leaves them on disk.
+      try {
+        await deps.onStudy?.(study);
+      } catch {
+        // durability is best-effort — never let it break the run.
+      }
       deps.onProgress?.(`observe — done: ${study.elements.length} elements, screenshot taken`);
       return { study };
     })
@@ -120,7 +158,15 @@ export function buildExploreGraph(deps: ExploreDeps) {
     .addNode("verifyLocators", async (s) => {
       if (!s.study) throw new Error("no study");
       deps.onProgress?.(`verifyLocators — checking ${s.study.elements.length} locators…`);
-      const verified = await deps.gateway.verify(s.study.elements);
+      let verified: VerifiedElement[];
+      try {
+        verified = await deps.gateway.verify(s.study.elements);
+      } catch (e) {
+        // degrade (Box 1): verification failed → continue with unverified locators instead of crashing.
+        const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
+        deps.onProgress?.(`verifyLocators — skipped (verification failed: ${msg})`);
+        verified = s.study.elements.map((el) => ({ ...el, count: -1, verified: false }));
+      }
       deps.onProgress?.(
         `verifyLocators — usable ${verified.filter((v) => v.verified).length}/${verified.length}`,
       );
@@ -200,6 +246,13 @@ export function buildExploreGraph(deps: ExploreDeps) {
       deps.onProgress?.(
         `validate — ${Math.round(validation.greenRatio * 100)}% green out of ${validation.results.length} tests`,
       );
+      // No-progress detection (Box 2): if this attempt did not improve on the previous one (same green
+      // ratio AND the same failing tests), bail early instead of burning the rest of maxRepair.
+      const snap = progressSnapshot(validation);
+      const noProgress = !madeProgress(s.prevSnapshot, snap);
+      if (noProgress) {
+        deps.onProgress?.("validate — stopped early: no progress vs the previous attempt (same failing tests).");
+      }
       // keep-best: accept only if BETTER and not broken (≥1 test). Otherwise keep the previous best.
       const better = validation.results.length > 0 && validation.greenRatio > s.bestGreen;
       if (!better && s.bestGreen >= 0) {
@@ -210,11 +263,13 @@ export function buildExploreGraph(deps: ExploreDeps) {
       return better
         ? {
             validation,
+            prevSnapshot: snap,
+            stoppedEarly: noProgress,
             bestSuite: s.suite,
             bestValidation: validation,
             bestGreen: validation.greenRatio,
           }
-        : { validation };
+        : { validation, prevSnapshot: snap, stoppedEarly: noProgress };
     })
     .addNode("repair", async (s) => {
       deps.onProgress?.(`repair — self-repair (attempt ${s.attempts + 1})`);
