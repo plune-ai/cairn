@@ -152,3 +152,63 @@ describe("buildExploreGraph (full pipeline + repair, fake deps)", () => {
     expect(out.attempts).toBe(1); // repair ran, but the best result was preserved
   });
 });
+
+describe("expired-session fail-fast (expectAuthenticated, L1-05)", () => {
+  const loginAnalyze: StructuredInvoke = async (schema) =>
+    schema.parse({ pageSemantics: "Sign in to continue", primaryRefs: ["e1"] });
+
+  it("session supplied + first page looks like login → rejects with re-capture guidance (names the session)", async () => {
+    const graph = buildExploreGraph({
+      ...baseDeps,
+      analyzeInvoke: loginAnalyze,
+      expectAuthenticated: true,
+      sessionName: "myapp",
+      validate: async () => green,
+      maxRepair: 0,
+    });
+    await expect(graph.invoke({ url: "http://x", runId: "r1" })).rejects.toThrow(
+      /cairn session capture/,
+    );
+    await expect(graph.invoke({ url: "http://x", runId: "r1" })).rejects.toThrow(/myapp/);
+  });
+
+  it("fail-fast happens BEFORE design/codegen (no test cases or suite produced)", async () => {
+    let designed = false;
+    const graph = buildExploreGraph({
+      ...baseDeps,
+      analyzeInvoke: loginAnalyze,
+      designInvoke: async (schema) => {
+        designed = true;
+        return schema.parse({ testCases: [] });
+      },
+      expectAuthenticated: true,
+      validate: async () => green,
+      maxRepair: 0,
+    });
+    await expect(graph.invoke({ url: "http://x", runId: "r1" })).rejects.toThrow();
+    expect(designed).toBe(false); // never reached designTestCases
+  });
+
+  it("login-looking page but NO session supplied → no throw (exploring a public login page is allowed)", async () => {
+    const graph = buildExploreGraph({
+      ...baseDeps,
+      analyzeInvoke: loginAnalyze,
+      validate: async () => green,
+      maxRepair: 0,
+    });
+    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    expect(out.analysis?.pageSemantics).toContain("Sign in");
+  });
+
+  it("session supplied but a real app page → no throw", async () => {
+    const graph = buildExploreGraph({
+      ...baseDeps,
+      expectAuthenticated: true,
+      sessionName: "myapp",
+      validate: async () => green,
+      maxRepair: 0,
+    });
+    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    expect(out.suite).toBeDefined();
+  });
+});

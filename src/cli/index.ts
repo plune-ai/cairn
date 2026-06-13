@@ -12,7 +12,7 @@ import { BOT_NAME, BOT_VERSION } from "../index.js";
 import { makeGateway } from "../browser/index.js";
 import type { BackendKind, StorageState } from "../browser/index.js";
 import { capture } from "../observe/index.js";
-import { SessionStore } from "../session/index.js";
+import { SessionStore, captureSession } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
 import { runExploration, runDesign, runAutomate } from "../agent/index.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
@@ -371,6 +371,72 @@ program
       process.stdout.write(`\nDone. Run \`cairn automate --run ${opts.run}\` to generate code for the new ATC case(s).\n`);
     },
   );
+
+/**
+ * Shared capture action for `cairn session capture` and the flat `cairn login` alias.
+ * Opens a headed browser, waits for login, and persists the session (L1-05). Never prints secrets.
+ */
+async function runCapture(opts: { url: string; name?: string; channel?: string; dir?: string }): Promise<void> {
+  const config = loadConfig(process.env);
+  process.stderr.write(`▸ Capturing a session at ${opts.url}…\n`);
+  const res = await captureSession({
+    url: opts.url,
+    name: opts.name,
+    channel: opts.channel ?? config.browser.channel,
+    dir: opts.dir,
+    onLog: (m) => process.stderr.write(`  ▸ ${m}\n`),
+  });
+  process.stdout.write(`\n✓ Session "${res.name}" saved → ${res.path}\n`);
+  process.stdout.write(`  Next: cairn explore --url <app-url> --session ${res.name}\n`);
+  process.stdout.write(`  Note: .auth/ is gitignored — never commit session files.\n`);
+}
+
+// `cairn session <capture|ls|rm>` — first-class management of saved login sessions (L1-05).
+const session = program.command("session").description("Manage saved login sessions (.auth/)");
+
+session
+  .command("capture")
+  .description("Capture a login session interactively (opens a headed browser; press Enter when logged in)")
+  .requiredOption("--url <loginUrl>", "login page URL to open")
+  .option("--name <name>", "session name (default: derived from the URL host)")
+  .option("--channel <channel>", "browser channel, e.g. chrome (helps with OAuth; default from config)")
+  .option("--dir <dir>", "sessions directory", ".auth")
+  .action(runCapture);
+
+session
+  .command("ls")
+  .description("List saved sessions")
+  .option("--dir <dir>", "sessions directory", ".auth")
+  .action(async (opts: { dir: string }) => {
+    const names = await new SessionStore(resolve(opts.dir)).list();
+    if (names.length === 0) {
+      process.stdout.write(
+        "No saved sessions. Capture one: cairn session capture --url <loginUrl> --name <name>\n",
+      );
+      return;
+    }
+    process.stdout.write(`Saved sessions (${opts.dir}):\n`);
+    for (const n of names) process.stdout.write(`  ${n}\n`);
+  });
+
+session
+  .command("rm <name>")
+  .description("Remove a saved session")
+  .option("--dir <dir>", "sessions directory", ".auth")
+  .action(async (name: string, opts: { dir: string }) => {
+    const removed = await new SessionStore(resolve(opts.dir)).remove(name);
+    process.stdout.write(removed ? `✓ Removed session "${name}".\n` : `No session "${name}" to remove.\n`);
+  });
+
+// Flat alias: `cairn login` == `cairn session capture` (issue #27 — acceptable shorthand).
+program
+  .command("login")
+  .description("Alias for `cairn session capture` — capture a login session interactively")
+  .requiredOption("--url <loginUrl>", "login page URL to open")
+  .option("--name <name>", "session name (default: derived from the URL host)")
+  .option("--channel <channel>", "browser channel, e.g. chrome (helps with OAuth; default from config)")
+  .option("--dir <dir>", "sessions directory", ".auth")
+  .action(runCapture);
 
 /**
  * Run the CLI. Shared by the primary `cairn` entry (this file) and the deprecated
