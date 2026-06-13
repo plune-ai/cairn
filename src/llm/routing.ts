@@ -1,6 +1,6 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { AppConfig, ModelTier, RolesConfig } from "../config/index.js";
-import { makeModel, type ProviderKeys } from "./factory.js";
+import { makeModel, structuredMethodFor, type ProviderKeys } from "./factory.js";
 import { meteredInvoker, cappedInvoke, retryInvoke } from "./structured.js";
 import type { CallBudget, StructuredInvoke } from "./structured.js";
 import { CostLedger, type ModelPrice } from "./cost.js";
@@ -52,7 +52,9 @@ export class RoleRouter {
    */
   invoke(role: string, tier: ModelTier): StructuredInvoke {
     const model = this.makeModelFn(tier, this.keys);
-    const metered = meteredInvoker(model, (u, m) => this.ledger.record(role, m, u), tier.model);
+    // Groq needs functionCalling (its OpenAI-compat endpoint rejects json_schema) — L1-02 fix.
+    const method = structuredMethodFor(tier.provider);
+    const metered = meteredInvoker(model, (u, m) => this.ledger.record(role, m, u), tier.model, method);
     return cappedInvoke(retryInvoke(metered), this.budget);
   }
 }

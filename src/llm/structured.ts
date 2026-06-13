@@ -9,10 +9,18 @@ import { extractUsage, type TokenUsage } from "./cost.js";
  */
 export type StructuredInvoke = <T>(schema: ZodType<T>, messages: BaseMessageLike[]) => Promise<T>;
 
+/**
+ * How LangChain should obtain structured output. `jsonSchema` (the ChatOpenAI default) sends
+ * `response_format: json_schema`, which Groq rejects for most models (e.g. llama-3.3-70b-versatile);
+ * `functionCalling` uses tool-calling instead, which those models DO support (L1-02 fix). Pick it per
+ * provider via {@link structuredMethodFor}; `undefined` leaves the LangChain default untouched.
+ */
+export type StructuredMethod = "functionCalling" | "jsonMode" | "jsonSchema";
+
 /** Real implementation on top of LangChain `withStructuredOutput`. */
-export function structuredInvoker(model: BaseChatModel): StructuredInvoke {
+export function structuredInvoker(model: BaseChatModel, method?: StructuredMethod): StructuredInvoke {
   return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
-    const structured = model.withStructuredOutput(schema);
+    const structured = model.withStructuredOutput(schema, method ? { method } : undefined);
     return (await structured.invoke(messages)) as T;
   };
 }
@@ -26,9 +34,10 @@ export function meteredInvoker(
   model: BaseChatModel,
   onUsage: (usage: TokenUsage, model: string) => void,
   modelId: string,
+  method?: StructuredMethod,
 ): StructuredInvoke {
   return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
-    const structured = model.withStructuredOutput(schema, { includeRaw: true });
+    const structured = model.withStructuredOutput(schema, { includeRaw: true, ...(method ? { method } : {}) });
     const res = (await structured.invoke(messages)) as { raw: unknown; parsed: T };
     try {
       onUsage(extractUsage(res.raw), modelId);
