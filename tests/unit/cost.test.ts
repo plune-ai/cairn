@@ -16,6 +16,12 @@ describe("priceFor", () => {
     expect(priceFor("claude-sonnet-4-6", DEFAULT_PRICING)).toEqual({ inputPer1M: 3, outputPer1M: 15 });
     expect(priceFor("claude-haiku-4-5", DEFAULT_PRICING)).toEqual({ inputPer1M: 1, outputPer1M: 5 });
   });
+  it("default table prices the Groq fast-preset worker (L1-02, approximate/movable)", () => {
+    expect(priceFor("llama-3.3-70b-versatile", DEFAULT_PRICING)).toEqual({ inputPer1M: 0.59, outputPer1M: 0.79 });
+  });
+  it("unknown Groq model → undefined price (graceful; tokens still counted, ADR-0002)", () => {
+    expect(priceFor("groq/does-not-exist", DEFAULT_PRICING)).toBeUndefined();
+  });
 });
 
 describe("extractUsage — reads usage off a LangChain message, never throws", () => {

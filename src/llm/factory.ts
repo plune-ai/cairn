@@ -6,9 +6,13 @@ import type { ModelTier } from "../config/index.js";
 /** OpenRouter — OpenAI-compatible API; we connect via the ChatOpenAI baseURL (ADR-0002). */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+/** Groq — also OpenAI-compatible; same ChatOpenAI + baseURL path, no new dependency (L1-02). */
+export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
+
 export interface ProviderKeys {
   anthropicApiKey?: string;
   openrouterApiKey?: string;
+  groqApiKey?: string;
 }
 
 /** Resolved model specification (pure result, no side effects). */
@@ -22,6 +26,14 @@ export type ModelSpec =
     }
   | {
       provider: "openrouter";
+      model: string;
+      apiKey: string;
+      baseURL: string;
+      temperature?: number;
+      supportsVision: boolean;
+    }
+  | {
+      provider: "groq";
       model: string;
       apiKey: string;
       baseURL: string;
@@ -42,6 +54,19 @@ export function resolveModelSpec(tier: ModelTier, keys: ProviderKeys): ModelSpec
       provider: "anthropic",
       model: tier.model,
       apiKey: keys.anthropicApiKey,
+      temperature: tier.temperature,
+      supportsVision: tier.supportsVision,
+    };
+  }
+  if (tier.provider === "groq") {
+    if (!keys.groqApiKey) {
+      throw new Error(`Tier '${tier.model}' requires Groq, but GROQ_API_KEY is not set.`);
+    }
+    return {
+      provider: "groq",
+      model: tier.model,
+      apiKey: keys.groqApiKey,
+      baseURL: GROQ_BASE_URL,
       temperature: tier.temperature,
       supportsVision: tier.supportsVision,
     };

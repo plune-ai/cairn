@@ -151,6 +151,34 @@ describe("loadConfig — per-role routing is additive + backward-compatible (L1-
     expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
   });
 
+  it("LLM_ROUTING=fast → worker=Groq (lowest latency/cost), reasoner=Anthropic (smart) (L1-02)", () => {
+    const cfg = loadConfig({ ...baseEnv, GROQ_API_KEY: "gsk-test", LLM_ROUTING: "fast" });
+    expect(cfg.roles?.worker?.provider).toBe("groq");
+    expect(cfg.roles?.worker?.model).toBe("llama-3.3-70b-versatile");
+    expect(cfg.roles?.reasoner?.provider).toBe("anthropic");
+    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
+    // routing does NOT touch the profile tiers (incl. the cheap judge scorer)
+    expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+  });
+
+  it("LLM_ROUTING=volume stays on OpenRouter, unchanged by L1-02 (no Groq leakage)", () => {
+    const cfg = loadConfig({ ...baseEnv, LLM_ROUTING: "volume" });
+    expect(cfg.roles?.worker?.provider).toBe("openrouter");
+    expect(cfg.roles?.worker?.model).toBe("deepseek/deepseek-chat");
+  });
+
+  it("fast preset without GROQ_API_KEY → error names ROLE 'worker' + GROQ_API_KEY (L1-02)", () => {
+    expect(() => loadConfig({ ANTHROPIC_API_KEY: "a", LLM_ROUTING: "fast" })).toThrow(
+      /Role 'worker'.*Groq/i,
+    );
+  });
+
+  it("CAIRN_GROQ_API_KEY satisfies the Groq worker key (env back-compat via createEnvReader)", () => {
+    const cfg = loadConfig({ ANTHROPIC_API_KEY: "a", CAIRN_GROQ_API_KEY: "g", LLM_ROUTING: "fast" });
+    expect(cfg.groqApiKey).toBe("g");
+    expect(cfg.roles?.worker?.provider).toBe("groq");
+  });
+
   it("missing provider key for a routed role → error names ROLE + PROVIDER", () => {
     // volume routes worker→OpenRouter, but only ANTHROPIC_API_KEY is set
     expect(() => loadConfig({ ANTHROPIC_API_KEY: "a", LLM_ROUTING: "volume" })).toThrow(
@@ -192,9 +220,22 @@ describe("loadConfig — per-role routing is additive + backward-compatible (L1-
     expect(cfg.roles).toBeUndefined();
   });
 
-  it("invalid provider in CAIRN_ROLE_* → clear error", () => {
-    expect(() => loadConfig({ ...baseEnv, CAIRN_ROLE_WORKER: "groq:llama" })).toThrow(
-      /Invalid provider 'groq'/i,
+  it("CAIRN_ROLE_WORKER=groq:model is now accepted (groq is a first-class provider, L1-02)", () => {
+    const cfg = loadConfig({
+      ANTHROPIC_API_KEY: "a",
+      GROQ_API_KEY: "g",
+      CAIRN_ROLE_WORKER: "groq:llama-3.3-70b-versatile",
+    });
+    expect(cfg.roles?.worker).toEqual({
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      supportsVision: false,
+    });
+  });
+
+  it("invalid provider in CAIRN_ROLE_* → clear error (still rejects non-providers)", () => {
+    expect(() => loadConfig({ ...baseEnv, CAIRN_ROLE_WORKER: "mistral:large" })).toThrow(
+      /Invalid provider 'mistral'/i,
     );
   });
 });

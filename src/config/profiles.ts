@@ -35,6 +35,10 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
  *
  * `volume` = run cheaply at scale (Explorbot-style): the mechanical worker steps on a
  * cheap OpenRouter model, the judgment steps (designTestCases + Pilot verdict) on Claude.
+ *
+ * `fast` (L1-02) = the one-flag low-latency preset: the worker on Groq (lowest latency/cost,
+ * OpenAI-compatible tool-calling), the reasoner still on Claude Opus (keep judgment strong).
+ * Both presets compose with `LLM_PROFILE` and stay overridable via `CAIRN_ROLE_<NAME>`.
  */
 export const ROUTING_PRESETS: Record<string, RolesConfig> = {
   volume: {
@@ -42,6 +46,14 @@ export const ROUTING_PRESETS: Record<string, RolesConfig> = {
     // supportsVision:false → identifyElements falls back to aria-only (ADR-0002, vision-optional).
     worker: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
     // reasoner = designTestCases + Pilot verdict → quality model.
+    reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
+  },
+  fast: {
+    // worker → Groq llama-3.3-70b-versatile: a current production model with tool/function-calling
+    // support (required by withStructuredOutput includeRaw). supportsVision:false → identifyElements
+    // falls back to aria-only (ADR-0002, vision-optional). Model id overridable via CAIRN_ROLE_WORKER.
+    worker: { provider: "groq", model: "llama-3.3-70b-versatile", supportsVision: false },
+    // reasoner = designTestCases + Pilot verdict → keep the quality model (Anthropic Opus).
     reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
   },
 };

@@ -86,7 +86,7 @@ program
   .option("--headed", "visible browser (debug)")
   .option("--checklist <file>", "checklist file (md/text) — guides what to test")
   .option("--style <s>", "planning style: happy | negative | coverage | all")
-  .option("--routing <preset>", "role-routing preset, e.g. volume (sets LLM_ROUTING)")
+  .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
   .action(
     async (opts: {
       url: string;
@@ -195,6 +195,7 @@ program
     const keys = {
       anthropicApiKey: config.anthropicApiKey,
       openrouterApiKey: config.openrouterApiKey,
+      groqApiKey: config.groqApiKey,
     };
     const ds = JSON.parse(await readFile(opts.dataset, "utf8")) as { items: DatasetItem[] };
 
@@ -249,7 +250,7 @@ program
   .option("--session-file <path>", "path to a storageState file")
   .option("--checklist <file>", "checklist file — guides what to test")
   .option("--style <s>", "planning style: happy | negative | coverage | all")
-  .option("--routing <preset>", "role-routing preset, e.g. volume (sets LLM_ROUTING)")
+  .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
   .option("--headed", "visible browser (debug)")
   .action(
     async (opts: {
@@ -302,7 +303,7 @@ program
   .option("--validate", "run the generated tests (a session is required)")
   .option("--session <name>", "session name for validation")
   .option("--session-file <path>", "path to storageState for validation")
-  .option("--routing <preset>", "role-routing preset, e.g. volume (sets LLM_ROUTING)")
+  .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
   .action(
     async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; routing?: string }) => {
       const env: Record<string, string | undefined> = { ...process.env };

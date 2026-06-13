@@ -31,7 +31,7 @@ The cheap LLM-as-judge scorer (`judgeTestCases`, `judgeChecklistCoverage`) keeps
 
 ### 2. Config / env override (additive over `LLM_PROFILE`)
 
-- `LLM_ROUTING=<preset>` selects a named **routing preset**. Built-in: **`volume`** = `worker`→cheap OpenRouter (`deepseek/deepseek-chat`) + `reasoner`→Anthropic (`claude-opus-4-8`).
+- `LLM_ROUTING=<preset>` selects a named **routing preset**. Built-in: **`volume`** = `worker`→cheap OpenRouter (`deepseek/deepseek-chat`) + `reasoner`→Anthropic (`claude-opus-4-8`); **`fast`** = `worker`→Groq (`llama-3.3-70b-versatile`) + `reasoner`→Anthropic (`claude-opus-4-8`) — see the L1-02 addendum.
 - `CAIRN_ROLE_WORKER` / `CAIRN_ROLE_REASONER` = `provider:model` give explicit per-role overrides (which win over a preset).
 - `LLM_PROFILE` still selects the tier map unchanged; routing layers on top (`cfg.roles?`). Unknown preset / unknown role → **warn + fall back** to the tier default. A routed role with a missing provider key → error naming **role + provider**.
 - CLI: `--routing <preset>` on `explore` / `design` / `automate`.
@@ -57,3 +57,9 @@ The cheap LLM-as-judge scorer (`judgeTestCases`, `judgeChecklistCoverage`) keeps
 - **Make `volume` a new `LLM_PROFILE`** — a profile is a *tier* map; `volume` is *role* intent, and lives orthogonally to the profile so it composes with any tier map (incl. the cheap `judge` scorer staying on the profile).
 - **Route `observe`/`ground`** — they make no LLM calls; routing there is a no-op.
 - **Track cost in Langfuse only** — Langfuse is self-hosted and optional; the run summary must work offline, so the ledger is SDK-side.
+
+## Addendum — L1-02: Groq provider + `fast` preset (2026-06-13)
+
+- **Issue:** [L1-02 (#7)](https://github.com/plune-ai/cairn/issues/7) · **In code:** `src/llm/factory.ts` (`GROQ_BASE_URL`, groq `ModelSpec`/`resolveModelSpec`), `src/config/{schema,profiles,index}.ts`, `src/llm/cost.ts`
+
+Groq joins Anthropic and OpenRouter as a **third provider**. Like OpenRouter it is **OpenAI-compatible**, so it reuses `ChatOpenAI` with `configuration.baseURL = https://api.groq.com/openai/v1` — **no new dependency** (the `makeModel` ChatOpenAI branch already covers it once the spec carries a `baseURL`; only `resolveModelSpec` gains a groq branch for the key + URL). A new built-in preset **`fast`** sets `worker`→Groq `llama-3.3-70b-versatile` and keeps `reasoner`→Anthropic `claude-opus-4-8`. The worker model is a **current Groq production model with tool/function-calling support** — non-negotiable, because the worker steps `identifyElements`/`generateCode` call `withStructuredOutput(…, { includeRaw: true })`, which compiles to function calling on OpenAI-compatible endpoints; a model without it would break structured output. As with `volume`, the Groq worker is text-only ⇒ `identifyElements` falls back to aria-only (vision-optional, ADR-0002). `volume` (OpenRouter worker) is **unchanged**, and both presets still compose with `LLM_PROFILE` and stay overridable via `CAIRN_ROLE_*`. `GROQ_API_KEY` (also `CAIRN_GROQ_API_KEY`) is read through the same `createEnvReader`; a `fast` run without it errors naming **role `worker` + `GROQ_API_KEY`**. Groq pricing in `DEFAULT_PRICING` is **approximate/movable** like OpenRouter's — an unknown Groq model degrades to a **null cost** (tokens still counted), never a crash. The worker model id stays overridable, so when Groq rotates its production line-up the preset can follow without code changes.

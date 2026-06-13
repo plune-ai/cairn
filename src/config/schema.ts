@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-/** LLM provider (ADR-0002). */
-export const ProviderSchema = z.enum(["anthropic", "openrouter"]);
+/** LLM provider (ADR-0002; Groq added in L1-02). */
+export const ProviderSchema = z.enum(["anthropic", "openrouter", "groq"]);
 export type Provider = z.infer<typeof ProviderSchema>;
 
 /** Model settings for a single tier. */
@@ -56,6 +56,7 @@ export interface AppConfig {
   roles?: RolesConfig;
   anthropicApiKey?: string;
   openrouterApiKey?: string;
+  groqApiKey?: string;
   langfuse: LangfuseConfig;
   browser: { backend: BrowserBackend; channel?: string };
   maxRepair: number;
