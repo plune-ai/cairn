@@ -1,0 +1,58 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CLI surface lock (C1-02) > cairn --help lists the four gated stubs, marked coming-soon 1`] = `
+"Usage: cairn [options] [command]
+
+@plune-ai/cairn — autonomous UI test generator
+
+Options:
+  -V, --version          output the version number
+  -h, --help             display help for command
+
+Commands:
+  observe [options]      Explore a page: ARIA snapshot + interactive elements +
+                         screenshot
+  explore [options]      Explore a page and generate methodology-based test
+                         cases (Sprint 2: no code)
+  dataset-add [options]  Add a run (study.json) to an experiment dataset
+  experiment [options]   Compare prompt versions on a dataset (B2
+                         self-improvement)
+  design [options]       Explore a page and WRITE test cases in ATC format (.md,
+                         with selectors), WITHOUT code
+  automate [options]     Generate @playwright/test from ready cases
+                         (runs/<id>/testcases/*.md)
+  promote [options]      Promote manual MTC case(s) to automatable ATC (.md
+                         only; run \`automate\` to generate code)
+  session                Manage saved login sessions (.auth/)
+  login [options]        Alias for \`cairn session capture\` — capture a login
+                         session interactively
+  ui|e2e                 Generate UI / end-to-end tests — coming soon (gated;
+                         see L-G2)
+  api                    Generate API / contract tests — coming soon (gated; see
+                         L-G2)
+  unit                   Generate unit tests — coming soon (gated; see L-G2)
+  docs                   Generate docs / doctest examples — coming soon (gated;
+                         see L-G2)
+  help [command]         display help for command
+"
+`;
+
+exports[`CLI surface lock (C1-02) > cairn explore --help is stable (flags unchanged) 1`] = `
+"Usage: cairn explore [options]
+
+Explore a page and generate methodology-based test cases (Sprint 2: no code)
+
+Options:
+  --url <url>            page URL
+  --backend <kind>       lib | cli (overrides BROWSER_BACKEND)
+  --session <name>       name of the saved session
+                         (.auth/<name>.storageState.json)
+  --session-file <path>  direct path to a storageState file (any name)
+  --headed               visible browser (debug)
+  --checklist <file>     checklist file (md/text) — guides what to test
+  --style <s>            planning style: happy | negative | coverage | all
+  --routing <preset>     role-routing preset: fast (Groq worker) | volume
+                         (OpenRouter worker) (sets LLM_ROUTING)
+  -h, --help             display help for command
+"
+`;

@@ -32,6 +32,11 @@ export default defineConfig({
         "src/agent/finalize.ts",
         "src/agent/repair-loop.ts",
         "src/agent/testcase-docs.ts",
+        // C1-01 — shared umbrella core: pure flag→config + modality registry/dispatch.
+        // (modalities/explore.ts + reporting.ts are CLI/agent glue → integration, outside the gate.)
+        "src/core/config.ts",
+        "src/core/modality.ts",
+        "src/core/registry.ts",
         "scripts/benchmark-core.ts",
       ],
       thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },
