@@ -25,6 +25,7 @@ export default defineConfig({
         "src/prompts/index.ts",
         "src/llm/structured.ts",
         "src/llm/cost.ts",
+        "scripts/benchmark-core.ts",
       ],
       thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },
     },
