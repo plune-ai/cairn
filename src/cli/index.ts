@@ -346,6 +346,17 @@ program
         );
       }
       printCost(result.cost);
+      // L1-04 (Box 4): same consolidated footer as `explore` — pass/fail · cost · budget · path.
+      process.stdout.write("\n");
+      for (const line of renderRunSummary({
+        runDir: result.runDir,
+        validation: result.validation,
+        cost: result.cost,
+        budget: result.budget,
+        stoppedEarly: result.stoppedEarly,
+      })) {
+        process.stdout.write(`${line}\n`);
+      }
     },
   );
 
