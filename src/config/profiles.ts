@@ -1,4 +1,4 @@
-import type { LlmProfile, ModelsConfig } from "./schema.js";
+import type { LlmProfile, ModelsConfig, RolesConfig } from "./schema.js";
 
 /**
  * Default model profiles (ADR-0002). Exact OpenRouter model-ids are confirmed by Spike S6;
@@ -25,5 +25,23 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
     bulk: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
     judge: { provider: "openrouter", model: "qwen/qwen-2.5-72b-instruct", supportsVision: false },
     vision: { provider: "anthropic", model: "claude-haiku-4-5", supportsVision: true },
+  },
+};
+
+/**
+ * Named role-routing presets (L1-01, ADR-0011). Layered OVER a profile's tier map:
+ * a preset only sets the routable roles (`worker`/`reasoner`); the cheap `judge`
+ * scorer tier still comes from `LLM_PROFILE`. Selected via `LLM_ROUTING=<name>`.
+ *
+ * `volume` = run cheaply at scale (Explorbot-style): the mechanical worker steps on a
+ * cheap OpenRouter model, the judgment steps (designTestCases + Pilot verdict) on Claude.
+ */
+export const ROUTING_PRESETS: Record<string, RolesConfig> = {
+  volume: {
+    // worker spans identifyElements(vision) + generateCode/repair(bulk) → one cheap text model.
+    // supportsVision:false → identifyElements falls back to aria-only (ADR-0002, vision-optional).
+    worker: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
+    // reasoner = designTestCases + Pilot verdict → quality model.
+    reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
   },
 };

@@ -1,6 +1,7 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { BaseMessageLike } from "@langchain/core/messages";
 import type { ZodType } from "zod";
+import { extractUsage, type TokenUsage } from "./cost.js";
 
 /**
  * Structured-call seam: (schema, messages) → typed result.
@@ -13,6 +14,28 @@ export function structuredInvoker(model: BaseChatModel): StructuredInvoke {
   return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
     const structured = model.withStructuredOutput(schema);
     return (await structured.invoke(messages)) as T;
+  };
+}
+
+/**
+ * Like {@link structuredInvoker}, but captures token usage off the raw LangChain response
+ * (via `withStructuredOutput(..., { includeRaw: true })`) and reports it to `onUsage` (L1-01).
+ * Node logic is unchanged — callers still receive the parsed result. Metering never throws.
+ */
+export function meteredInvoker(
+  model: BaseChatModel,
+  onUsage: (usage: TokenUsage, model: string) => void,
+  modelId: string,
+): StructuredInvoke {
+  return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
+    const structured = model.withStructuredOutput(schema, { includeRaw: true });
+    const res = (await structured.invoke(messages)) as { raw: unknown; parsed: T };
+    try {
+      onUsage(extractUsage(res.raw), modelId);
+    } catch {
+      // metering must never break the underlying call
+    }
+    return res.parsed;
   };
 }
 

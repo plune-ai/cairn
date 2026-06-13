@@ -22,6 +22,19 @@ import { structuredInvoker } from "../llm/structured.js";
 import { PromptRegistry, LOCAL_PROMPTS } from "../prompts/index.js";
 import { runExperiment, type DatasetItem, type Variant } from "../eval/experiment.js";
 import type { PageStudy } from "../observe/index.js";
+import type { CostReport } from "../llm/cost.js";
+
+/** Print the per-role cost + token summary (L1-01). */
+function printCost(cost: CostReport): void {
+  if (cost.perRole.length === 0) return;
+  process.stdout.write("\n=== Cost (per role) ===\n");
+  for (const c of cost.perRole) {
+    const usd = c.costUsd === null ? "n/a" : `$${c.costUsd.toFixed(4)}`;
+    process.stdout.write(`  ${c.role.padEnd(9)} ${c.calls} call(s)  ${c.inputTokens}→${c.outputTokens} tok  ${usd}\n`);
+  }
+  const total = cost.totalCostUsd === null ? "n/a (some prices unknown)" : `$${cost.totalCostUsd.toFixed(4)}`;
+  process.stdout.write(`  ${"total".padEnd(9)} ${cost.totalTokens} tok  ${total}\n`);
+}
 
 const program = new Command();
 program
@@ -73,6 +86,7 @@ program
   .option("--headed", "visible browser (debug)")
   .option("--checklist <file>", "checklist file (md/text) — guides what to test")
   .option("--style <s>", "planning style: happy | negative | coverage | all")
+  .option("--routing <preset>", "role-routing preset, e.g. volume (sets LLM_ROUTING)")
   .action(
     async (opts: {
       url: string;
@@ -82,9 +96,11 @@ program
       headed?: boolean;
       checklist?: string;
       style?: string;
+      routing?: string;
     }) => {
       const env: Record<string, string | undefined> = { ...process.env };
       if (opts.backend) env.BROWSER_BACKEND = opts.backend;
+      if (opts.routing) env.LLM_ROUTING = opts.routing;
       const config = loadConfig(env);
       const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
       process.stderr.write(
@@ -135,6 +151,7 @@ program
         `\n=== Pilot: ${result.pilot.verdict.toUpperCase()} ===\n  ${result.pilot.reason}\n  → ${result.pilot.guidance}\n`,
       );
     }
+    printCost(result.cost);
     process.stdout.write(`\nArtifacts: ${result.runDir}\n`);
   });
 
@@ -232,6 +249,7 @@ program
   .option("--session-file <path>", "path to a storageState file")
   .option("--checklist <file>", "checklist file — guides what to test")
   .option("--style <s>", "planning style: happy | negative | coverage | all")
+  .option("--routing <preset>", "role-routing preset, e.g. volume (sets LLM_ROUTING)")
   .option("--headed", "visible browser (debug)")
   .action(
     async (opts: {
@@ -241,8 +259,11 @@ program
       checklist?: string;
       style?: string;
       headed?: boolean;
+      routing?: string;
     }) => {
-      const config = loadConfig(process.env);
+      const env: Record<string, string | undefined> = { ...process.env };
+      if (opts.routing) env.LLM_ROUTING = opts.routing;
+      const config = loadConfig(env);
       const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
       process.stderr.write(`▸ Designing test cases for ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
       const result = await runDesign({
@@ -270,6 +291,7 @@ program
           process.stdout.write(`  ${s.name}: ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""}\n`);
         }
       }
+      printCost(result.cost);
     },
   );
 
@@ -280,9 +302,12 @@ program
   .option("--validate", "run the generated tests (a session is required)")
   .option("--session <name>", "session name for validation")
   .option("--session-file <path>", "path to storageState for validation")
+  .option("--routing <preset>", "role-routing preset, e.g. volume (sets LLM_ROUTING)")
   .action(
-    async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string }) => {
-      const config = loadConfig(process.env);
+    async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; routing?: string }) => {
+      const env: Record<string, string | undefined> = { ...process.env };
+      if (opts.routing) env.LLM_ROUTING = opts.routing;
+      const config = loadConfig(env);
       process.stderr.write(`▸ Automating cases from ${opts.run}…\n`);
       const result = await runAutomate({
         runDir: opts.run,
@@ -301,6 +326,7 @@ program
           `\nValidation: ${Math.round(result.validation.greenRatio * 100)}% green out of ${result.validation.results.length} tests\n`,
         );
       }
+      printCost(result.cost);
     },
   );
 

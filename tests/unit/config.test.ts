@@ -126,3 +126,75 @@ describe("loadConfig — browser and maxRepair", () => {
     expect(loadConfig({ ...baseEnv, QA_TESTCASE_LANG: "Deutsch" }).testCaseLanguage).toBe("Deutsch");
   });
 });
+
+describe("loadConfig — per-role routing is additive + backward-compatible (L1-01)", () => {
+  it("no routing config → roles undefined, profile/tier map unchanged (behaves as today)", () => {
+    const cfg = loadConfig({ ...baseEnv, LLM_PROFILE: "anthropic" });
+    expect(cfg.roles).toBeUndefined();
+    expect(cfg.models.reasoning.model).toBe("claude-opus-4-8");
+    expect(cfg.models.bulk.model).toBe("claude-sonnet-4-6");
+    expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+  });
+
+  it("every LLM_PROFILE still resolves its tier map unchanged (no roles)", () => {
+    expect(loadConfig({ ...baseEnv, LLM_PROFILE: "openrouter" }).roles).toBeUndefined();
+    expect(loadConfig({ ...baseEnv, LLM_PROFILE: "mixed" }).roles).toBeUndefined();
+  });
+
+  it("LLM_ROUTING=volume → worker=OpenRouter (cheap), reasoner=Anthropic (smart)", () => {
+    const cfg = loadConfig({ ...baseEnv, LLM_ROUTING: "volume" });
+    expect(cfg.roles?.worker?.provider).toBe("openrouter");
+    expect(cfg.roles?.worker?.model).toBe("deepseek/deepseek-chat");
+    expect(cfg.roles?.reasoner?.provider).toBe("anthropic");
+    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
+    // routing does NOT touch the profile tiers (incl. the cheap judge scorer)
+    expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+  });
+
+  it("missing provider key for a routed role → error names ROLE + PROVIDER", () => {
+    // volume routes worker→OpenRouter, but only ANTHROPIC_API_KEY is set
+    expect(() => loadConfig({ ANTHROPIC_API_KEY: "a", LLM_ROUTING: "volume" })).toThrow(
+      /Role 'worker'.*OpenRouter/i,
+    );
+  });
+
+  it("CAIRN_ROLE_WORKER=provider:model remaps the role", () => {
+    const cfg = loadConfig({ ...baseEnv, CAIRN_ROLE_WORKER: "openrouter:deepseek/deepseek-chat" });
+    expect(cfg.roles?.worker).toEqual({
+      provider: "openrouter",
+      model: "deepseek/deepseek-chat",
+      supportsVision: false,
+    });
+    expect(cfg.roles?.reasoner).toBeUndefined(); // unset role falls back to the tier default
+  });
+
+  it("explicit override composes over a preset (override wins)", () => {
+    const cfg = loadConfig({
+      ...baseEnv,
+      LLM_ROUTING: "volume",
+      CAIRN_ROLE_REASONER: "openrouter:deepseek/deepseek-r1",
+    });
+    expect(cfg.roles?.worker?.provider).toBe("openrouter"); // from preset
+    expect(cfg.roles?.reasoner?.model).toBe("deepseek/deepseek-r1"); // overridden
+  });
+
+  it("unknown role in CAIRN_ROLE_* → warning + ignored (falls back to default)", () => {
+    const warn = vi.fn();
+    const cfg = loadConfig({ ...baseEnv, CAIRN_ROLE_TYPO: "anthropic:claude-opus-4-8" }, { warn });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/unknown role/i));
+    expect(cfg.roles).toBeUndefined();
+  });
+
+  it("unknown LLM_ROUTING preset → warning + no routing (graceful)", () => {
+    const warn = vi.fn();
+    const cfg = loadConfig({ ...baseEnv, LLM_ROUTING: "bogus" }, { warn });
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/unknown.*routing preset/i));
+    expect(cfg.roles).toBeUndefined();
+  });
+
+  it("invalid provider in CAIRN_ROLE_* → clear error", () => {
+    expect(() => loadConfig({ ...baseEnv, CAIRN_ROLE_WORKER: "groq:llama" })).toThrow(
+      /Invalid provider 'groq'/i,
+    );
+  });
+});

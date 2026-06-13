@@ -2,6 +2,7 @@ import type { ElementRef } from "../browser/types.js";
 import type { TestCase } from "../design/index.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { Score } from "../eval/scorers.js";
+import type { CostReport } from "../llm/cost.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
 export function locatorFor(el: ElementRef): string {
@@ -20,6 +21,8 @@ export interface ReportInput {
   validation?: ValidationReport;
   scores?: Score[];
   consoleErrors?: string[];
+  /** Per-role cost + tokens (L1-01); rendered as a table when present. */
+  cost?: CostReport;
 }
 
 function mark(status: string): string {
@@ -46,6 +49,21 @@ export function renderReportMd(r: ReportInput): string {
       lines.push(`| ${s.name} | ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""} |`);
     }
     lines.push("");
+  }
+
+  if (r.cost && r.cost.perRole.length > 0) {
+    lines.push(
+      "## Cost (per role)",
+      "",
+      "| role | model(s) | calls | input tok | output tok | cost (USD) |",
+      "|---|---|---|---|---|---|",
+    );
+    for (const c of r.cost.perRole) {
+      const usd = c.costUsd === null ? "—" : `$${c.costUsd.toFixed(4)}`;
+      lines.push(`| ${c.role} | ${c.models.join(", ")} | ${c.calls} | ${c.inputTokens} | ${c.outputTokens} | ${usd} |`);
+    }
+    const total = r.cost.totalCostUsd === null ? "— (some prices unknown)" : `$${r.cost.totalCostUsd.toFixed(4)}`;
+    lines.push(`| **total** |  |  |  | ${r.cost.totalTokens} | ${total} |`, "");
   }
 
   if (r.consoleErrors && r.consoleErrors.length > 0) {

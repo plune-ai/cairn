@@ -22,6 +22,19 @@ export const ModelsConfigSchema = z.object({
 });
 export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 
+/**
+ * Named role over the tier map (L1-01). Only these two are routable; the cheap
+ * LLM-as-judge scorer keeps the `judge` tier and is NOT a role (see ADR-0011).
+ */
+export const RoleSchema = z.enum(["worker", "reasoner"]);
+export type Role = z.infer<typeof RoleSchema>;
+
+/** A role override reuses the tier shape (provider + model + vision + temperature). */
+export type RoleModel = ModelTier;
+
+/** Optional per-role routing overrides, layered over `models` (the tier map). */
+export type RolesConfig = Partial<Record<Role, RoleModel>>;
+
 export const LlmProfileSchema = z.enum(["anthropic", "openrouter", "mixed"]);
 export type LlmProfile = z.infer<typeof LlmProfileSchema>;
 
@@ -39,6 +52,8 @@ export interface LangfuseConfig {
 export interface AppConfig {
   llmProfile: LlmProfile;
   models: ModelsConfig;
+  /** L1-01 per-role routing overrides (optional; layered over `models`). */
+  roles?: RolesConfig;
   anthropicApiKey?: string;
   openrouterApiKey?: string;
   langfuse: LangfuseConfig;
