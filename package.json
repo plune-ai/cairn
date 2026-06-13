@@ -55,6 +55,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "session:save": "tsx scripts/save-session.ts",
+    "bench": "tsx scripts/benchmark.ts",
     "spike:s1-zod": "tsx scripts/spike-s1-zod.ts",
     "spike:s2-vision": "tsx scripts/spike-s2-vision.ts",
     "spike:s5-langfuse": "tsx scripts/spike-s5-langfuse.ts",
