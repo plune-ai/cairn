@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "description": "Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent (UI today; API/unit/docs planned) on LangGraph + Claude/OpenRouter, with self-improvement via Langfuse.",
   "type": "module",
-  "license": "GPL-3.0-only",
+  "license": "Apache-2.0",
   "author": "plune-ai",
   "keywords": [
     "cairn",

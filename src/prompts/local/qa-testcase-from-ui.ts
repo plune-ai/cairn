@@ -1,6 +1,6 @@
 /**
  * Main prompt for generating test cases from a page.
- * Provenance: ported from AZANIR/qa-skills → `qa-testcase-from-ui` (GPL-3.0, author — the user). ADR-0008.
+ * Provenance: ported from AZANIR/qa-skills → `qa-testcase-from-ui` (authored by the maintainer; included here under Apache-2.0). ADR-0008.
  */
 export const QA_TESTCASE_FROM_UI = `You are an experienced QA engineer. Based on the explored page, generate UI test cases.
 IMPORTANT: write all title, steps, expected in {{language}} — do not mix languages (even if the checklist/page is in another language).

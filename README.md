@@ -5,7 +5,7 @@
 [![CI](https://github.com/plune-ai/cairn/actions/workflows/ci.yml/badge.svg)](https://github.com/plune-ai/cairn/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@plune-ai/cairn)](https://www.npmjs.com/package/@plune-ai/cairn)
 [![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
-[![license](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 <!-- Inline player badge (optional): `asciinema upload docs/demo/cairn.cast`, then replace the line below
      with [![Cairn demo](https://asciinema.org/a/<id>.svg)](https://asciinema.org/a/<id>) — see docs/demo/. -->
@@ -249,8 +249,8 @@ npm run lint
 
 - **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate), written for people new to the tool.
 - **[Architecture overview](docs/architecture/overview.md)** — how the agent works inside (the LangGraph state machine, locator grounding, self-improvement).
-- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0010, incl. the interactive TUI, the `@playwright/test` output format, and the Lex-Bot → Cairn rename).
+- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0012, incl. the interactive TUI, the `@playwright/test` output format, the Lex-Bot → Cairn rename, and the Apache-2.0 relicense).
 
 ## License
 
-GPL-3.0. Methodology prompts ported from `AZANIR/qa-skills` (see `docs/adr/0008`).
+Apache-2.0 (relicensed from GPL-3.0 in 0.3.0 — see [`docs/adr/0012`](docs/adr/0012-relicense-to-apache-2.0.md)). Methodology prompts ported from `AZANIR/qa-skills` (see `docs/adr/0008`).

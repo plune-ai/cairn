@@ -68,6 +68,8 @@ Three levels (highest priority first):
 
 ## License
 
-By contributing you agree that your contributions are licensed under **GPL-3.0-only**
-(see [`LICENSE`](LICENSE)). The methodology prompts are ported from `AZANIR/qa-skills`
-(GPL-3.0); see [`docs/adr/0008-methodology-port-from-qa-skills.md`](docs/adr/0008-methodology-port-from-qa-skills.md).
+By contributing you agree that your contributions are licensed under **Apache-2.0**
+(see [`LICENSE`](LICENSE)). The methodology prompts were ported from the maintainer's own
+`AZANIR/qa-skills` and are included here under Apache-2.0; see
+[`docs/adr/0008`](docs/adr/0008-methodology-port-from-qa-skills.md) (provenance) and
+[`docs/adr/0012`](docs/adr/0012-relicense-to-apache-2.0.md) (relicense).
