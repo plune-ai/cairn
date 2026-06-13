@@ -6,8 +6,8 @@
 import "dotenv/config";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { Command } from "commander";
+import { isMainEntry } from "./is-main.js";
 import { BOT_NAME, BOT_VERSION } from "../index.js";
 import { makeGateway } from "../browser/index.js";
 import type { BackendKind, StorageState } from "../browser/index.js";
@@ -462,8 +462,8 @@ export async function runCli(): Promise<void> {
 
 // Auto-run only when invoked directly as the `cairn` bin — NOT when imported by the
 // `lex-bot` alias shim (which calls runCli() itself after printing the deprecation notice).
-const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (invokedDirectly) {
+// isMainEntry resolves symlinks, so this still fires under `npm link` and `npm i -g` on
+// Linux/macOS (where the global bin is a symlink) — a naive URL compare would silently no-op.
+if (isMainEntry(process.argv[1], import.meta.url)) {
   await runCli();
 }
