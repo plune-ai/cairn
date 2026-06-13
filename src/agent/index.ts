@@ -17,7 +17,7 @@ import { collectPriorRuns, unionPassedTitles, formatExperience } from "../eval/c
 import { ingestChecklist, formatChecklist, coverageScore, styleDirective } from "../checklist/index.js";
 import { loadKnowledge } from "../knowledge/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
-import { SessionStore, looksLikeLoginPage } from "../session/index.js";
+import { SessionStore } from "../session/index.js";
 import { buildExploreGraph } from "./graph.js";
 import type { AppConfig } from "../config/index.js";
 import type { StorageState } from "../browser/index.js";
@@ -93,7 +93,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     storageState = await sessionStore.loadFile(sessionPath);
   } else if (input.sessionName) {
     sessionPath = sessionStore.pathFor(input.sessionName);
-    storageState = await sessionStore.loadFile(sessionPath);
+    // load() (not loadFile): a missing named session yields an actionable message, not a raw ENOENT (L1-05).
+    storageState = await sessionStore.load(input.sessionName);
   }
 
   const gateway = makeGateway({
@@ -143,6 +144,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath }),
     maxRepair: cfg.maxRepair,
     onProgress,
+    // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
+    expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
+    sessionName: input.sessionName,
   });
 
   try {
@@ -156,18 +160,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     );
     if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
 
-    // Detect an expired session: a session was provided, but we ended up on the login page.
-    if (
-      sessionPath &&
-      looksLikeLoginPage(
-        out.analysis.pageSemantics,
-        out.study.elements.map((e) => e.name ?? ""),
-      )
-    ) {
-      onProgress(
-        "⚠ looks like a redirect to LOGIN — the session is probably expired. Re-capture it: npm run session:save",
-      );
-    }
+    // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
 
     // keep-best: final = the BEST suite/validation across all attempts (repair could not make it worse).
     const suite = out.bestSuite ?? out.suite;
@@ -360,7 +353,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   let storageState: StorageState | undefined;
   const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
   if (input.sessionFile) storageState = await sessionStore.loadFile(resolve(input.sessionFile));
-  else if (input.sessionName) storageState = await sessionStore.loadFile(sessionStore.pathFor(input.sessionName));
+  // load() (not loadFile): actionable message on a missing named session, not a raw ENOENT (L1-05).
+  else if (input.sessionName) storageState = await sessionStore.load(input.sessionName);
 
   const gateway = makeGateway({
     backend: cfg.browser.backend,
@@ -408,6 +402,9 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     maxRepair: 0,
     onProgress,
     codeless: true,
+    // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
+    expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
+    sessionName: input.sessionName,
   });
 
   try {
@@ -421,15 +418,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     );
     if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
 
-    if (
-      (input.sessionName || input.sessionFile) &&
-      looksLikeLoginPage(
-        out.analysis.pageSemantics,
-        out.study.elements.map((e) => e.name ?? ""),
-      )
-    ) {
-      onProgress("⚠ looks like a redirect to LOGIN — the session is expired. Re-capture it: npm run session:save");
-    }
+    // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
 
     const suite = suiteFromUrl(out.study.url);
     const verifiedByRef = new Map(out.verified.map((v) => [v.ref, v]));

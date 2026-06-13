@@ -70,7 +70,7 @@ Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
 
 ```bash
 # 1. Capture a session (opens a browser to log in)
-npm run session:save -- --url https://app.example.com/ --name myapp
+cairn session capture --url https://app.example.com/login --name myapp
 
 # 2. Design test cases (no code) — review the .md files it writes
 cairn design --url https://app.example.com/page --session myapp --checklist plan.md
@@ -86,6 +86,29 @@ cairn explore --url https://app.example.com/page --session myapp --checklist pla
 ```
 
 New here? Read the **[Getting started guide](docs/getting-started.md)** — it walks the whole cycle with explanations.
+
+## Authenticated targets
+
+Cairn explores your app **as a logged-in user**. You capture the login **once** into a Playwright
+`storageState` (cookies + localStorage); every later run reuses it — no credentials in code, no
+re-login per run.
+
+```bash
+# 1. Capture once — a real browser opens; log in by hand, then press Enter.
+cairn session capture --url https://your-app.example.com/login --name myapp
+
+# 2. Point Cairn at any page behind that login, reusing the session.
+cairn explore --url https://your-app.example.com/dashboard --session myapp
+```
+
+- **Pointing Cairn at your OWN gated app?** That's the intended flow — capture against your login page, then `explore` / `design` any authenticated page with `--session <name>`.
+- **OAuth / Google login** (blocks automated browsers): add `--channel chrome` to capture in real Chrome. Cairn falls back to the bundled browser if Chrome isn't installed.
+- **Manage sessions:** `cairn session ls` lists saved sessions; `cairn session rm <name>` deletes one. (`cairn login` is a shorthand for `cairn session capture`.)
+- **Already have a `storageState.json`?** Skip capture and pass it directly: `--session-file ./path/to/state.json`.
+- **Expired session?** If the first page Cairn sees looks like a login screen, it stops with a clear *re-capture* message instead of exploring the sign-in page.
+- **Secrets hygiene:** sessions live in `.auth/` (matching `*.storageState.json`), which is **gitignored** — never committed. Treat the files like passwords.
+
+> Working inside the repo? `npm run session:save -- --url <u> --name <s>` still works — it's a thin wrapper over the same capture logic that ships as `cairn session capture`.
 
 ## Interactive TUI
 
@@ -107,6 +130,7 @@ no arguments prints help instead of starting the UI.
 
 | Command | Purpose |
 |---|---|
+| `cairn session capture --url <loginUrl> --name <s>` | Capture a login session once → `.auth/` (`cairn login` is a shorthand; `session ls` / `session rm`) |
 | `cairn observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
 | `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>]` | Test cases only (ATC/MTC `.md` + selectors), no code |
 | `cairn automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
