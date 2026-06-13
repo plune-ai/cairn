@@ -165,6 +165,13 @@ program
     })) {
       process.stdout.write(`${line}\n`);
     }
+    // #39: explore now also writes ATC/MTC cases, and points at the review-first flow for next time.
+    if (result.testCaseFiles.length > 0) {
+      process.stdout.write(`  Cases (ATC/MTC .md): ${result.runDir}\\testcases\\\n`);
+    }
+    process.stdout.write(
+      "\nTip: to review cases BEFORE generating code, run `cairn design` then `cairn automate`.\n",
+    );
   });
 
 program
