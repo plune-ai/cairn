@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (e.g. v0.2.0). Must match the version in package.json."
+        description: "Tag to publish (e.g. v0.3.1). package.json is set to this tag automatically."
         required: true
 
 permissions:
@@ -47,16 +47,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # --- Guard (fail-fast): tag must match the version in package.json ---
-      - name: Verify package.json version matches tag
+      # --- Version: the release TAG is the source of truth. Set package.json to it for THIS publish
+      # (ephemeral — runs in CI, is NOT committed back to the repo). Build reads the version from
+      # package.json (BOT_VERSION, #30), so `cairn --version` and the published tarball both match the
+      # tag — no manual `npm version` before tagging. `--allow-same-version` keeps re-runs idempotent. ---
+      - name: Set package.json version from the release tag
         run: |
-          PKG=$(node -p "require('./package.json').version")
           WANT="${{ steps.meta.outputs.version }}"
-          if [ "$PKG" != "$WANT" ]; then
-            echo "::error::package.json version ($PKG) != release tag ($WANT). Run 'npm version' before tagging."
-            exit 1
-          fi
-          echo "Version OK: $PKG"
+          npm version "$WANT" --no-git-tag-version --allow-same-version
+          echo "package.json set to $WANT for this publish."
 
       # --- Checks (mirror of ci.yml) ---
       - name: Install Playwright Chromium (for integration tests)
