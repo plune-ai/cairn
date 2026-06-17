@@ -1,5 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type { BrowserBackend } from "../gateway.js";
+import { isMissingBrowserError, missingBrowsersError } from "../preflight.js";
 import type {
   ActResult,
   Action,
@@ -39,12 +40,20 @@ export class PlaywrightLibBackend implements BrowserBackend {
 
   constructor(private readonly opts: PlaywrightLibOptions = {}) {}
 
-  private launch(): Promise<Browser> {
-    return chromium.launch({
-      headless: this.opts.headless ?? true,
-      channel: this.opts.channel,
-      args: ["--disable-blink-features=AutomationControlled"],
-    });
+  private async launch(): Promise<Browser> {
+    try {
+      return await chromium.launch({
+        headless: this.opts.headless ?? true,
+        channel: this.opts.channel,
+        args: ["--disable-blink-features=AutomationControlled"],
+      });
+    } catch (e) {
+      // Backstop for observe/design: translate Playwright's raw "Executable doesn't exist …" into
+      // the one actionable message. Covers the case the up-front preflight can't (e.g. the
+      // headless-shell binary missing while full Chromium is present). Other launch errors pass through.
+      if (isMissingBrowserError(e)) throw missingBrowsersError();
+      throw e;
+    }
   }
 
   private async ensurePage(): Promise<Page> {
