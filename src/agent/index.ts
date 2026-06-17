@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename, join } from "node:path";
 import { readFile, readdir } from "node:fs/promises";
 import { makeGateway } from "../browser/index.js";
+import { ensureBrowsersInstalled } from "../browser/preflight.js";
 import { RoleRouter, type CostReport } from "../llm/index.js";
 import { CallBudget } from "../llm/structured.js";
 import { PromptRegistry } from "../prompts/index.js";
@@ -83,6 +84,9 @@ export interface ExploreResult {
  */
 export async function runExploration(input: ExploreInput): Promise<ExploreResult> {
   const cfg = input.config;
+  // Onboarding guardrail: explore always validates → it needs the bundled Chromium. Fail fast with a
+  // copy-paste fix BEFORE spending any LLM calls, instead of dying deep in the run (see preflight.ts).
+  ensureBrowsersInstalled();
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
 
@@ -407,6 +411,9 @@ function suiteFromUrl(url: string): string {
  */
 export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const cfg = input.config;
+  // Onboarding guardrail: design drives the bundled Chromium to observe the page (skipped when a
+  // system-browser channel is configured) → fail fast with a copy-paste fix before any LLM call.
+  ensureBrowsersInstalled({ channel: cfg.browser.channel });
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
@@ -638,6 +645,9 @@ export async function runAutomate(input: {
   let validation: ValidationReport | undefined;
   let stoppedEarly = false;
   if (input.validate) {
+    // Onboarding guardrail: validation runs the generated suite through the bundled Chromium → fail
+    // fast with a copy-paste fix before spending LLM calls on codegen (see preflight.ts).
+    ensureBrowsersInstalled();
     // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
     // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
     const result = await runRepairLoop({

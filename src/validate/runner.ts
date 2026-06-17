@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -78,16 +79,35 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   delete childEnv.NODE_OPTIONS;
 
   let stdout = "";
+  let stderr = "";
   try {
     const r = await execFileAsync(process.execPath, [PW_CLI, "test", `--config=${configPath}`], {
       maxBuffer: 64 * 1024 * 1024,
       env: childEnv,
     });
     stdout = r.stdout;
+    stderr = r.stderr;
   } catch (e) {
-    stdout = (e as { stdout?: string }).stdout ?? "";
+    // A non-zero exit (there ARE failing tests) is normal — keep the reporter output. But ALSO keep
+    // stderr: a missing-browser death writes its cause there, and dropping it is exactly what made
+    // the runner report a misleading "0% green" with no reason (the onboarding bug we're fixing).
+    const err = e as { stdout?: string; stderr?: string };
+    stdout = err.stdout ?? "";
+    stderr = err.stderr ?? "";
   }
 
+  return resultsFromRunnerOutput(stdout, stderr);
+}
+
+/**
+ * Turn the runner's stdout/stderr into per-test results — or, when the output shows the browser
+ * binary was missing, throw ONE actionable error instead of silently reporting every test "failed".
+ * Pure (no process/IO) so the failure-surfacing logic is unit-tested without spawning a runner.
+ */
+export function resultsFromRunnerOutput(stdout: string, stderr: string): RawTestResult[] {
+  if (isMissingBrowserError(stderr) || isMissingBrowserError(stdout)) {
+    throw missingBrowsersError("Playwright could not launch a browser to run the generated tests.");
+  }
   const start = stdout.indexOf("{");
   if (start < 0) return [];
   try {

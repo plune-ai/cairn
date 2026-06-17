@@ -59,16 +59,32 @@ The typical flow:
 ## Install
 
 ```bash
-npm install -g @plune-ai/cairn     # CLI
-# or as a library:
-npm install @plune-ai/cairn
+npm install -g @plune-ai/cairn      # global CLI → run `cairn …`
+# …or local / library install:
+npm install @plune-ai/cairn         # → run via `npx cairn …`
+
+# one-time: download the Chromium build Cairn drives (NOT shipped inside the npm package)
+npx playwright install chromium
 ```
 
 Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
 
+> **Two ways to invoke.** A **global** install (`-g`) puts `cairn` on your PATH, so `cairn design …` works
+> anywhere. A **local** install does *not* — run it as **`npx cairn design …`** from the folder where you
+> installed it. The examples below use the bare `cairn`; prefix them with `npx` if you installed locally.
+>
+> **Browsers are a separate download.** `npm install` pulls the Playwright *library* but not its *browser
+> binaries*. Run **`npx playwright install chromium`** once — otherwise `explore` / `automate --validate`
+> stop early with a clear *"Playwright browsers are not installed"* message (not a wall of failed tests).
+
 ## Quickstart
 
+> Installed locally (without `-g`)? Prefix every `cairn …` below with `npx` (e.g. `npx cairn design …`).
+
 ```bash
+# 0. One-time: download the browser Cairn drives (skip if you already ran it during install)
+npx playwright install chromium
+
 # 1. Capture a session (opens a browser to log in)
 cairn session capture --url https://app.example.com/login --name myapp
 
@@ -84,6 +100,9 @@ cairn automate --run runs/<id> --validate --session myapp
 # …or do everything at once:
 cairn explore --url https://app.example.com/page --session myapp --checklist plan.md
 ```
+
+The `--checklist` file steers **what** the bot tests (and is scored as coverage). Copy
+[`examples/plan.md`](examples/plan.md) — a ready-to-run checklist for `https://plune.ai/cairn` — as a starting point.
 
 New here? Read the **[Getting started guide](docs/getting-started.md)** — it walks the whole cycle with explanations.
 

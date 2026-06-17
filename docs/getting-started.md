@@ -29,8 +29,15 @@ If you review an MTC and decide it really is safe to automate, **promote** it �
 ## Step 1 — Install and configure
 
 ```bash
-npm install -g @plune-ai/cairn
+npm install -g @plune-ai/cairn      # global → `cairn …`   (local install? use `npx cairn …`)
+
+# one-time: download the Chromium build Cairn drives (not bundled with the npm package)
+npx playwright install chromium
 ```
+
+> If you skip `npx playwright install chromium`, the first command that needs a browser (`explore`,
+> `automate --validate`, `observe`, or capturing a session) stops with a clear message telling you to run
+> exactly that — so this is a quick fix, not a mysterious failure.
 
 Create a `.env` (copy `.env.example`) with at least your LLM key:
 
@@ -111,7 +118,7 @@ This runs design → code → validate → repair → a holistic "Pilot" verdict
 
 ## Guiding what gets tested
 
-- **Checklist:** pass `--checklist plan.md` (a Markdown list of what to cover) to steer the design.
+- **Checklist:** pass `--checklist plan.md` (a Markdown list of what to cover) to steer the design — copy [`examples/plan.md`](../examples/plan.md) as a starting point.
 - **Domain knowledge:** drop `*.md` files in `./knowledge/` (with a `url:` front-matter) to inject
   credentials / validation rules / notes for matching pages.
 - **Planning style:** `--style happy | negative | coverage | all`.
