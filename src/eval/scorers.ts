@@ -66,7 +66,7 @@ export function deterministicScores(input: ScoreInput): Score[] {
     const roleName = (code.match(/getByRole\(/g) ?? []).length;
     const labelText = (code.match(/getBy(Label|Text|Placeholder|AltText|Title)\(/g) ?? []).length;
     const testid = (code.match(/getByTestId\(/g) ?? []).length;
-    const css = (code.match(/\.locator\(|page\.\$\(/g) ?? []).length;
+    const css = (code.match(/\.locator\(|page\.\$\(|xpath=|>>|:nth-/g) ?? []).length;
     const total = roleName + labelText + testid + css;
     if (total > 0) {
       const weighted = roleName * 1 + labelText * 0.8 + testid * 0.5 + css * 0;

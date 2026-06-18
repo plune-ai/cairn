@@ -11,7 +11,7 @@ const CSS_OR_XPATH = /\.locator\(|page\.\$\(|xpath=|>>|:nth-/;
 // test-id — acceptable fallback but role+name is preferred (mid severity).
 const TEST_ID = /getByTestId\(/;
 // fixed sleeps + networkidle — flaky vs web-first auto-retrying assertions (high severity).
-const BAD_WAIT = /waitForTimeout\(|networkidle/;
+const BAD_WAIT = /waitForTimeout\(|waitForLoadState\(\s*['"]networkidle/;
 
 const snippet = (line: string): string => line.trim().slice(0, 120);
 

@@ -31,6 +31,14 @@ describe("lintSuite", () => {
     expect(f[0]?.file).toBe("x/login.spec.ts");
   });
 
+  it("does not flag the bare word 'networkidle' in a comment (anchored to the call form)", () => {
+    expect(lintSuite(suite("// we used to call networkidle here"))).toHaveLength(0);
+  });
+  it("still flags waitForLoadState('networkidle')", () => {
+    const f = lintSuite(suite("await page.waitForLoadState('networkidle');"));
+    expect(f.filter((x) => x.kind === "bad-wait")).toHaveLength(1);
+  });
+
   it("lintHint is empty for no findings and a bulleted block otherwise", () => {
     expect(lintHint([])).toBe("");
     const hint = lintHint([{ file: "a.spec.ts", kind: "bad-wait", detail: "waitForTimeout" }]);

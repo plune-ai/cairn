@@ -51,6 +51,16 @@ describe("deterministicScores", () => {
     expect(byName(scores, "flaky_ratio")).toBe(0);
   });
 
+  it("locator_robustness counts xpath/positional action selectors against robustness", () => {
+    const scores = deterministicScores({
+      study,
+      verified,
+      testCases,
+      suite: { files: [{ path: "x.spec.ts", content: "await page.click('xpath=//button');" }] },
+    });
+    expect(byName(scores, "locator_robustness")).toBe(0); // xpath= → css tier (weight 0)
+  });
+
   it("without validation/suite — skips the corresponding scores, does not crash", () => {
     const scores = deterministicScores({ study, verified, testCases });
     expect(byName(scores, "runs_green")).toBeUndefined();
