@@ -8,6 +8,7 @@ import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
 import { progressSnapshot, madeProgress, type ProgressSnapshot } from "./progress.js";
 import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
+import { failedTestsHint } from "./repair-loop.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
 import type { BrowserGateway, VerifiedElement } from "../browser/index.js";
@@ -287,10 +288,7 @@ export function buildExploreGraph(deps: ExploreDeps) {
     })
     .addNode("repair", async (s) => {
       deps.onProgress?.(`repair — self-repair (attempt ${s.attempts + 1})`);
-      const failed = (s.validation?.results ?? [])
-        .filter((r) => r.status !== "passed")
-        .map((r) => r.test)
-        .join(", ");
+      const failed = failedTestsHint(s.validation?.results ?? []);
       const suite = await genAndWrite(s, failed);
       return { suite, attempts: s.attempts + 1 };
     })

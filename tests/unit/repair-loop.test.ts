@@ -4,7 +4,7 @@ import type { GeneratedSuite } from "../../src/codegen/index.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 
 const report = (
-  results: { test: string; status: "passed" | "failed" | "flaky" }[],
+  results: { test: string; status: "passed" | "failed" | "flaky"; error?: string }[],
   greenRatio: number,
 ): ValidationReport => ({ results, greenRatio, flakyCount: 0 });
 
@@ -43,6 +43,17 @@ describe("runRepairLoop (L1-04 #40 — shared validate⇄repair⇄keep-best)", (
     expect(r.bestValidation.greenRatio).toBe(1);
     expect(h.hints[0]).toBeUndefined(); // initial generate — no hint
     expect(h.hints[1]).toContain("t"); // repair generate — failing test names
+  });
+
+  it("the repair hint carries the failing test's error (so codegen fixes the real cause, not just the name)", async () => {
+    const h = harness([
+      report([{ test: "TC-3", status: "failed", error: "strict mode violation: resolved to 3 elements" }], 0),
+      report([{ test: "TC-3", status: "passed" }], 1),
+    ]);
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3 });
+    expect(r.attempts).toBe(1);
+    expect(h.hints[1]).toContain("TC-3");
+    expect(h.hints[1]).toContain("strict mode violation"); // the error reaches codegen, not just the name
   });
 
   it("persistent identical failures → stop early, NOT all maxRepair", async () => {

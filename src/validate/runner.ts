@@ -16,6 +16,8 @@ export type TestStatus = "passed" | "failed" | "timedOut" | "skipped" | "interru
 export interface RawTestResult {
   title: string;
   status: TestStatus;
+  /** Playwright's failure message (assertion/strict-mode/timeout) — fed into the repair hint so codegen can fix the CAUSE. */
+  error?: string;
 }
 
 export function configContent(runDir: string, storageStatePath?: string, channel?: string, workers = 5): string {
@@ -48,9 +50,14 @@ export interface RunSpecsOptions {
   workers?: number;
 }
 
+interface PwResult {
+  status?: string;
+  error?: { message?: string };
+  errors?: { message?: string }[];
+}
 interface PwSpec {
   title: string;
-  tests?: { results?: { status?: string }[] }[];
+  tests?: { results?: PwResult[] }[];
 }
 interface PwSuite {
   specs?: PwSpec[];
@@ -64,8 +71,10 @@ function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
     for (const spec of s.specs ?? []) {
-      const status = (spec.tests?.[0]?.results?.[0]?.status ?? "failed") as TestStatus;
-      out.push({ title: spec.title, status });
+      const result = spec.tests?.[0]?.results?.[0];
+      const status = (result?.status ?? "failed") as TestStatus;
+      const error = (result?.error?.message ?? result?.errors?.[0]?.message)?.trim();
+      out.push({ title: spec.title, status, ...(error ? { error } : {}) });
     }
     for (const child of s.suites ?? []) walk(child);
   };
