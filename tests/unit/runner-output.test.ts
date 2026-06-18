@@ -40,6 +40,27 @@ describe("resultsFromRunnerOutput — surfaces a missing browser instead of a fa
     ]);
   });
 
+  it("captures the failing test's error message from the reporter JSON (for the repair hint)", () => {
+    const json = JSON.stringify({
+      suites: [
+        {
+          specs: [
+            {
+              title: "TC-3",
+              tests: [{ results: [{ status: "failed", error: { message: "strict mode violation: resolved to 3 elements" } }] }],
+            },
+          ],
+        },
+      ],
+    });
+    const out = resultsFromRunnerOutput(json, "");
+    expect(out[0]).toMatchObject({
+      title: "TC-3",
+      status: "failed",
+      error: expect.stringContaining("strict mode violation"),
+    });
+  });
+
   it("returns [] when there is no JSON and no missing-browser signature", () => {
     expect(resultsFromRunnerOutput("", "")).toEqual([]);
     expect(resultsFromRunnerOutput("some noise without json", "warning: slow test")).toEqual([]);

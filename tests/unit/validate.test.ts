@@ -31,6 +31,14 @@ describe("classifyRuns (flaky classification, Spike S4)", () => {
     expect(r.greenRatio).toBe(0);
   });
 
+  it("carries the failing test's error message onto the classified result (for repair)", () => {
+    const r = classifyRuns([
+      [{ title: "a", status: "failed", error: "strict mode violation: resolved to 3 elements" }],
+      [{ title: "a", status: "failed" }],
+    ]);
+    expect(r.results[0]?.error).toContain("strict mode violation");
+  });
+
   it("multiple tests → greenRatio = passed/total", () => {
     const r = classifyRuns([
       [

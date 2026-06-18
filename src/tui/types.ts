@@ -20,6 +20,11 @@ export interface FormValues {
   checklist?: string;
   style: PlanningStyle;
   headed: boolean;
+  // Browser/LLM config — parity with the CLI flags --backend/--channel/--routing.
+  // undefined = leave the env/default untouched (resolveConfig only overrides a SET flag).
+  backend?: "lib" | "cli";
+  channel?: string;
+  routing?: string;
   // automate-only:
   runDir?: string;
   validate?: boolean;

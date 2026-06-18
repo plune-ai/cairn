@@ -4,12 +4,13 @@ import { describe, it, expect, vi } from "vitest";
 // Mock the public API so the dashboard drives a fake run — no browser/LLM.
 vi.mock("../../../src/index.js", () => ({
   loadConfig: vi.fn(() => ({})),
+  resolveConfig: vi.fn(() => ({})),
   runExploration: vi.fn(),
   runDesign: vi.fn(),
   runAutomate: vi.fn(),
 }));
 
-import { runExploration } from "../../../src/index.js";
+import { runExploration, resolveConfig } from "../../../src/index.js";
 import { RunDashboardScreen } from "../../../src/tui/screens/run-dashboard-screen.js";
 import { RouterProvider, type RouterApi } from "../../../src/tui/router-context.js";
 
@@ -72,6 +73,36 @@ describe("RunDashboardScreen", () => {
       expect(replace).toHaveBeenCalledWith(expect.objectContaining({ name: "summary" })),
     );
     expect(lastFrame() ?? "").toContain("Observe page"); // checklist label rendered
+    unmount();
+  });
+
+  it("threads the form's backend/channel/routing into resolveConfig (CLI parity)", async () => {
+    vi.mocked(resolveConfig).mockClear().mockReturnValue({} as never); // calls accumulate across tests
+    vi.mocked(runExploration).mockResolvedValue({
+      runId: "x",
+      runDir: "runs/x",
+      study: {},
+      analysis: {},
+      testCases: [],
+      scores: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    const { unmount } = render(
+      <RouterProvider value={routerApi({})}>
+        <RunDashboardScreen
+          command="explore"
+          values={{ url: "https://x", style: "all", headed: false, channel: "chrome", backend: "cli", routing: "fast" }}
+        />
+      </RouterProvider>,
+    );
+
+    await waitFor(() => expect(resolveConfig).toHaveBeenCalled());
+    expect(vi.mocked(resolveConfig).mock.calls[0]?.[0]).toMatchObject({
+      channel: "chrome",
+      backend: "cli",
+      routing: "fast",
+    });
     unmount();
   });
 

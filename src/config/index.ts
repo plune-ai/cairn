@@ -89,6 +89,13 @@ export function loadConfig(
     throw new Error(`Invalid MAX_REPAIR='${maxRepairRaw}'. Must be a non-negative integer.`);
   }
 
+  // Playwright worker count for running the generated suite (default 5; PLAYWRIGHT_WORKERS override).
+  const workersRaw = read("PLAYWRIGHT_WORKERS");
+  const playwrightWorkers = workersRaw === undefined ? 5 : Number(workersRaw);
+  if (!Number.isInteger(playwrightWorkers) || playwrightWorkers < 1) {
+    throw new Error(`Invalid PLAYWRIGHT_WORKERS='${workersRaw}'. Must be a positive integer (≥ 1).`);
+  }
+
   // Test-case language: default English; env override accepts a name or a code (en/uk/ua).
   const langRaw = (read("QA_TESTCASE_LANG") ?? "English").trim();
   const LANG_ALIASES: Record<string, string> = {
@@ -118,6 +125,7 @@ export function loadConfig(
     },
     browser: { backend: backendResult.data, channel: read("BROWSER_CHANNEL") },
     maxRepair,
+    playwrightWorkers,
     testCaseLanguage,
   };
 }

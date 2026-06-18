@@ -119,6 +119,16 @@ describe("loadConfig — browser and maxRepair", () => {
     expect(loadConfig({ ...baseEnv, MAX_REPAIR: "4" }).maxRepair).toBe(4);
   });
 
+  it("playwrightWorkers defaults to 5, overridable via PLAYWRIGHT_WORKERS", () => {
+    expect(loadConfig({ ...baseEnv }).playwrightWorkers).toBe(5);
+    expect(loadConfig({ ...baseEnv, PLAYWRIGHT_WORKERS: "3" }).playwrightWorkers).toBe(3);
+  });
+
+  it("invalid PLAYWRIGHT_WORKERS (0 or non-numeric) throws a clear error", () => {
+    expect(() => loadConfig({ ...baseEnv, PLAYWRIGHT_WORKERS: "0" })).toThrow(/PLAYWRIGHT_WORKERS/);
+    expect(() => loadConfig({ ...baseEnv, PLAYWRIGHT_WORKERS: "abc" })).toThrow(/PLAYWRIGHT_WORKERS/);
+  });
+
   it("testCaseLanguage: defaults to English; QA_TESTCASE_LANG override (codes + names)", () => {
     expect(loadConfig({ ...baseEnv }).testCaseLanguage).toBe("English");
     expect(loadConfig({ ...baseEnv, QA_TESTCASE_LANG: "uk" }).testCaseLanguage).toBe("Ukrainian");

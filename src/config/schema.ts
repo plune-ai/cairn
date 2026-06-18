@@ -60,6 +60,8 @@ export interface AppConfig {
   langfuse: LangfuseConfig;
   browser: { backend: BrowserBackend; channel?: string };
   maxRepair: number;
+  /** Playwright worker count for running the generated tests (env PLAYWRIGHT_WORKERS; default 5). */
+  playwrightWorkers: number;
   /** Language of generated test cases (env QA_TESTCASE_LANG; default "English"). */
   testCaseLanguage: string;
 }

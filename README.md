@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/hero.png" alt="Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent for UI, API, unit & docs testing. Node.js · TypeScript · Playwright." width="100%" />
+</p>
+
 # Cairn
 
 > **Cairn — an AI that walks your system and leaves a trail of tests: UI, API, unit, docs.**

@@ -16,9 +16,11 @@ export type TestStatus = "passed" | "failed" | "timedOut" | "skipped" | "interru
 export interface RawTestResult {
   title: string;
   status: TestStatus;
+  /** Playwright's failure message (assertion/strict-mode/timeout) — fed into the repair hint so codegen can fix the CAUSE. */
+  error?: string;
 }
 
-export function configContent(runDir: string, storageStatePath?: string, channel?: string): string {
+export function configContent(runDir: string, storageStatePath?: string, channel?: string, workers = 5): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
   if (storageStatePath) parts.push(`storageState: ${JSON.stringify(storageStatePath)}`);
@@ -31,6 +33,7 @@ export function configContent(runDir: string, storageStatePath?: string, channel
 module.exports = defineConfig({
   testDir: ${JSON.stringify(join(runDir, "tests"))},
   fullyParallel: true,
+  workers: ${workers},
   retries: 0,
   reporter: 'json',
   use: ${use},
@@ -43,11 +46,18 @@ export interface RunSpecsOptions {
   storageStatePath?: string;
   /** Browser channel (chrome/msedge) → drive the system browser instead of the bundled Chromium. */
   channel?: string;
+  /** Parallel Playwright workers (default 5; from cfg.playwrightWorkers / PLAYWRIGHT_WORKERS). */
+  workers?: number;
 }
 
+interface PwResult {
+  status?: string;
+  error?: { message?: string };
+  errors?: { message?: string }[];
+}
 interface PwSpec {
   title: string;
-  tests?: { results?: { status?: string }[] }[];
+  tests?: { results?: PwResult[] }[];
 }
 interface PwSuite {
   specs?: PwSpec[];
@@ -61,8 +71,10 @@ function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
     for (const spec of s.specs ?? []) {
-      const status = (spec.tests?.[0]?.results?.[0]?.status ?? "failed") as TestStatus;
-      out.push({ title: spec.title, status });
+      const result = spec.tests?.[0]?.results?.[0];
+      const status = (result?.status ?? "failed") as TestStatus;
+      const error = (result?.error?.message ?? result?.errors?.[0]?.message)?.trim();
+      out.push({ title: spec.title, status, ...(error ? { error } : {}) });
     }
     for (const child of s.suites ?? []) walk(child);
   };
@@ -77,7 +89,7 @@ function extract(json: PwJson): RawTestResult[] {
 export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Promise<RawTestResult[]> {
   const absRunDir = resolve(runDir); // testDir in the config must be absolute
   const configPath = join(absRunDir, "playwright.config.cjs");
-  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath, opts.channel), "utf8");
+  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers), "utf8");
 
   // Do not inherit the parent runner's NODE_OPTIONS (vitest/tsx loader) — otherwise the child
   // playwright process tries to apply a foreign loader and crashes.

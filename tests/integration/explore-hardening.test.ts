@@ -36,7 +36,9 @@ describe("runExploration hardening (integration, real browser, no LLM)", () => {
     const report = JSON.parse(await readFile(join(runDir, "report.json"), "utf8")) as { partial?: boolean };
     expect(report.partial).toBe(true);
 
-    // 3) the summary points the user at that run dir.
-    expect(error!.message).toContain(runDir);
+    // 3) the summary points the user at that run dir. The summary normalizes the artifact path to
+    // forward slashes for cross-platform display, so match the POSIX form regardless of the OS
+    // separator `join` produced (on Windows runDir has backslashes; the message has forward slashes).
+    expect(error!.message).toContain(runDir.replace(/\\/g, "/"));
   });
 });

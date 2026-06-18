@@ -6,6 +6,8 @@ export type { RawTestResult, TestStatus } from "./runner.js";
 export interface TestResult {
   test: string;
   status: "passed" | "failed" | "flaky";
+  /** Playwright's failure message for a non-green test (carried into the repair hint). */
+  error?: string;
 }
 
 export interface ValidationReport {
@@ -21,11 +23,13 @@ export interface ValidationReport {
  */
 export function classifyRuns(runs: RawTestResult[][]): ValidationReport {
   const byTitle = new Map<string, string[]>();
+  const errByTitle = new Map<string, string>();
   for (const run of runs) {
     for (const t of run) {
       const arr = byTitle.get(t.title) ?? [];
       arr.push(t.status);
       byTitle.set(t.title, arr);
+      if (t.error && !errByTitle.has(t.title)) errByTitle.set(t.title, t.error); // first failure message wins
     }
   }
 
@@ -34,7 +38,9 @@ export function classifyRuns(runs: RawTestResult[][]): ValidationReport {
     const passes = statuses.filter((s) => s === "passed").length;
     const status: TestResult["status"] =
       passes === statuses.length ? "passed" : passes === 0 ? "failed" : "flaky";
-    results.push({ test: title, status });
+    const error = errByTitle.get(title);
+    // carry the failure message only for non-green tests (a passed test has nothing to repair)
+    results.push({ test: title, status, ...(status !== "passed" && error ? { error } : {}) });
   }
 
   const passed = results.filter((r) => r.status === "passed").length;
@@ -50,6 +56,8 @@ export interface ValidateOptions {
   storageStatePath?: string;
   /** Browser channel (chrome/msedge) → run the suite on the system browser (no bundled Chromium). */
   channel?: string;
+  /** Parallel Playwright workers (default 5; from cfg.playwrightWorkers / PLAYWRIGHT_WORKERS). */
+  workers?: number;
 }
 
 /**
@@ -63,7 +71,7 @@ export async function validateSuite(
   const reruns = Math.max(1, opts.reruns ?? 2);
   const runs: RawTestResult[][] = [];
   for (let i = 0; i < reruns; i += 1) {
-    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath, channel: opts.channel }));
+    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath, channel: opts.channel, workers: opts.workers }));
   }
   return classifyRuns(runs);
 }

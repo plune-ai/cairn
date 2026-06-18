@@ -7,7 +7,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { runExploration } from "../../agent/index.js";
-import { renderRunSummary } from "../../agent/summary.js";
+import { renderRunSummary, displayPath } from "../../agent/summary.js";
 import { resolveConfig } from "../config.js";
 import { printCost } from "../reporting.js";
 import { makeCliProgress } from "../progress.js";
@@ -97,7 +97,7 @@ export const exploreModality: Modality = {
     }
     // #39: explore now also writes ATC/MTC cases, and points at the review-first flow for next time.
     if (result.testCaseFiles.length > 0) {
-      ctx.out(`  Cases (ATC/MTC .md): ${result.runDir}\\testcases\\\n`);
+      ctx.out(`  Cases (ATC/MTC .md): ${displayPath(result.runDir)}/testcases/\n`);
     }
     ctx.out(
       "\nTip: to review cases BEFORE generating code, run `cairn design` then `cairn automate`.\n",
