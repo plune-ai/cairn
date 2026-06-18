@@ -44,7 +44,7 @@ describe("FormScreen", () => {
       </RouterProvider>,
     );
     await delay(40);
-    // design steps: url → session → checklist → style → headed → submit
+    // design steps: url → session → checklist → style → headed → backend → channel → routing → submit
     stdin.write("https://app.test");
     await delay(20);
     stdin.write("\r"); // url → session
@@ -55,7 +55,14 @@ describe("FormScreen", () => {
     await delay(50);
     stdin.write("\r"); // style: highlighted "all" → headed
     await delay(50);
-    stdin.write("\r"); // headed: highlighted "no" → submit
+    stdin.write("\r"); // headed: highlighted "no" → backend
+    await delay(50);
+    expect(lastFrame() ?? "").toContain("Browser backend"); // new CLI-parity config step
+    stdin.write("\r"); // backend: (default) → channel
+    await delay(50);
+    stdin.write("\r"); // channel: (default) → routing
+    await delay(50);
+    stdin.write("\r"); // routing: (default) → submit
     await delay(50);
     expect(lastFrame() ?? "").toContain("Ready to run");
     stdin.write("\r"); // submit → start the run

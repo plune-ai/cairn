@@ -15,12 +15,17 @@ type StepKey =
   | "style"
   | "headed"
   | "validate"
+  | "backend"
+  | "channel"
+  | "routing"
   | "submit";
 
 function stepsFor(command: Command): StepKey[] {
-  if (command === "automate") return ["runDir", "session", "validate", "submit"];
-  if (command === "observe") return ["url", "session", "headed", "submit"];
-  return ["url", "session", "checklist", "style", "headed", "submit"]; // explore / design
+  // backend/channel/routing give the TUI parity with the CLI flags (--backend/--channel/--routing);
+  // observe runs no LLM, so it omits routing. "(default)" on any of them leaves the env untouched.
+  if (command === "automate") return ["runDir", "session", "validate", "backend", "channel", "routing", "submit"];
+  if (command === "observe") return ["url", "session", "headed", "backend", "channel", "submit"];
+  return ["url", "session", "checklist", "style", "headed", "backend", "channel", "routing", "submit"]; // explore / design
 }
 
 const STYLE_ITEMS = [
@@ -32,6 +37,22 @@ const STYLE_ITEMS = [
 const YESNO = [
   { label: "no", value: "no" },
   { label: "yes", value: "yes" },
+];
+// "(default)" → empty value → leave env/default untouched (resolveConfig only overrides a SET flag).
+const BACKEND_ITEMS = [
+  { label: "(default — lib / env)", value: "" },
+  { label: "lib — Playwright library", value: "lib" },
+  { label: "cli — @playwright/cli wrapper", value: "cli" },
+];
+const CHANNEL_ITEMS = [
+  { label: "(default — bundled Chromium)", value: "" },
+  { label: "chrome — system Chrome", value: "chrome" },
+  { label: "msedge — system Edge", value: "msedge" },
+];
+const ROUTING_ITEMS = [
+  { label: "(default — profile/env)", value: "" },
+  { label: "fast — Groq worker", value: "fast" },
+  { label: "volume — OpenRouter worker", value: "volume" },
 ];
 
 /** Sequential wizard: one field per step, ⏎ advances, last step runs the command. */
@@ -154,6 +175,45 @@ export function FormScreen({ command, initial }: { command: Command; initial?: P
             />
           </Box>
         );
+      case "backend":
+        return (
+          <Box flexDirection="column">
+            <Text>Browser backend:</Text>
+            <SelectInput
+              items={BACKEND_ITEMS}
+              onSelect={(it) => {
+                set("backend", (it.value || undefined) as FormValues["backend"]);
+                advance();
+              }}
+            />
+          </Box>
+        );
+      case "channel":
+        return (
+          <Box flexDirection="column">
+            <Text>Browser channel (drive a system browser):</Text>
+            <SelectInput
+              items={CHANNEL_ITEMS}
+              onSelect={(it) => {
+                set("channel", it.value || undefined);
+                advance();
+              }}
+            />
+          </Box>
+        );
+      case "routing":
+        return (
+          <Box flexDirection="column">
+            <Text>LLM routing preset:</Text>
+            <SelectInput
+              items={ROUTING_ITEMS}
+              onSelect={(it) => {
+                set("routing", it.value || undefined);
+                advance();
+              }}
+            />
+          </Box>
+        );
       case "submit":
         return (
           <SubmitStep
@@ -190,6 +250,9 @@ function FormSummary({ values, command }: { values: FormValues; command: Command
     }
   }
   if (values.session) rows.push(`session: ${values.session}`);
+  if (values.backend) rows.push(`backend: ${values.backend}`);
+  if (values.channel) rows.push(`channel: ${values.channel}`);
+  if (values.routing) rows.push(`routing: ${values.routing}`);
   if (rows.length === 0) return null;
   return (
     <Box flexDirection="column" marginTop={1}>

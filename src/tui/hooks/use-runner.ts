@@ -1,6 +1,6 @@
 import { useReducer, useRef } from "react";
 import { readFile } from "node:fs/promises";
-import { loadConfig, runExploration, runDesign, runAutomate } from "../../index.js";
+import { resolveConfig, runExploration, runDesign, runAutomate } from "../../index.js";
 import type { Command, FormValues, AnyResult, NodeStatus } from "../types.js";
 import { nodesFor, seedNodes, parseNode, advanceNodes, completeNodes } from "../theme.js";
 
@@ -76,7 +76,12 @@ export function useRunner() {
 
     void (async () => {
       try {
-        const config = loadConfig(process.env);
+        // Parity with the CLI: form-chosen backend/channel/routing override env (resolveConfig only
+        // touches a SET flag), so a TUI run can match `cairn … --channel chrome` etc.
+        const config = resolveConfig(
+          { backend: values.backend, channel: values.channel, routing: values.routing },
+          process.env,
+        );
         const onProgress = (event: string): void => {
           if (!cancelled.current) dispatch({ type: "progress", event });
         };
