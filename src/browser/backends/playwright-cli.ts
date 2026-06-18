@@ -9,8 +9,28 @@ import type { ActResult, Action, Observation, ObserveOptions } from "../types.js
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
-/** Path to the @playwright/cli bin (resolved via the package's package.json). */
-const CLI_JS = join(dirname(require.resolve("@playwright/cli/package.json")), "playwright-cli.js");
+
+/**
+ * Resolve the `@playwright/cli` bin LAZILY (on first command), not at module load.
+ *
+ * `@playwright/cli` is an OPTIONAL peer dependency: it is the experimental SECONDARY backend
+ * (ADR-0003) and — critically — it drags `playwright-core@…-alpha`, the split that broke browser
+ * installs (0.3.3). Cairn now ships a single stable `playwright-core` and does NOT install
+ * `@playwright/cli` by default, so resolving it at import time would crash EVERY gateway import
+ * (incl. the default `lib` backend). Resolving on first use keeps the import safe and turns a missing
+ * package into one actionable error — only for users who actually opt into `--backend cli`.
+ */
+function resolveCliJs(): string {
+  try {
+    return join(dirname(require.resolve("@playwright/cli/package.json")), "playwright-cli.js");
+  } catch {
+    throw new Error(
+      "The 'cli' browser backend needs the optional @playwright/cli package, which is not installed.\n" +
+        "Enable it:  npm install -D @playwright/cli\n" +
+        "Or use the default in-process backend (no extra install):  --backend lib (BROWSER_BACKEND=lib).",
+    );
+  }
+}
 
 export interface PlaywrightCliOptions {
   session?: string;
@@ -32,7 +52,8 @@ export class PlaywrightCliBackend implements BrowserBackend {
   }
 
   private async run(args: string[]): Promise<string> {
-    const { stdout } = await execFileAsync(process.execPath, [CLI_JS, `-s=${this.sessionName}`, ...args], {
+    const cliJs = resolveCliJs();
+    const { stdout } = await execFileAsync(process.execPath, [cliJs, `-s=${this.sessionName}`, ...args], {
       maxBuffer: 16 * 1024 * 1024,
     });
     return stdout;

@@ -48,6 +48,8 @@ export interface ValidateOptions {
   reruns?: number;
   /** storageState file for authenticated runs (passed to playwright.config). */
   storageStatePath?: string;
+  /** Browser channel (chrome/msedge) → run the suite on the system browser (no bundled Chromium). */
+  channel?: string;
 }
 
 /**
@@ -61,7 +63,7 @@ export async function validateSuite(
   const reruns = Math.max(1, opts.reruns ?? 2);
   const runs: RawTestResult[][] = [];
   for (let i = 0; i < reruns; i += 1) {
-    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath }));
+    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath, channel: opts.channel }));
   }
   return classifyRuns(runs);
 }

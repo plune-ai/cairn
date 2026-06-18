@@ -1,10 +1,23 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createRequire } from "node:module";
 import { startFixtureServer, type FixtureServer } from "../fixtures/server.js";
 import { PlaywrightCliBackend } from "../../src/browser/backends/playwright-cli.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
 
+// @playwright/cli is an OPTIONAL peer dependency (the experimental SECONDARY backend, ADR-0003) — the
+// default install ships a single stable playwright-core and does NOT pull it (0.3.3). Skip this
+// integration test when it isn't installed, rather than crashing the suite.
+const cliAvailable = ((): boolean => {
+  try {
+    createRequire(import.meta.url).resolve("@playwright/cli/package.json");
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 // Spike S3: SECONDARY backend via @playwright/cli (spawn-based, headless). Requires an http origin.
-describe("playwright-cli backend (integration, Spike S3)", () => {
+describe.skipIf(!cliAvailable)("playwright-cli backend (integration, Spike S3)", () => {
   let server: FixtureServer;
   let backend: PlaywrightCliBackend;
 

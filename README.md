@@ -64,7 +64,8 @@ npm install -g @plune-ai/cairn      # global CLI → run `cairn …`
 npm install @plune-ai/cairn         # → run via `npx cairn …`
 
 # one-time: download the Chromium build Cairn drives (NOT shipped inside the npm package)
-npx playwright install chromium
+cairn install-browsers              # uses Cairn's OWN Playwright → always the right Chromium revision
+# …or skip the download entirely and drive your installed Google Chrome:  pass --channel chrome
 ```
 
 Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
@@ -74,16 +75,20 @@ Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
 > installed it. The examples below use the bare `cairn`; prefix them with `npx` if you installed locally.
 >
 > **Browsers are a separate download.** `npm install` pulls the Playwright *library* but not its *browser
-> binaries*. Run **`npx playwright install chromium`** once — otherwise `explore` / `automate --validate`
-> stop early with a clear *"Playwright browsers are not installed"* message (not a wall of failed tests).
+> binaries*. Run **`cairn install-browsers`** once — it uses Cairn's own Playwright, so the Chromium
+> revision always matches what Cairn launches. Prefer your existing Chrome? Skip the download and pass
+> **`--channel chrome`** (this is also how Cairn coexists with a project that already ships its *own*
+> Playwright). Otherwise `explore` / `automate --validate` stop early with a clear *"Playwright browsers
+> are not installed"* message that prints both fixes — run **`cairn doctor`** any time to see the state.
 
 ## Quickstart
 
 > Installed locally (without `-g`)? Prefix every `cairn …` below with `npx` (e.g. `npx cairn design …`).
 
 ```bash
-# 0. One-time: download the browser Cairn drives (skip if you already ran it during install)
-npx playwright install chromium
+# 0. One-time: download the browser Cairn drives (skip if you already ran it during install,
+#    or skip entirely and add --channel chrome to drive your installed Google Chrome)
+cairn install-browsers
 
 # 1. Capture a session (opens a browser to log in)
 cairn session capture --url https://app.example.com/login --name myapp
@@ -121,7 +126,7 @@ cairn explore --url https://your-app.example.com/dashboard --session myapp
 ```
 
 - **Pointing Cairn at your OWN gated app?** That's the intended flow — capture against your login page, then `explore` / `design` any authenticated page with `--session <name>`.
-- **OAuth / Google login** (blocks automated browsers): add `--channel chrome` to capture in real Chrome. Cairn falls back to the bundled browser if Chrome isn't installed.
+- **OAuth / Google login** (blocks automated browsers): add `--channel chrome` to drive your real Google Chrome. `--channel` works on `session capture`, `observe`, `design`, `explore`, and `automate --validate` — and needs **no bundled-Chromium download**, so it's also the simplest way to run inside a project that already has its own Playwright. (Without a channel, Cairn uses the bundled Chromium from `cairn install-browsers`.)
 - **Manage sessions:** `cairn session ls` lists saved sessions; `cairn session rm <name>` deletes one. (`cairn login` is a shorthand for `cairn session capture`.)
 - **Already have a `storageState.json`?** Skip capture and pass it directly: `--session-file ./path/to/state.json`.
 - **Expired session?** If the first page Cairn sees looks like a login screen, it stops with a clear *re-capture* message instead of exploring the sign-in page.
@@ -169,7 +174,7 @@ no arguments prints help instead of starting the UI.
 | `QA_TESTCASE_LANG` | test-case language (default `English`; e.g. `Ukrainian`, `uk`) |
 | `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse — **cloud or self-hosted** (optional; see [below](#optional-langfuse)) |
 | `BROWSER_BACKEND` | `lib` (in-process Playwright) \| `cli` |
-| `BROWSER_CHANNEL` | `chrome` to use real Chrome (helps with OAuth) |
+| `BROWSER_CHANNEL` | `chrome`/`msedge` → drive a system browser (helps with OAuth; **no bundled-Chromium download**, and coexists with a host project's own Playwright). Per-command flag: `--channel`. |
 | `MAX_REPAIR` | repair attempts (default 2) |
 
 - **Env var prefix:** every variable above is read as-is **or** with a `CAIRN_` prefix (e.g. `CAIRN_LLM_PROFILE`, `CAIRN_MAX_REPAIR`). Legacy `LEX_`/`LEXBOT_` prefixes still work but print a one-time deprecation warning — prefer `CAIRN_`.
@@ -229,6 +234,17 @@ deterministic scorers, self-repair, and results-level learning (best cases are r
 
 Set the three `LANGFUSE_*` variables to **additionally** get: traces in the Langfuse UI, scores/datasets
 recorded centrally, and versioned prompts (with production labels & A/B prompt experiments via `cairn experiment`).
+
+Tracing ships as an **optional add-on** (0.3.3): the `@langfuse/*` / `@opentelemetry/*` packages are no
+longer part of the default install — that keeps the footprint small and `npm audit` clean. Install them
+once to enable it:
+
+```bash
+npm install @langfuse/client @langfuse/langchain @langfuse/otel @langfuse/tracing @opentelemetry/api @opentelemetry/sdk-node
+```
+
+If the `LANGFUSE_*` variables are set but the packages aren't installed, Cairn prints a one-line hint and
+keeps running **without** tracing — it never crashes a run over telemetry.
 
 **Cloud or self-hosted — same setup.** Langfuse Cloud and a self-hosted instance are configured identically:
 you only pass the host URL and the API keys, nothing else changes.

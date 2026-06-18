@@ -16,6 +16,8 @@ export interface ConfigFlags {
   backend?: string;
   /** `--routing <preset>` → `LLM_ROUTING` (per-role routing preset, L1-01/ADR-0011). */
   routing?: string;
+  /** `--channel <chrome|msedge>` → `BROWSER_CHANNEL` (drive a system browser; no bundled Chromium). */
+  channel?: string;
 }
 
 /**
@@ -28,5 +30,6 @@ export function resolveConfig(flags: ConfigFlags = {}, env: Env = process.env): 
   const merged: Env = { ...env };
   if (flags.backend) merged.BROWSER_BACKEND = flags.backend;
   if (flags.routing) merged.LLM_ROUTING = flags.routing;
+  if (flags.channel) merged.BROWSER_CHANNEL = flags.channel;
   return loadConfig(merged);
 }

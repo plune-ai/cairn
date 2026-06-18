@@ -105,6 +105,7 @@ describe("explore parity (C1-02)", () => {
     for (const f of [
       "--url",
       "--backend",
+      "--channel",
       "--session",
       "--session-file",
       "--headed",
@@ -114,7 +115,7 @@ describe("explore parity (C1-02)", () => {
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(8); // no flags added or dropped by the refactor
+    expect(longs).toHaveLength(9); // 0.3.3: + --channel (drive system Chrome / coexist with host Playwright)
   });
 
   it("maps flags to runExploration the same way as before the refactor", async () => {

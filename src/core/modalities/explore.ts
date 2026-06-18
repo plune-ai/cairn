@@ -16,6 +16,7 @@ import type { Modality, ModalityContext } from "../modality.js";
 interface ExploreFlags {
   url: string;
   backend?: string;
+  channel?: string;
   session?: string;
   sessionFile?: string;
   headed?: boolean;
@@ -31,7 +32,7 @@ export const exploreModality: Modality = {
   async run(ctx: ModalityContext): Promise<void> {
     // commander hands the action untyped options; the command's option defs guarantee this shape.
     const opts = ctx.flags as unknown as ExploreFlags;
-    const config = resolveConfig({ backend: opts.backend, routing: opts.routing });
+    const config = resolveConfig({ backend: opts.backend, routing: opts.routing, channel: opts.channel });
     const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
     ctx.err(
       `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}…\n`,

@@ -20,14 +20,16 @@ const MISSING_BROWSER_STDERR =
 
 describe("resultsFromRunnerOutput — surfaces a missing browser instead of a fake 0% green", () => {
   it("throws an actionable error when the browser binary is missing (cause is in stderr)", () => {
-    // Even if the JSON reporter still emitted 'all failed', the real cause wins.
+    // Even if the JSON reporter still emitted 'all failed', the real cause wins. The INPUT carries
+    // Playwright's native "npx playwright install" banner (still detected); the OUTPUT message now
+    // points at cairn's own installer + the channel escape hatch (FIX C, 0.3.3).
     expect(() => resultsFromRunnerOutput(REPORTER_JSON, MISSING_BROWSER_STDERR)).toThrow(
-      /npx playwright install chromium/,
+      /cairn install-browsers/,
     );
   });
 
   it("also catches the cause when Playwright printed it to stdout", () => {
-    expect(() => resultsFromRunnerOutput(MISSING_BROWSER_STDERR, "")).toThrow(/playwright install/);
+    expect(() => resultsFromRunnerOutput(MISSING_BROWSER_STDERR, "")).toThrow(/cairn install-browsers/);
   });
 
   it("parses real pass/fail results when the run actually executed (non-zero exit is normal)", () => {

@@ -15,7 +15,7 @@ if (!c.langfuse.enabled) {
   process.exit(1);
 }
 
-const tel = initTelemetry(c);
+const tel = await initTelemetry(c);
 const model = makeModel(c.models.bulk, keysOf(c));
 
 const S = Annotation.Root({

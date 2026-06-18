@@ -1,6 +1,6 @@
 {
   "name": "@plune-ai/cairn",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent (UI today; API/unit/docs planned) on LangGraph + Claude/OpenRouter, with self-improvement via Langfuse.",
   "type": "module",
   "license": "Apache-2.0",
@@ -66,13 +66,6 @@
     "@langchain/core": "^1.1.48",
     "@langchain/langgraph": "^1.3.6",
     "@langchain/openai": "^1.4.7",
-    "@langfuse/client": "^5.4.1",
-    "@langfuse/langchain": "^5.4.1",
-    "@langfuse/otel": "^5.4.1",
-    "@langfuse/tracing": "^5.4.1",
-    "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/sdk-node": "^0.218.0",
-    "@playwright/cli": "^0.1.13",
     "@playwright/test": "^1.60.0",
     "commander": "^15.0.0",
     "dotenv": "^17.4.2",
@@ -84,7 +77,31 @@
     "react": "^18.3.1",
     "zod": "^4.4.3"
   },
+  "peerDependencies": {
+    "@langfuse/client": "^5.4.1",
+    "@langfuse/langchain": "^5.4.1",
+    "@langfuse/otel": "^5.4.1",
+    "@langfuse/tracing": "^5.4.1",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-node": "^0.218.0",
+    "@playwright/cli": "^0.1.13"
+  },
+  "peerDependenciesMeta": {
+    "@langfuse/client": { "optional": true },
+    "@langfuse/langchain": { "optional": true },
+    "@langfuse/otel": { "optional": true },
+    "@langfuse/tracing": { "optional": true },
+    "@opentelemetry/api": { "optional": true },
+    "@opentelemetry/sdk-node": { "optional": true },
+    "@playwright/cli": { "optional": true }
+  },
   "devDependencies": {
+    "@langfuse/client": "^5.4.1",
+    "@langfuse/langchain": "^5.4.1",
+    "@langfuse/otel": "^5.4.1",
+    "@langfuse/tracing": "^5.4.1",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/sdk-node": "^0.218.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.31",
     "@vitest/coverage-v8": "^4.1.8",
