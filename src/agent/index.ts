@@ -185,6 +185,17 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         // durability is best-effort
       }
     },
+    // Durability: persist the ATC/MTC case docs the moment they are designed, so a kill during the long
+    // codegen/validate phase still leaves the cases on disk (best-effort). suiteFromUrl(studyUrl)
+    // matches the final write below → identical files, no duplicates.
+    onTestCases: async (testCases, verified, studyUrl) => {
+      try {
+        const { docs } = buildTestCaseDocs(testCases, verified, suiteFromUrl(studyUrl), checklistItems.length > 0);
+        await runWriter.writeTestCases(docs);
+      } catch {
+        // durability is best-effort
+      }
+    },
     // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
     expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
     sessionName: input.sessionName,
@@ -420,9 +431,13 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const logLines: string[] = [];
+  // Parity with runExploration (#38): buffer progress into run.log, flushed incrementally so a
+  // mid-run kill leaves the log on disk. `persistLog` is wired once the run dir exists.
+  let persistLog: () => void = () => undefined; // no-op until the run dir exists
   const onProgress = (event: string): void => {
     logLines.push(`${new Date().toISOString()}  ${event}`);
     input.onProgress?.(event);
+    persistLog();
   };
 
   let storageState: StorageState | undefined;
@@ -442,6 +457,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
   const runId = randomUUID();
   const runWriter = await artifacts.openRun(runId);
+  // #38: now that the run dir exists, flush run.log on every progress event (best-effort).
+  persistLog = () => void runWriter.writeLog(logLines.join("\n")).catch(() => undefined);
 
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
@@ -476,6 +493,27 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     validate: () => Promise.resolve({ results: [], greenRatio: 0, flakyCount: 0 }),
     maxRepair: 0,
     onProgress,
+    // #38 parity with explore: persist study + snapshots the moment observe succeeds, so a mid-run
+    // kill still leaves the page study/screenshot/ARIA on disk (best-effort — never break the run).
+    onStudy: async (study) => {
+      try {
+        await runWriter.writeStudy(study);
+        if (study.screenshotB64) await runWriter.writeScreenshot(study.screenshotB64);
+        await runWriter.writeAria(study.ariaYaml);
+      } catch {
+        // durability is best-effort
+      }
+    },
+    // Durability: design's loss window is small (END right after designTestCases), but still real — flush
+    // the case docs the instant they are designed so an interrupt before the final write keeps them.
+    onTestCases: async (testCases, verified, studyUrl) => {
+      try {
+        const { docs } = buildTestCaseDocs(testCases, verified, suiteFromUrl(studyUrl), checklistItems.length > 0);
+        await runWriter.writeTestCases(docs);
+      } catch {
+        // durability is best-effort
+      }
+    },
     codeless: true,
     // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
     expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
@@ -567,6 +605,19 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
       scores,
       cost,
     };
+  } catch (err) {
+    // L1-04 parity with runExploration: write a partial report + a friendly, actionable summary
+    // instead of leaking a raw traceback. Study/snapshots/log/cases were already persisted
+    // incrementally (onStudy/persistLog/onTestCases), so the partial run is still useful on disk.
+    throw await finalizeFailure(runWriter, {
+      runId,
+      url: input.url,
+      error: err,
+      cost: router.ledger.report(),
+      budget: { used: budget.spent, max: budget.max },
+      sessionName: input.sessionName,
+      onProgress,
+    });
   } finally {
     await gateway.close();
     await telemetry.shutdown();

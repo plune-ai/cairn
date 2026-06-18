@@ -14,12 +14,15 @@ export type Sink = (s: string) => void;
 export interface IO {
   out: Sink;
   err: Sink;
+  /** Whether the err stream is a TTY → drives the in-place progress spinner (off in pipes/CI). */
+  isTTY?: boolean;
 }
 
 /** Default IO → the process streams (the production CLI path). */
 export const defaultIO: IO = {
   out: (s) => void process.stdout.write(s),
   err: (s) => void process.stderr.write(s),
+  isTTY: Boolean(process.stderr.isTTY),
 };
 
 /** Everything a modality's `run` needs: the parsed CLI flags + output sinks. */
@@ -28,6 +31,8 @@ export interface ModalityContext {
   flags: Record<string, unknown>;
   out: Sink;
   err: Sink;
+  /** Whether the err stream is a TTY → drives the in-place progress spinner (off in pipes/CI). */
+  isTTY?: boolean;
 }
 
 /**

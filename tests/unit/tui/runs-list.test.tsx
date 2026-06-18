@@ -32,7 +32,14 @@ import { RunsListScreen } from "../../../src/tui/screens/runs-list-screen.js";
 import { RouterProvider, type RouterApi } from "../../../src/tui/router-context.js";
 
 function routerApi(): RouterApi {
-  return { navigate: vi.fn(), back: vi.fn(), replace: vi.fn(), canGoBack: true, setInTextField: vi.fn() };
+  return {
+    navigate: vi.fn(),
+    back: vi.fn(),
+    replace: vi.fn(),
+    canGoBack: true,
+    setInTextField: vi.fn(),
+    setBackHandler: vi.fn(),
+  };
 }
 
 describe("RunsListScreen", () => {

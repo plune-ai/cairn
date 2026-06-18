@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import SelectInput from "ink-select-input";
 import { useRouter } from "../router-context.js";
+import { stepBack } from "../keys.js";
 import { Field } from "../components/field.js";
 import { SessionPicker } from "../components/session-picker.js";
 import type { Command, FormValues, PlanningStyle } from "../types.js";
@@ -35,7 +36,7 @@ const YESNO = [
 
 /** Sequential wizard: one field per step, ⏎ advances, last step runs the command. */
 export function FormScreen({ command, initial }: { command: Command; initial?: Partial<FormValues> }) {
-  const { navigate, setInTextField } = useRouter();
+  const { navigate, setInTextField, setBackHandler } = useRouter();
   const [values, setValues] = useState<FormValues>({ url: "", style: "all", headed: false, ...initial });
   const [stepIndex, setStepIndex] = useState(0);
 
@@ -43,11 +44,21 @@ export function FormScreen({ command, initial }: { command: Command; initial?: P
   const step: StepKey = steps[stepIndex] ?? "submit";
   const isText = step === "url" || step === "runDir" || step === "checklist";
 
-  // Suppress global q/esc only while a text field owns the keyboard.
+  // Suppress the global `q` shortcut only while a text field owns the keyboard (Escape is unaffected).
   useEffect(() => {
     setInTextField(isText);
     return () => setInTextField(false);
   }, [isText, setInTextField]);
+
+  // Escape steps back through the wizard; at step 0 it isn't consumed, so App pops to the launcher.
+  useEffect(() => {
+    setBackHandler(() => {
+      const r = stepBack(stepIndex);
+      if (r.consumed) setStepIndex(r.stepIndex);
+      return r.consumed;
+    });
+    return () => setBackHandler(null);
+  }, [stepIndex, setBackHandler]);
 
   const advance = () => setStepIndex((i) => Math.min(i + 1, steps.length - 1));
   const set = <K extends keyof FormValues>(k: K, v: FormValues[K]) =>

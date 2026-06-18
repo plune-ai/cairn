@@ -37,8 +37,10 @@ coverage/
 
 # Internal dev / agent context — NOT for the public repo
 CLAUDE.md
+.claude/
 .claude-memory/
 .claude-notes/
+graphify-out/
 
 # Local ad-hoc working files (curated examples live under examples/)
 /ATC-*.md

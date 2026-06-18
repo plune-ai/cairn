@@ -39,6 +39,13 @@ export interface ExploreDeps {
    * (L1-04, #38). Best-effort: a throw here must not break the run.
    */
   onStudy?: (study: PageStudy) => void | Promise<void>;
+  /**
+   * Called with the freshly designed cases the moment `designTestCases` succeeds — mirrors onStudy
+   * (#38) so an interrupt during the later codegen/validate phase doesn't lose the generated cases.
+   * Best-effort: a throw here must not break the run. `studyUrl` lets the caller derive the SAME
+   * suite label the final write uses, so the early and final writes produce identical files.
+   */
+  onTestCases?: (testCases: TestCase[], verified: VerifiedElement[], studyUrl: string) => void | Promise<void>;
   /** Codeless mode: stop after designTestCases (cases only, no codegen/validate). */
   codeless?: boolean;
   /**
@@ -232,6 +239,13 @@ export function buildExploreGraph(deps: ExploreDeps) {
         { invoke: deps.designInvoke, prompts: deps.prompts },
       );
       deps.onProgress?.(`designTestCases — generated ${testCases.length} cases`);
+      // Durability: persist the cases NOW (best-effort), mirroring onStudy (#38) — a kill during the later
+      // codegen/validate phase (minutes for explore) must not lose what we already designed.
+      try {
+        await deps.onTestCases?.(testCases, s.verified, s.study.url);
+      } catch {
+        // durability is best-effort — never let it break the run.
+      }
       return { testCases };
     })
     .addNode("generateCode", async (s) => {
