@@ -50,6 +50,8 @@ export interface ValidateOptions {
   storageStatePath?: string;
   /** Browser channel (chrome/msedge) → run the suite on the system browser (no bundled Chromium). */
   channel?: string;
+  /** Parallel Playwright workers (default 5; from cfg.playwrightWorkers / PLAYWRIGHT_WORKERS). */
+  workers?: number;
 }
 
 /**
@@ -63,7 +65,7 @@ export async function validateSuite(
   const reruns = Math.max(1, opts.reruns ?? 2);
   const runs: RawTestResult[][] = [];
   for (let i = 0; i < reruns; i += 1) {
-    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath, channel: opts.channel }));
+    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath, channel: opts.channel, workers: opts.workers }));
   }
   return classifyRuns(runs);
 }

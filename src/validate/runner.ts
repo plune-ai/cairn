@@ -18,7 +18,7 @@ export interface RawTestResult {
   status: TestStatus;
 }
 
-export function configContent(runDir: string, storageStatePath?: string, channel?: string): string {
+export function configContent(runDir: string, storageStatePath?: string, channel?: string, workers = 5): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
   if (storageStatePath) parts.push(`storageState: ${JSON.stringify(storageStatePath)}`);
@@ -31,6 +31,7 @@ export function configContent(runDir: string, storageStatePath?: string, channel
 module.exports = defineConfig({
   testDir: ${JSON.stringify(join(runDir, "tests"))},
   fullyParallel: true,
+  workers: ${workers},
   retries: 0,
   reporter: 'json',
   use: ${use},
@@ -43,6 +44,8 @@ export interface RunSpecsOptions {
   storageStatePath?: string;
   /** Browser channel (chrome/msedge) → drive the system browser instead of the bundled Chromium. */
   channel?: string;
+  /** Parallel Playwright workers (default 5; from cfg.playwrightWorkers / PLAYWRIGHT_WORKERS). */
+  workers?: number;
 }
 
 interface PwSpec {
@@ -77,7 +80,7 @@ function extract(json: PwJson): RawTestResult[] {
 export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Promise<RawTestResult[]> {
   const absRunDir = resolve(runDir); // testDir in the config must be absolute
   const configPath = join(absRunDir, "playwright.config.cjs");
-  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath, opts.channel), "utf8");
+  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers), "utf8");
 
   // Do not inherit the parent runner's NODE_OPTIONS (vitest/tsx loader) — otherwise the child
   // playwright process tries to apply a foreign loader and crashes.

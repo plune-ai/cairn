@@ -19,7 +19,7 @@ import { capture } from "../observe/index.js";
 import { SessionStore, captureSession } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
 import { runDesign, runAutomate } from "../agent/index.js";
-import { renderRunSummary } from "../agent/summary.js";
+import { renderRunSummary, displayPath } from "../agent/summary.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
 import { makeModel, structuredMethodFor } from "../llm/index.js";
@@ -248,13 +248,13 @@ export function buildProgram(): Command {
         }).finally(() => progress.stop());
 
         process.stdout.write(
-          `\n=== ${result.testCases.length} test cases → ${result.runDir}\\testcases\\ ===\n`,
+          `\n=== ${result.testCases.length} test cases → ${displayPath(result.runDir)}/testcases/ ===\n`,
         );
         for (const tc of result.testCases) {
           const exec = tc.execution === "manual" ? "MTC/manual" : "ATC/auto";
           process.stdout.write(`[${exec} · ${tc.priority}/${tc.type}] ${tc.title}\n`);
         }
-        for (const f of result.testCaseFiles) process.stdout.write(`  ${f}\n`);
+        for (const f of result.testCaseFiles) process.stdout.write(`  ${displayPath(f)}\n`);
         if (result.scores.length > 0) {
           process.stdout.write("\n=== Metrics ===\n");
           for (const s of result.scores) {
@@ -292,9 +292,9 @@ export function buildProgram(): Command {
           onProgress: progress.event,
         }).finally(() => progress.stop());
         process.stdout.write(
-          `\n=== ${result.specFiles.length} spec files → ${result.runDir}\\tests\\ ===\n`,
+          `\n=== ${result.specFiles.length} spec files → ${displayPath(result.runDir)}/tests/ ===\n`,
         );
-        for (const f of result.specFiles) process.stdout.write(`  ${f}\n`);
+        for (const f of result.specFiles) process.stdout.write(`  ${displayPath(f)}\n`);
         if (result.validation) {
           process.stdout.write(
             `\nValidation: ${Math.round(result.validation.greenRatio * 100)}% green out of ${result.validation.results.length} tests\n`,

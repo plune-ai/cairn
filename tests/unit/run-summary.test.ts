@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderRunSummary, classifyRunError, partialReportPayload } from "../../src/agent/summary.js";
+import { renderRunSummary, classifyRunError, partialReportPayload, displayPath } from "../../src/agent/summary.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 import type { CostReport } from "../../src/llm/cost.js";
 
@@ -100,6 +100,29 @@ describe("classifyRunError (L1-04, Box 1/3 — friendly, actionable)", () => {
     const info = classifyRunError(new Error("something odd happened"));
     expect(info.kind).toBe("unknown");
     expect(info.line.split("\n").length).toBe(1);
+  });
+});
+
+describe("displayPath — cross-platform path display (console)", () => {
+  it("normalizes Windows backslashes to forward slashes", () => {
+    expect(displayPath("runs\\abc123\\testcases")).toBe("runs/abc123/testcases");
+    expect(displayPath("C:\\proj\\runs\\x")).toBe("C:/proj/runs/x");
+  });
+
+  it("leaves POSIX paths unchanged", () => {
+    expect(displayPath("runs/abc/testcases")).toBe("runs/abc/testcases");
+  });
+
+  it("renderRunSummary shows the artifact path with forward slashes, even from a Windows-style runDir", () => {
+    const text = renderRunSummary({ runDir: "C:\\proj\\runs\\abc" }).join("\n");
+    expect(text).toContain("Artifacts: C:/proj/runs/abc");
+    expect(text).not.toContain("\\");
+  });
+
+  it("classifyRunError normalizes the partial-results path in the hint", () => {
+    const info = classifyRunError(new Error("something odd"), { runDir: "runs\\abc" });
+    expect(info.hint).toContain("runs/abc");
+    expect(info.hint).not.toContain("\\");
   });
 });
 

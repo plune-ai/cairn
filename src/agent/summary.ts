@@ -1,6 +1,16 @@
 import type { ValidationReport } from "../validate/index.js";
 import type { CostReport } from "../llm/cost.js";
 
+/**
+ * Normalize a path for DISPLAY (console/report) to forward slashes. `resolve()`/`join()` produce
+ * `\` on Windows, so a printed `runs\<id>` differs from the `runs/<id>` a mac/linux user sees and is
+ * awkward to copy-paste back into a command. Forward slashes are valid on all three platforms.
+ * Display-only — never use this to build a path that hits the filesystem.
+ */
+export function displayPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 /** What of the per-run LLM-call budget was consumed (L1-04, Box 3). */
 export interface BudgetReport {
   used: number;
@@ -56,7 +66,7 @@ export function renderRunSummary(s: RunSummaryInput): string[] {
   }
   if (s.stoppedEarly) lines.push("  ⚠ stopped early: no progress across repair attempts");
   if (s.note) lines.push(`  ${s.note}`);
-  lines.push(`  Artifacts: ${s.runDir}`);
+  lines.push(`  Artifacts: ${displayPath(s.runDir)}`);
   return lines;
 }
 
@@ -81,7 +91,7 @@ export function classifyRunError(
   const raw = err instanceof Error ? err.message : String(err);
   const first = (raw.split(/\r?\n/)[0] ?? "").trim();
   const m = first.toLowerCase();
-  const where = ctx.runDir ? ` Partial results saved to ${ctx.runDir}.` : "";
+  const where = ctx.runDir ? ` Partial results saved to ${displayPath(ctx.runDir)}.` : "";
 
   if (m.includes("budget") || m.includes("call cap") || m.includes("callbudget")) {
     return {

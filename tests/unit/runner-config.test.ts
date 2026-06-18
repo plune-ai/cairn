@@ -24,3 +24,13 @@ describe("configContent — system-browser channel threading", () => {
     expect(cfg).toMatch(/channel:\s*['"]chrome['"]/);
   });
 });
+
+describe("configContent — Playwright worker count", () => {
+  it("emits the given worker count at the top level", () => {
+    expect(configContent("/runs/x", undefined, undefined, 3)).toMatch(/workers:\s*3/);
+  });
+
+  it("defaults to 5 workers when none is provided", () => {
+    expect(configContent("/runs/x")).toMatch(/workers:\s*5/);
+  });
+});

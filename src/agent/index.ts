@@ -171,7 +171,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     styleText,
     languageText,
     runWriter,
-    validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel }),
+    validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
     maxRepair: cfg.maxRepair,
     onProgress,
     // #38: persist study + snapshots the moment observe succeeds, so a mid-run kill still leaves
@@ -710,7 +710,7 @@ export async function runAutomate(input: {
         await runWriter.writeSuite(s);
         return s;
       },
-      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel }),
+      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
       maxRepair: cfg.maxRepair,
       onProgress,
     });
