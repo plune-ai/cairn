@@ -21,6 +21,10 @@ Commands:
                          with selectors), WITHOUT code
   automate [options]     Generate @playwright/test from ready cases
                          (runs/<id>/testcases/*.md)
+  install-browsers       Download the Chromium build Cairn drives — uses Cairn's
+                         OWN Playwright, so the revision always matches
+  doctor                 Diagnose the browser setup: Cairn's Playwright version,
+                         the Chromium it expects, and how to fix a missing build
   promote [options]      Promote manual MTC case(s) to automatable ATC (.md
                          only; run \`automate\` to generate code)
   session                Manage saved login sessions (.auth/)
@@ -45,6 +49,9 @@ Explore a page and generate methodology-based test cases (Sprint 2: no code)
 Options:
   --url <url>            page URL
   --backend <kind>       lib | cli (overrides BROWSER_BACKEND)
+  --channel <channel>    system browser channel, e.g. chrome — drives your
+                         installed Chrome (no bundled-Chromium download; helps
+                         OAuth)
   --session <name>       name of the saved session
                          (.auth/<name>.storageState.json)
   --session-file <path>  direct path to a storageState file (any name)

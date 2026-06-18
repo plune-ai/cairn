@@ -84,9 +84,11 @@ export interface ExploreResult {
  */
 export async function runExploration(input: ExploreInput): Promise<ExploreResult> {
   const cfg = input.config;
-  // Onboarding guardrail: explore always validates → it needs the bundled Chromium. Fail fast with a
+  // Onboarding guardrail: explore observes + validates → it needs a browser. Fail fast with a
   // copy-paste fix BEFORE spending any LLM calls, instead of dying deep in the run (see preflight.ts).
-  ensureBrowsersInstalled();
+  // FIX B (0.3.3): pass the channel — skipped when a system browser (chrome/msedge) is configured,
+  // since that path needs no bundled Chromium (the bug: this fired even with BROWSER_CHANNEL=chrome).
+  ensureBrowsersInstalled({ channel: cfg.browser.channel });
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
 
@@ -129,7 +131,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     channel: cfg.browser.channel,
     headless: !input.headed,
   });
-  const telemetry = initTelemetry(cfg);
+  const telemetry = await initTelemetry(cfg);
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
   const runId = randomUUID();
@@ -169,7 +171,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     styleText,
     languageText,
     runWriter,
-    validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath }),
+    validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel }),
     maxRepair: cfg.maxRepair,
     onProgress,
     // #38: persist study + snapshots the moment observe succeeds, so a mid-run kill still leaves
@@ -435,7 +437,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     channel: cfg.browser.channel,
     headless: !input.headed,
   });
-  const telemetry = initTelemetry(cfg);
+  const telemetry = await initTelemetry(cfg);
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
   const runId = randomUUID();
@@ -645,9 +647,10 @@ export async function runAutomate(input: {
   let validation: ValidationReport | undefined;
   let stoppedEarly = false;
   if (input.validate) {
-    // Onboarding guardrail: validation runs the generated suite through the bundled Chromium → fail
-    // fast with a copy-paste fix before spending LLM calls on codegen (see preflight.ts).
-    ensureBrowsersInstalled();
+    // Onboarding guardrail: validation runs the generated suite → fail fast with a copy-paste fix
+    // before spending LLM calls on codegen. FIX B (0.3.3): pass the channel — skipped when a system
+    // browser is configured (the bug: `automate --validate` fired this even with BROWSER_CHANNEL=chrome).
+    ensureBrowsersInstalled({ channel: cfg.browser.channel });
     // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
     // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
     const result = await runRepairLoop({
@@ -656,7 +659,7 @@ export async function runAutomate(input: {
         await runWriter.writeSuite(s);
         return s;
       },
-      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath }),
+      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel }),
       maxRepair: cfg.maxRepair,
       onProgress,
     });

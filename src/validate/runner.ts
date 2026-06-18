@@ -18,11 +18,15 @@ export interface RawTestResult {
   status: TestStatus;
 }
 
-function configContent(runDir: string, storageStatePath?: string): string {
+export function configContent(runDir: string, storageStatePath?: string, channel?: string): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
-  const use = storageStatePath
-    ? `{ headless: true, storageState: ${JSON.stringify(storageStatePath)}, ${launchOpts} }`
-    : `{ headless: true, ${launchOpts} }`;
+  const parts = ["headless: true"];
+  if (storageStatePath) parts.push(`storageState: ${JSON.stringify(storageStatePath)}`);
+  // FIX B (0.3.3): when a channel is set, the runner drives the SYSTEM browser (chrome/msedge) —
+  // no bundled Chromium needed, so cairn works inside projects that already have their own Playwright.
+  if (channel) parts.push(`channel: ${JSON.stringify(channel)}`);
+  parts.push(launchOpts);
+  const use = `{ ${parts.join(", ")} }`;
   return `const { defineConfig } = require(${JSON.stringify(PW_TEST)});
 module.exports = defineConfig({
   testDir: ${JSON.stringify(join(runDir, "tests"))},
@@ -37,6 +41,8 @@ module.exports = defineConfig({
 export interface RunSpecsOptions {
   /** storageState file for authenticated runs (use.storageState). */
   storageStatePath?: string;
+  /** Browser channel (chrome/msedge) → drive the system browser instead of the bundled Chromium. */
+  channel?: string;
 }
 
 interface PwSpec {
@@ -71,7 +77,7 @@ function extract(json: PwJson): RawTestResult[] {
 export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Promise<RawTestResult[]> {
   const absRunDir = resolve(runDir); // testDir in the config must be absolute
   const configPath = join(absRunDir, "playwright.config.cjs");
-  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath), "utf8");
+  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath, opts.channel), "utf8");
 
   // Do not inherit the parent runner's NODE_OPTIONS (vitest/tsx loader) — otherwise the child
   // playwright process tries to apply a foreign loader and crashes.

@@ -49,17 +49,23 @@ describe("isMissingBrowserError — recognizes Playwright's missing-browser sign
 });
 
 describe("missingBrowsersError — clean, actionable error", () => {
-  it("carries the install command and a stable name (no stack noise needed)", () => {
+  it("points at cairn's own installer + the channel escape hatch (NOT the wrong-Playwright npx hint)", () => {
     const e = missingBrowsersError();
     expect(e).toBeInstanceOf(Error);
     expect(e.name).toBe("BrowsersNotInstalledError");
-    expect(e.message).toContain("npx playwright install chromium");
-    // The error it produces must be recognizable by our own detector (round-trip).
+    // FIX C (0.3.3): the two exact fixes — cairn's own installer (right playwright-core) and the
+    // no-download system-Chrome path. The bare `npx playwright install` hint resolved to the host
+    // project's Playwright and never fixed it, so it must be gone.
+    expect(e.message).toContain("cairn install-browsers");
+    expect(e.message).toContain("--channel chrome");
+    expect(e.message).not.toMatch(/npx playwright install/);
+    // The error it produces must be recognizable by our own detector (round-trip, via the error name).
     expect(isMissingBrowserError(e)).toBe(true);
   });
 
-  it("INSTALL_BROWSERS_HINT is the single source of the command string", () => {
-    expect(INSTALL_BROWSERS_HINT).toContain("npx playwright install chromium");
+  it("INSTALL_BROWSERS_HINT names cairn's first-class installer", () => {
+    expect(INSTALL_BROWSERS_HINT).toContain("cairn install-browsers");
+    expect(INSTALL_BROWSERS_HINT).not.toMatch(/npx playwright install/);
   });
 });
 
@@ -67,7 +73,7 @@ describe("ensureBrowsersInstalled — preflight gate", () => {
   it("throws an actionable error when the bundled Chromium is absent", () => {
     h.exePath = "C:\\ms-playwright\\chromium\\chrome.exe";
     h.exists = false; // path computed, but the binary is not on disk
-    expect(() => ensureBrowsersInstalled()).toThrow(/npx playwright install chromium/);
+    expect(() => ensureBrowsersInstalled()).toThrow(/cairn install-browsers/);
     expect(chromiumInstalled()).toBe(false);
   });
 

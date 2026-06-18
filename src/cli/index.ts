@@ -14,6 +14,7 @@ import { isMainEntry } from "./is-main.js";
 import { BOT_NAME, BOT_VERSION } from "../index.js";
 import { makeGateway } from "../browser/index.js";
 import type { BackendKind, StorageState } from "../browser/index.js";
+import { installBrowsers, doctorReport } from "../browser/install.js";
 import { capture } from "../observe/index.js";
 import { SessionStore, captureSession } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
@@ -64,16 +65,17 @@ export function buildProgram(): Command {
     .description("Explore a page: ARIA snapshot + interactive elements + screenshot")
     .requiredOption("--url <url>", "page URL")
     .option("--backend <kind>", "lib | cli", "lib")
+    .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download)")
     .option("--session <name>", "name of the saved session (.auth/<name>.storageState.json)")
     .option("--out <file>", "where to save the screenshot", "observe-screenshot.png")
-    .action(async (opts: { url: string; backend: string; session?: string; out: string }) => {
+    .action(async (opts: { url: string; backend: string; channel?: string; session?: string; out: string }) => {
       const backend: BackendKind = opts.backend === "cli" ? "cli" : "lib";
       const config = loadConfig(process.env);
       let storageState: StorageState | undefined;
       if (opts.session) {
         storageState = await new SessionStore(resolve(".auth")).load(opts.session);
       }
-      const gateway = makeGateway({ backend, storageState, channel: config.browser.channel });
+      const gateway = makeGateway({ backend, storageState, channel: opts.channel ?? config.browser.channel });
       try {
         const study = await capture(gateway, opts.url);
         const interactive = study.elements.filter((e) => e.interactive);
@@ -100,6 +102,7 @@ export function buildProgram(): Command {
     .description("Explore a page and generate methodology-based test cases (Sprint 2: no code)")
     .requiredOption("--url <url>", "page URL")
     .option("--backend <kind>", "lib | cli (overrides BROWSER_BACKEND)")
+    .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download; helps OAuth)")
     .option("--session <name>", "name of the saved session (.auth/<name>.storageState.json)")
     .option("--session-file <path>", "direct path to a storageState file (any name)")
     .option("--headed", "visible browser (debug)")
@@ -209,6 +212,7 @@ export function buildProgram(): Command {
     .requiredOption("--url <url>", "page URL")
     .option("--session <name>", "name of the saved session")
     .option("--session-file <path>", "path to a storageState file")
+    .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download; helps OAuth)")
     .option("--checklist <file>", "checklist file — guides what to test")
     .option("--style <s>", "planning style: happy | negative | coverage | all")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
@@ -218,12 +222,13 @@ export function buildProgram(): Command {
         url: string;
         session?: string;
         sessionFile?: string;
+        channel?: string;
         checklist?: string;
         style?: string;
         headed?: boolean;
         routing?: string;
       }) => {
-        const config = resolveConfig({ routing: opts.routing });
+        const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
         process.stderr.write(`▸ Designing test cases for ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
         const result = await runDesign({
@@ -262,10 +267,11 @@ export function buildProgram(): Command {
     .option("--validate", "run the generated tests (a session is required)")
     .option("--session <name>", "session name for validation")
     .option("--session-file <path>", "path to storageState for validation")
+    .option("--channel <channel>", "system browser channel, e.g. chrome — validate on your installed Chrome (no bundled-Chromium download)")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
     .action(
-      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; routing?: string }) => {
-        const config = resolveConfig({ routing: opts.routing });
+      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string }) => {
+        const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         process.stderr.write(`▸ Automating cases from ${opts.run}…\n`);
         const result = await runAutomate({
           runDir: opts.run,
@@ -298,6 +304,30 @@ export function buildProgram(): Command {
         }
       },
     );
+
+  // Browser setup (0.3.3): install Chromium via CAIRN'S OWN Playwright (matches the version cairn
+  // launches), and diagnose the setup. These replace the generic `npx playwright install` guidance.
+  program
+    .command("install-browsers")
+    .description("Download the Chromium build Cairn drives — uses Cairn's OWN Playwright, so the revision always matches")
+    .action(async () => {
+      const res = await installBrowsers({ onLog: (s) => process.stderr.write(s) });
+      if (res.ok) {
+        process.stdout.write(`\n✓ Chromium installed for Cairn's Playwright ${res.playwrightVersion}.\n`);
+      } else {
+        process.stderr.write(
+          "\n✗ Browser install failed (see output above). You can also drive system Chrome with --channel chrome.\n",
+        );
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("doctor")
+    .description("Diagnose the browser setup: Cairn's Playwright version, the Chromium it expects, and how to fix a missing build")
+    .action(() => {
+      for (const line of doctorReport()) process.stdout.write(`${line}\n`);
+    });
 
   program
     .command("promote")

@@ -32,12 +32,14 @@ If you review an MTC and decide it really is safe to automate, **promote** it �
 npm install -g @plune-ai/cairn      # global → `cairn …`   (local install? use `npx cairn …`)
 
 # one-time: download the Chromium build Cairn drives (not bundled with the npm package)
-npx playwright install chromium
+cairn install-browsers              # uses Cairn's own Playwright → the matching Chromium revision
+# …or skip the download and drive your installed Google Chrome by adding --channel chrome
 ```
 
-> If you skip `npx playwright install chromium`, the first command that needs a browser (`explore`,
-> `automate --validate`, `observe`, or capturing a session) stops with a clear message telling you to run
-> exactly that — so this is a quick fix, not a mysterious failure.
+> If you skip `cairn install-browsers`, the first command that needs a browser (`explore`,
+> `automate --validate`, `observe`, or capturing a session) stops with a clear message telling you the
+> two ways to fix it — `cairn install-browsers` or `--channel chrome` — so it's a quick fix, not a
+> mysterious failure. Run `cairn doctor` any time to check the browser setup.
 
 Create a `.env` (copy `.env.example`) with at least your LLM key:
 
