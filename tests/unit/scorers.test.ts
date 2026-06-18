@@ -47,6 +47,7 @@ describe("deterministicScores", () => {
     expect(byName(scores, "verified_ratio")).toBe(0.5); // 1/2 verified
     expect(byName(scores, "grounding")).toBe(0.5); // tc-1 grounded (e1), tc-2 not (e2 unverified)
     expect(byName(scores, "locator_quality")).toBeCloseTo(2 / 3, 5); // 2 user-facing vs 1 css/testid
+    expect(byName(scores, "locator_robustness")).toBeCloseTo(1.8 / 3, 5); // role 1 + label .8 + css 0 over 3
     expect(byName(scores, "flaky_ratio")).toBe(0);
   });
 
