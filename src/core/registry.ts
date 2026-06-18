@@ -44,5 +44,5 @@ export async function runModality(
     for (const line of gatedNotice(m)) io.out(`${line}\n`);
     return;
   }
-  await m.run({ flags, out: io.out, err: io.err });
+  await m.run({ flags, out: io.out, err: io.err, isTTY: io.isTTY });
 }

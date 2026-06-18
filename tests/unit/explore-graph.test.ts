@@ -6,6 +6,7 @@ import type { RunWriter } from "../../src/artifacts/index.js";
 import type { BrowserGateway, Observation, Action } from "../../src/browser/index.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 import type { PageStudy } from "../../src/observe/index.js";
+import type { TestCase } from "../../src/design/index.js";
 
 /** A StructuredInvoke that ignores its args and yields a fixed value (no LLM). */
 const fixed = (value: unknown): StructuredInvoke =>
@@ -233,5 +234,49 @@ describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]?.elements.some((e) => e.name === "Reject all")).toBe(false); // re-observed after dismissal
     expect(seen[0]?.elements.some((e) => e.name === "Email")).toBe(true);
+  });
+});
+
+describe("buildExploreGraph — durable test cases (onTestCases)", () => {
+  it("hands the cases to onTestCases as soon as designTestCases succeeds, before codegen/validate can fail", async () => {
+    const seen: TestCase[][] = [];
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const graph = buildExploreGraph(
+      makeDeps({
+        gateway,
+        onTestCases: (cases) => {
+          seen.push(cases);
+        },
+        // a later node throws → proves the cases were already persisted before the failure.
+        validate: async () => {
+          throw new Error("boom after design");
+        },
+      }),
+    );
+
+    await graph.invoke({ url: "https://app.test/page", runId: "r" }).catch(() => undefined);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.length).toBe(1); // the single sampleCase
+  });
+
+  it("fires onTestCases in codeless (design) mode too — the flow ends right after designTestCases", async () => {
+    const seen: TestCase[][] = [];
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const graph = buildExploreGraph(
+      makeDeps({
+        gateway,
+        codeless: true,
+        onTestCases: (cases) => {
+          seen.push(cases);
+        },
+        validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }),
+      }),
+    );
+
+    await graph.invoke({ url: "https://app.test/page", runId: "r" });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.length).toBe(1);
   });
 });

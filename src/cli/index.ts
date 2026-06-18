@@ -28,7 +28,7 @@ import { PromptRegistry, LOCAL_PROMPTS } from "../prompts/index.js";
 import { runExperiment, type DatasetItem, type Variant } from "../eval/experiment.js";
 import type { PageStudy } from "../observe/index.js";
 // C1-01 — shared umbrella core: flag→config, the cost footer, and the modality registry/dispatch.
-import { resolveConfig, printCost, runModality, MODALITIES } from "../core/index.js";
+import { resolveConfig, printCost, runModality, MODALITIES, makeCliProgress } from "../core/index.js";
 
 /**
  * Shared capture action for `cairn session capture` and the flat `cairn login` alias.
@@ -231,6 +231,11 @@ export function buildProgram(): Command {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
         process.stderr.write(`▸ Designing test cases for ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
+        const progress = makeCliProgress({
+          write: (s) => void process.stderr.write(s),
+          isTTY: Boolean(process.stderr.isTTY),
+          now: Date.now,
+        });
         const result = await runDesign({
           url: opts.url,
           config,
@@ -239,8 +244,8 @@ export function buildProgram(): Command {
           checklistText,
           style: opts.style,
           headed: opts.headed,
-          onProgress: (e) => process.stderr.write(`  ▸ ${e}\n`),
-        });
+          onProgress: progress.event,
+        }).finally(() => progress.stop());
 
         process.stdout.write(
           `\n=== ${result.testCases.length} test cases → ${result.runDir}\\testcases\\ ===\n`,
@@ -273,14 +278,19 @@ export function buildProgram(): Command {
       async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         process.stderr.write(`▸ Automating cases from ${opts.run}…\n`);
+        const progress = makeCliProgress({
+          write: (s) => void process.stderr.write(s),
+          isTTY: Boolean(process.stderr.isTTY),
+          now: Date.now,
+        });
         const result = await runAutomate({
           runDir: opts.run,
           config,
           validate: opts.validate,
           sessionName: opts.session,
           sessionFile: opts.sessionFile,
-          onProgress: (e) => process.stderr.write(`  ▸ ${e}\n`),
-        });
+          onProgress: progress.event,
+        }).finally(() => progress.stop());
         process.stdout.write(
           `\n=== ${result.specFiles.length} spec files → ${result.runDir}\\tests\\ ===\n`,
         );

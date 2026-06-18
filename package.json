@@ -53,6 +53,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "smoke:pack": "node scripts/smoke-install.mjs",
     "lint": "eslint .",
     "session:save": "tsx scripts/save-session.ts",
     "bench": "tsx scripts/benchmark.ts",

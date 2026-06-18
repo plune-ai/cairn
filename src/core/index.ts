@@ -9,6 +9,8 @@
 export { resolveConfig } from "./config.js";
 export type { ConfigFlags } from "./config.js";
 export { printCost } from "./reporting.js";
+export { makeCliProgress } from "./progress.js";
+export type { CliProgress } from "./progress.js";
 export { defaultIO, gatedNotice } from "./modality.js";
 export type { Modality, ModalityContext, IO, Sink } from "./modality.js";
 export { MODALITIES, getModality, runModality } from "./registry.js";

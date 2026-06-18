@@ -10,6 +10,7 @@ function routerApi(): RouterApi {
     replace: vi.fn(),
     canGoBack: true,
     setInTextField: vi.fn(),
+    setBackHandler: vi.fn(),
   };
 }
 

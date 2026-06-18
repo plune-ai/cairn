@@ -1,7 +1,8 @@
-import { useReducer, useState } from "react";
+import { useReducer, useRef, useState } from "react";
 import { Box, useApp, useInput } from "ink";
 import { routerReducer, initialRouter, currentScreen, canGoBack, type Screen } from "./router.js";
 import { RouterProvider, type RouterApi } from "./router-context.js";
+import { globalKeyAction } from "./keys.js";
 import { ErrorBoundary } from "./components/error-boundary.js";
 import { Help } from "./components/help.js";
 import { LauncherScreen } from "./screens/launcher-screen.js";
@@ -19,6 +20,9 @@ export function App() {
   const { exit } = useApp();
   const [router, dispatch] = useReducer(routerReducer, initialRouter);
   const [inTextField, setInTextField] = useState(false);
+  // A screen (e.g. the wizard) can register a back handler that intercepts Escape; a ref avoids
+  // re-rendering and lets the global useInput closure always read the latest handler.
+  const backHandler = useRef<(() => boolean) | null>(null);
   const screen = currentScreen(router);
   const backable = canGoBack(router);
 
@@ -28,15 +32,21 @@ export function App() {
     replace: (s) => dispatch({ type: "replace", screen: s }),
     canGoBack: backable,
     setInTextField,
+    setBackHandler: (fn) => {
+      backHandler.current = fn;
+    },
   };
 
   useInput((input, key) => {
-    if (inTextField) return; // text fields own their keystrokes
-    if (input === "q") {
-      exit();
+    const action = globalKeyAction(input, key, { inTextField });
+    if (action?.type === "back") {
+      // A screen may consume the back (e.g. the wizard steps to its previous field) — only when it
+      // does NOT consume do we pop the router stack. Escape works even inside a text field now.
+      const consumed = backHandler.current?.() ?? false;
+      if (!consumed && backable) dispatch({ type: "back" });
       return;
     }
-    if (key.escape && backable) dispatch({ type: "back" });
+    if (action?.type === "quit") exit();
   });
 
   return (

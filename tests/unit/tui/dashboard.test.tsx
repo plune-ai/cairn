@@ -36,6 +36,7 @@ function routerApi(over: Partial<RouterApi>): RouterApi {
     replace: vi.fn(),
     canGoBack: true,
     setInTextField: vi.fn(),
+    setBackHandler: vi.fn(),
     ...over,
   };
 }
@@ -71,6 +72,23 @@ describe("RunDashboardScreen", () => {
       expect(replace).toHaveBeenCalledWith(expect.objectContaining({ name: "summary" })),
     );
     expect(lastFrame() ?? "").toContain("Observe page"); // checklist label rendered
+    unmount();
+  });
+
+  it("surfaces a classified failure + recovery hint when the run throws (expired session)", async () => {
+    vi.mocked(runExploration).mockImplementation((async () => {
+      throw new Error("storageState is missing — session expired; recapture it");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any);
+
+    const { lastFrame, unmount } = render(
+      <RouterProvider value={routerApi({})}>
+        <RunDashboardScreen command="explore" values={{ url: "https://x", style: "all", headed: false }} />
+      </RouterProvider>,
+    );
+
+    await waitFor(() => expect(lastFrame() ?? "").toContain("Failed: session"));
+    expect(lastFrame() ?? "").toContain("recapture"); // ERROR_HINTS.session
     unmount();
   });
 });

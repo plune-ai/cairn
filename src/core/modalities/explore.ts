@@ -10,6 +10,7 @@ import { runExploration } from "../../agent/index.js";
 import { renderRunSummary } from "../../agent/summary.js";
 import { resolveConfig } from "../config.js";
 import { printCost } from "../reporting.js";
+import { makeCliProgress } from "../progress.js";
 import type { Modality, ModalityContext } from "../modality.js";
 
 /** Parsed flags for `cairn explore` (mirrors the command's option definitions). */
@@ -37,6 +38,9 @@ export const exploreModality: Modality = {
     ctx.err(
       `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}…\n`,
     );
+    // Progress UX: animate the current step in a TTY (long LLM steps emit no events for ~a minute, so the
+    // CLI looked frozen). In a pipe/CI this falls back to one plain `  ▸ <event>` line per event.
+    const progress = makeCliProgress({ write: ctx.err, isTTY: Boolean(ctx.isTTY), now: Date.now });
     const result = await runExploration({
       url: opts.url,
       config,
@@ -45,8 +49,8 @@ export const exploreModality: Modality = {
       headed: opts.headed,
       checklistText,
       style: opts.style,
-      onProgress: (e) => ctx.err(`  ▸ ${e}\n`),
-    });
+      onProgress: progress.event,
+    }).finally(() => progress.stop());
 
     ctx.out(`\n=== Exploration of ${result.study.url} (run ${result.runId}) ===\n`);
     ctx.out(`Purpose: ${result.analysis.pageSemantics}\n`);
