@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import { useRunArtifacts } from "../hooks/use-run-artifacts.js";
 import { useStdoutDimensions } from "../hooks/use-stdout-dimensions.js";
@@ -16,10 +16,35 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
   const [tab, setTab] = useState<Tab>("cases");
   const [caseIdx, setCaseIdx] = useState(0);
   const [note, setNote] = useState<string>("");
-  const [promoted, setPromoted] = useState(false);
+  // In-flight guard: blocks a concurrent double-promote of the SAME case, RESET on completion. The
+  // bug was a one-shot `promoted` flag set on the first promote and never reset, which swallowed
+  // every later "a" until the screen was remounted.
+  const promotingRef = useRef(false);
 
-  // Derive current case here (before useInput) so the key handler can reference it.
+  // Derive current case for DISPLAY. The key handler must NOT close over this snapshot: between two
+  // rapid keypresses Ink may not have re-subscribed the callback yet, so it would act on stale state
+  // (root cause #1). The handler instead reads CURRENT state through refs kept in lockstep below.
   const current = arts.cases[caseIdx];
+  const casesRef = useRef(arts.cases);
+  casesRef.current = arts.cases;
+  const caseIdxRef = useRef(caseIdx);
+  caseIdxRef.current = caseIdx;
+
+  // Keep the selection in range as the list changes (after a promote reload the file is renamed
+  // MTC→ATC and the list re-sorts; the count is unchanged, so the index stays valid and the cursor
+  // stays on the just-promoted case — now shown as ATC). Defensive clamp for any shrink.
+  useEffect(() => {
+    setCaseIdx((i) => Math.min(i, Math.max(0, arts.cases.length - 1)));
+  }, [arts.cases.length]);
+
+  /** Move the selection AND update the ref synchronously, so an immediate follow-up "a" sees it. */
+  const selectDelta = (delta: number): void => {
+    setCaseIdx((i) => {
+      const next = Math.min(Math.max(i + delta, 0), Math.max(0, casesRef.current.length - 1));
+      caseIdxRef.current = next;
+      return next;
+    });
+  };
 
   useInput((input, key) => {
     if (input === "1") setTab("cases");
@@ -27,19 +52,23 @@ export function RunDetailScreen({ runDir }: { runDir: string }) {
     else if (input === "3") setTab("logs");
     else if (key.leftArrow) setTab((t) => TABS[(TABS.indexOf(t) + TABS.length - 1) % TABS.length] ?? "cases");
     else if (key.rightArrow || key.tab) setTab((t) => TABS[(TABS.indexOf(t) + 1) % TABS.length] ?? "cases");
-    else if (tab === "cases" && input === "n") {
-      setCaseIdx((i) => Math.min(i + 1, Math.max(0, arts.cases.length - 1)));
-    } else if (tab === "cases" && input === "p") {
-      setCaseIdx((i) => Math.max(i - 1, 0));
-    } else if (tab === "cases" && input === "a" && !promoted && current?.name.startsWith("MTC")) {
-      const id = current.name.replace(/\.md$/, "");
+    else if (tab === "cases" && input === "n") selectDelta(1);
+    else if (tab === "cases" && input === "p") selectDelta(-1);
+    else if (tab === "cases" && input === "a") {
+      const cur = casesRef.current[caseIdxRef.current];
+      if (!cur?.name.startsWith("MTC")) return; // only manual cases promote (already-ATC = no-op)
+      if (promotingRef.current) return; // a promote is already in flight — don't double-fire
+      promotingRef.current = true;
+      const id = cur.name.replace(/\.md$/, "");
       void promoteCase(runDir, id, {})
         .then((r) => {
-          setPromoted(true);
           setNote(`Promoted ${r.oldId} → ${r.newId}${r.warning ? ` (⚠ ${r.warning})` : ""}`);
-          arts.reload();
+          arts.reload(); // refresh the in-memory list from disk (the file was renamed MTC→ATC)
         })
-        .catch((e: unknown) => setNote(`Promote failed: ${e instanceof Error ? e.message : String(e)}`));
+        .catch((e: unknown) => setNote(`Promote failed: ${e instanceof Error ? e.message : String(e)}`))
+        .finally(() => {
+          promotingRef.current = false; // reset so the NEXT case can be promoted this session
+        });
     }
   });
 

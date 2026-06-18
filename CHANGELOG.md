@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-06-18
+
+### Fixed
+
+- **Interactive TUI: promote more than one manual case per review session.** In the run-detail review
+  (`cairn` TUI → open a run → Cases tab), pressing `a` to promote a manual case (MTC → ATC) worked only
+  ONCE per mount — every later `a` was swallowed until you exited the review and re-entered. Two causes:
+  a one-shot `promoted` flag set on the first promote and never reset, and the `useInput` handler closing
+  over a stale case snapshot between rapid keypresses. The handler now reads the current case + selection
+  through refs (never a mount snapshot), the in-flight guard resets on completion, the case list reloads
+  and re-sorts after each promote, and the selection is clamped to stay in range. You can now promote
+  MTC #1, navigate to MTC #2, press `a`, and it promotes too — no exit/re-enter. Promoting an
+  already-ATC case is a safe no-op.
+
+[0.3.4]: https://github.com/plune-ai/cairn/compare/v0.3.3...v0.3.4
+
 ## [0.3.3] - 2026-06-18
 
 ### Fixed

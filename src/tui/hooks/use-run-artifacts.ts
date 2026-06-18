@@ -19,7 +19,12 @@ export function useRunArtifacts(dir: string): RunArtifacts & { reload: () => voi
     void (async () => {
       const cases: { name: string; text: string }[] = [];
       try {
-        const files = (await readdir(join(dir, "testcases"))).filter((f) => f.endsWith(".md"));
+        // Sort by name so the list order is stable (readdir order is filesystem-dependent) and a
+        // promote (which renames MTC-*→ATC-*) re-sorts predictably — the screen re-selects the
+        // promoted case by name afterwards, keeping navigation oriented.
+        const files = (await readdir(join(dir, "testcases")))
+          .filter((f) => f.endsWith(".md"))
+          .sort((a, b) => a.localeCompare(b));
         for (const f of files) {
           try {
             cases.push({ name: f, text: await readFile(join(dir, "testcases", f), "utf8") });
