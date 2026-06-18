@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>flaky</title></head>
+  <body>
+    <button id="trigger">Load</button>
+    <div id="slot"></div>
+    <script>
+      document.getElementById("trigger").addEventListener("click", function () {
+        // Element mounts after a FIXED 400ms delay: a fixed short sleep misses it (deterministic
+        // failure), while a web-first assertion auto-waits and always finds it (deterministic pass).
+        setTimeout(function () {
+          var b = document.createElement("button");
+          b.textContent = "Confirm";
+          document.getElementById("slot").appendChild(b);
+        }, 400);
+      });
+    </script>
+  </body>
+</html>
