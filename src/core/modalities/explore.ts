@@ -11,6 +11,7 @@ import { renderRunSummary, displayPath } from "../../agent/summary.js";
 import { resolveConfig } from "../config.js";
 import { printCost } from "../reporting.js";
 import { makeCliProgress } from "../progress.js";
+import { dirGlyph } from "../../eval/legend.js";
 import type { Modality, ModalityContext } from "../modality.js";
 
 /** Parsed flags for `cairn explore` (mirrors the command's option definitions). */
@@ -72,9 +73,10 @@ export const exploreModality: Modality = {
       }
     }
     if (result.scores.length > 0) {
-      ctx.out("\n=== Metrics ===\n");
+      ctx.out("\n=== Metrics ===  (↑ higher is better · ↓ lower is better)\n");
       for (const s of result.scores) {
-        ctx.out(`  ${s.name}: ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""}\n`);
+        const g = dirGlyph(s.name);
+        ctx.out(`  ${s.name}${g ? ` ${g}` : ""}: ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""}\n`);
       }
     }
     if (result.pilot) {

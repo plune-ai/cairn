@@ -161,6 +161,7 @@ describe("explore parity (C1-02)", () => {
     expect(stdout).toContain("    ⇒ ok");
     expect(stdout).toContain("=== Validation: 50% green (flaky: 0) ===");
     expect(stdout).toContain("=== Metrics ===");
+    expect(stdout).toContain("grounding ↑"); // direction glyph so the reader can't misread the metric
     expect(stdout).toContain("=== Pilot: PASS ===");
     expect(stdout).toContain("=== Cost (per role) ===");
     expect(stdout).toContain("=== Run summary ===");
