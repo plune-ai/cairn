@@ -35,10 +35,11 @@ export function meteredInvoker(
   onUsage: (usage: TokenUsage, model: string) => void,
   modelId: string,
   method?: StructuredMethod,
+  config?: Record<string, unknown>,
 ): StructuredInvoke {
   return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
     const structured = model.withStructuredOutput(schema, { includeRaw: true, ...(method ? { method } : {}) });
-    const res = (await structured.invoke(messages)) as { raw: unknown; parsed: T };
+    const res = (await structured.invoke(messages, config)) as { raw: unknown; parsed: T };
     try {
       onUsage(extractUsage(res.raw), modelId);
     } catch {

@@ -38,6 +38,8 @@ export class RoleRouter {
     private readonly makeModelFn: ModelFactory = makeModel,
     /** Fires after each successful LLM call with (used, max) — lets a run warn as it nears the budget (L1-04, Box 3). */
     private readonly onCharge?: (used: number, max: number) => void,
+    /** LangChain callback handlers to thread into each LLM invoke (e.g. Langfuse CallbackHandler). (Task 2) */
+    private readonly callbacks?: unknown[],
   ) {
     this.ledger = new CostLedger(pricing);
   }
@@ -56,7 +58,8 @@ export class RoleRouter {
     const model = this.makeModelFn(tier, this.keys);
     // Groq needs functionCalling (its OpenAI-compat endpoint rejects json_schema) — L1-02 fix.
     const method = structuredMethodFor(tier.provider);
-    const metered = meteredInvoker(model, (u, m) => this.ledger.record(role, m, u), tier.model, method);
+    const config = this.callbacks ? { callbacks: this.callbacks } : undefined;
+    const metered = meteredInvoker(model, (u, m) => this.ledger.record(role, m, u), tier.model, method, config);
     return cappedInvoke(retryInvoke(metered), this.budget, this.onCharge);
   }
 }

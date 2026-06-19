@@ -111,7 +111,16 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       onProgress(`⚠ approaching the LLM-call budget (${used}/${max} calls — cost guardrail)`);
     }
   };
-  const router = new RoleRouter(cfg, keys, budget, undefined, undefined, onCharge); // L1-01: routing + cost ledger
+  const telemetry = await initTelemetry(cfg);
+  const router = new RoleRouter(
+    cfg,
+    keys,
+    budget,
+    undefined,
+    undefined,
+    onCharge,
+    telemetry.callbackHandler ? [telemetry.callbackHandler] : undefined, // Task 2: thread handler into each LLM call
+  ); // L1-01: routing + cost ledger
 
   // Auth: load storageState into the gateway (observe) and pass the path to the runner (validate).
   let storageState: StorageState | undefined;
@@ -132,7 +141,6 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     channel: cfg.browser.channel,
     headless: !input.headed,
   });
-  const telemetry = await initTelemetry(cfg);
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
   const runId = randomUUID();
@@ -203,7 +211,12 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   };
 
   try {
-    const out = await runExploreGraph(deps, { url: input.url, runId });
+    // Task 2: wrap in a root trace so nested LangChain CallbackHandler generations attach to ONE trace.
+    const out = await telemetry.runInTrace(
+      "exploration",
+      { runId, backend: cfg.browser.backend, profile: cfg.llmProfile },
+      () => runExploreGraph(deps, { url: input.url, runId }),
+    );
     if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
 
     // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
@@ -423,7 +436,6 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   ensureBrowsersInstalled({ channel: cfg.browser.channel });
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
-  const router = new RoleRouter(cfg, keys, budget); // L1-01: per-role routing + cost ledger
   const logLines: string[] = [];
   // Parity with runExploration (#38): buffer progress into run.log, flushed incrementally so a
   // mid-run kill leaves the log on disk. `persistLog` is wired once the run dir exists.
@@ -433,6 +445,17 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     input.onProgress?.(event);
     persistLog();
   };
+
+  const telemetry = await initTelemetry(cfg);
+  const router = new RoleRouter(
+    cfg,
+    keys,
+    budget,
+    undefined,
+    undefined,
+    undefined,
+    telemetry.callbackHandler ? [telemetry.callbackHandler] : undefined, // Task 2: thread handler into each LLM call
+  ); // L1-01: per-role routing + cost ledger
 
   let storageState: StorageState | undefined;
   const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
@@ -446,7 +469,6 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     channel: cfg.browser.channel,
     headless: !input.headed,
   });
-  const telemetry = await initTelemetry(cfg);
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
   const runId = randomUUID();
@@ -515,7 +537,12 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   };
 
   try {
-    const out = await runExploreGraph(designDeps, { url: input.url, runId });
+    // Task 2: wrap in a root trace so nested LangChain CallbackHandler generations attach to ONE trace.
+    const out = await telemetry.runInTrace(
+      "design",
+      { runId, backend: cfg.browser.backend, profile: cfg.llmProfile, mode: "design" },
+      () => runExploreGraph(designDeps, { url: input.url, runId }),
+    );
     if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
 
     // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
