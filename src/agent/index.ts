@@ -20,7 +20,7 @@ import { ingestChecklist, formatChecklist, coverageScore, styleDirective } from 
 import { loadKnowledge } from "../knowledge/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
-import { buildExploreGraph } from "./graph.js";
+import { runExploreGraph } from "./graph.js";
 import { finalizeFailure } from "./finalize.js";
 import { runRepairLoop } from "./repair-loop.js";
 import { buildTestCaseDocs } from "./testcase-docs.js";
@@ -32,8 +32,8 @@ import type { PageAnalysis } from "../analyze/index.js";
 import type { TestCase } from "../design/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
 
-export { buildExploreGraph, ExploreState } from "./graph.js";
-export type { ExploreDeps } from "./graph.js";
+export { runExploreGraph } from "./graph.js";
+export type { ExploreDeps, ExploreOutcome } from "./graph.js";
 
 export interface ExploreInput {
   url: string;
@@ -159,7 +159,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const analyzeTier = router.tierFor("worker", visionTier);
   const designTier = router.tierFor("reasoner", cfg.models.reasoning);
   const codegenTier = router.tierFor("worker", cfg.models.bulk);
-  const graph = buildExploreGraph({
+  const deps = {
     gateway,
     prompts,
     analyzeInvoke: router.invoke("worker", analyzeTier),
@@ -172,12 +172,12 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     styleText,
     languageText,
     runWriter,
-    validate: (runDir) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
+    validate: (runDir: string) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
     maxRepair: cfg.maxRepair,
     onProgress,
     // #38: persist study + snapshots the moment observe succeeds, so a mid-run kill still leaves
     // the page study/screenshot/ARIA on disk (best-effort — never break the run).
-    onStudy: async (study) => {
+    onStudy: async (study: PageStudy) => {
       try {
         await runWriter.writeStudy(study);
         if (study.screenshotB64) await runWriter.writeScreenshot(study.screenshotB64);
@@ -189,7 +189,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // Durability: persist the ATC/MTC case docs the moment they are designed, so a kill during the long
     // codegen/validate phase still leaves the cases on disk (best-effort). suiteFromUrl(studyUrl)
     // matches the final write below → identical files, no duplicates.
-    onTestCases: async (testCases, verified, studyUrl) => {
+    onTestCases: async (testCases: TestCase[], verified: import("../browser/index.js").VerifiedElement[], studyUrl: string) => {
       try {
         const { docs } = buildTestCaseDocs(testCases, verified, suiteFromUrl(studyUrl), checklistItems.length > 0);
         await runWriter.writeTestCases(docs);
@@ -200,17 +200,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
     expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
     sessionName: input.sessionName,
-  });
+  };
 
   try {
-    const out = await graph.invoke(
-      { url: input.url, runId },
-      {
-        callbacks: telemetry.callbackHandler ? [telemetry.callbackHandler] : [],
-        runName: "exploration",
-        metadata: { runId, backend: cfg.browser.backend, profile: cfg.llmProfile },
-      },
-    );
+    const out = await runExploreGraph(deps, { url: input.url, runId });
     if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
 
     // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
@@ -478,7 +471,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const designTier = router.tierFor("reasoner", cfg.models.reasoning);
   const codegenTier = router.tierFor("worker", cfg.models.bulk);
 
-  const graph = buildExploreGraph({
+  const designDeps = {
     gateway,
     prompts,
     analyzeInvoke: router.invoke("worker", analyzeTier),
@@ -496,7 +489,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     onProgress,
     // #38 parity with explore: persist study + snapshots the moment observe succeeds, so a mid-run
     // kill still leaves the page study/screenshot/ARIA on disk (best-effort — never break the run).
-    onStudy: async (study) => {
+    onStudy: async (study: PageStudy) => {
       try {
         await runWriter.writeStudy(study);
         if (study.screenshotB64) await runWriter.writeScreenshot(study.screenshotB64);
@@ -507,7 +500,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     },
     // Durability: design's loss window is small (END right after designTestCases), but still real — flush
     // the case docs the instant they are designed so an interrupt before the final write keeps them.
-    onTestCases: async (testCases, verified, studyUrl) => {
+    onTestCases: async (testCases: TestCase[], verified: import("../browser/index.js").VerifiedElement[], studyUrl: string) => {
       try {
         const { docs } = buildTestCaseDocs(testCases, verified, suiteFromUrl(studyUrl), checklistItems.length > 0);
         await runWriter.writeTestCases(docs);
@@ -519,17 +512,10 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
     expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
     sessionName: input.sessionName,
-  });
+  };
 
   try {
-    const out = await graph.invoke(
-      { url: input.url, runId },
-      {
-        callbacks: telemetry.callbackHandler ? [telemetry.callbackHandler] : [],
-        runName: "design",
-        metadata: { runId, backend: cfg.browser.backend, profile: cfg.llmProfile, mode: "design" },
-      },
-    );
+    const out = await runExploreGraph(designDeps, { url: input.url, runId });
     if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
 
     // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)

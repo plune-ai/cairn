@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildExploreGraph } from "../../src/agent/graph.js";
+import { runExploreGraph } from "../../src/agent/graph.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
 import type { BrowserGateway } from "../../src/browser/index.js";
 import type { StructuredInvoke } from "../../src/llm/structured.js";
@@ -66,10 +66,9 @@ const baseDeps = {
 const green: ValidationReport = { results: [{ test: "t", status: "passed" }], greenRatio: 1, flakyCount: 0 };
 const red: ValidationReport = { results: [{ test: "t", status: "failed" }], greenRatio: 0, flakyCount: 0 };
 
-describe("buildExploreGraph (full pipeline + repair, fake deps)", () => {
+describe("runExploreGraph (full pipeline + repair, fake deps)", () => {
   it("green on the first try → no repair (attempts 0)", async () => {
-    const graph = buildExploreGraph({ ...baseDeps, validate: async () => green, maxRepair: 2 });
-    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    const out = await runExploreGraph({ ...baseDeps, validate: async () => green, maxRepair: 2 }, { url: "http://x", runId: "r1" });
     expect(out.suite).toBeDefined();
     expect(out.validation?.greenRatio).toBe(1);
     expect(out.attempts).toBe(0);
@@ -81,16 +80,14 @@ describe("buildExploreGraph (full pipeline + repair, fake deps)", () => {
       calls += 1;
       return calls === 1 ? red : green;
     };
-    const graph = buildExploreGraph({ ...baseDeps, validate, maxRepair: 2 });
-    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    const out = await runExploreGraph({ ...baseDeps, validate, maxRepair: 2 }, { url: "http://x", runId: "r1" });
     expect(out.attempts).toBe(1);
     expect(out.validation?.greenRatio).toBe(1);
     expect(calls).toBe(2);
   });
 
   it("persistent fail → repair up to the budget, then end (attempts = maxRepair)", async () => {
-    const graph = buildExploreGraph({ ...baseDeps, validate: async () => red, maxRepair: 1 });
-    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    const out = await runExploreGraph({ ...baseDeps, validate: async () => red, maxRepair: 1 }, { url: "http://x", runId: "r1" });
     expect(out.attempts).toBe(1);
     expect(out.validation?.greenRatio).toBe(0);
   });
@@ -117,14 +114,16 @@ describe("buildExploreGraph (full pipeline + repair, fake deps)", () => {
           verified: e.name === "Go",
         })),
     };
-    const graph = buildExploreGraph({
-      ...baseDeps,
-      gateway: partialVerify,
-      designInvoke: capturingDesign,
-      validate: async () => green,
-      maxRepair: 0,
-    });
-    await graph.invoke({ url: "http://x", runId: "r1" });
+    await runExploreGraph(
+      {
+        ...baseDeps,
+        gateway: partialVerify,
+        designInvoke: capturingDesign,
+        validate: async () => green,
+        maxRepair: 0,
+      },
+      { url: "http://x", runId: "r1" },
+    );
     expect(designPrompt).toContain("Go");
     expect(designPrompt).toContain("Bad"); // count>1 → included as repeated (.first())
     expect(designPrompt).toContain("×2"); // repetition annotation
@@ -146,8 +145,7 @@ describe("buildExploreGraph (full pipeline + repair, fake deps)", () => {
           }
         : { results: [], greenRatio: 0, flakyCount: 0 }; // broken regeneration (0 tests) — worse
     };
-    const graph = buildExploreGraph({ ...baseDeps, validate, maxRepair: 1 });
-    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    const out = await runExploreGraph({ ...baseDeps, validate, maxRepair: 1 }, { url: "http://x", runId: "r1" });
     expect(out.bestValidation?.greenRatio).toBe(0.5); // keeps 0.5, does not drop to 0
     expect(out.attempts).toBe(1); // repair ran, but the best result was preserved
   });
@@ -158,57 +156,65 @@ describe("expired-session fail-fast (expectAuthenticated, L1-05)", () => {
     schema.parse({ pageSemantics: "Sign in to continue", primaryRefs: ["e1"] });
 
   it("session supplied + first page looks like login → rejects with re-capture guidance (names the session)", async () => {
-    const graph = buildExploreGraph({
+    const sessionDeps = {
       ...baseDeps,
       analyzeInvoke: loginAnalyze,
       expectAuthenticated: true,
       sessionName: "myapp",
       validate: async () => green,
       maxRepair: 0,
-    });
-    await expect(graph.invoke({ url: "http://x", runId: "r1" })).rejects.toThrow(
+    };
+    await expect(runExploreGraph(sessionDeps, { url: "http://x", runId: "r1" })).rejects.toThrow(
       /cairn session capture/,
     );
-    await expect(graph.invoke({ url: "http://x", runId: "r1" })).rejects.toThrow(/myapp/);
+    await expect(runExploreGraph(sessionDeps, { url: "http://x", runId: "r1" })).rejects.toThrow(/myapp/);
   });
 
   it("fail-fast happens BEFORE design/codegen (no test cases or suite produced)", async () => {
     let designed = false;
-    const graph = buildExploreGraph({
-      ...baseDeps,
-      analyzeInvoke: loginAnalyze,
-      designInvoke: async (schema) => {
-        designed = true;
-        return schema.parse({ testCases: [] });
-      },
-      expectAuthenticated: true,
-      validate: async () => green,
-      maxRepair: 0,
-    });
-    await expect(graph.invoke({ url: "http://x", runId: "r1" })).rejects.toThrow();
+    await expect(
+      runExploreGraph(
+        {
+          ...baseDeps,
+          analyzeInvoke: loginAnalyze,
+          designInvoke: async (schema) => {
+            designed = true;
+            return schema.parse({ testCases: [] });
+          },
+          expectAuthenticated: true,
+          validate: async () => green,
+          maxRepair: 0,
+        },
+        { url: "http://x", runId: "r1" },
+      ),
+    ).rejects.toThrow();
     expect(designed).toBe(false); // never reached designTestCases
   });
 
   it("login-looking page but NO session supplied → no throw (exploring a public login page is allowed)", async () => {
-    const graph = buildExploreGraph({
-      ...baseDeps,
-      analyzeInvoke: loginAnalyze,
-      validate: async () => green,
-      maxRepair: 0,
-    });
-    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    const out = await runExploreGraph(
+      {
+        ...baseDeps,
+        analyzeInvoke: loginAnalyze,
+        validate: async () => green,
+        maxRepair: 0,
+      },
+      { url: "http://x", runId: "r1" },
+    );
     expect(out.analysis?.pageSemantics).toContain("Sign in");
   });
 
   it("session supplied but a real app page → no throw", async () => {
-    const graph = buildExploreGraph({
-      ...baseDeps,
-      expectAuthenticated: true,
-      sessionName: "myapp",
-      validate: async () => green,
-      maxRepair: 0,
-    });
-    const out = await graph.invoke({ url: "http://x", runId: "r1" });
+    const out = await runExploreGraph(
+      {
+        ...baseDeps,
+        expectAuthenticated: true,
+        sessionName: "myapp",
+        validate: async () => green,
+        maxRepair: 0,
+      },
+      { url: "http://x", runId: "r1" },
+    );
     expect(out.suite).toBeDefined();
   });
 });
