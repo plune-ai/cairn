@@ -53,6 +53,41 @@ describe("renderReportMd", () => {
     expect(md).toContain("grounding");
   });
 
+  it("annotates each metric with a ↑/↓ direction, a meaning blurb, and a judge tag + key line", () => {
+    const md = renderReportMd({
+      runId: "r1",
+      url: "http://x/login",
+      backend: "lib",
+      profile: "anthropic",
+      pageSemantics: "Форма логіну",
+      elements: [btn],
+      testCases: [],
+      scores: [
+        { name: "grounding", value: 1 },
+        { name: "case_redundancy", value: 0 },
+        { name: "test_case_quality", value: 0.8, comment: "clear" },
+        { name: "mystery_metric", value: 0.5 }, // unknown → graceful: no glyph, empty meaning
+      ],
+    });
+    // key line explaining the glyphs + "judge"
+    expect(md).toContain("↑ higher is better");
+    expect(md).toContain("↓ lower is better");
+    expect(md).toContain("judge = scored by an LLM");
+    // new column + per-metric annotations
+    expect(md).toContain("meaning");
+    expect(md).toContain("grounding ↑");
+    expect(md).toContain("case_redundancy ↓");
+    expect(md).toContain("test_case_quality ↑ (judge)");
+    // the blurb text comes from the legend
+    expect(md).toContain("near-duplicates");
+    expect(md).toContain("Holistic quality");
+    // value + comment are preserved
+    expect(md).toContain("0.80");
+    expect(md).toContain("clear");
+    // unknown metric still renders its row (no glyph), doesn't crash
+    expect(md).toContain("mystery_metric");
+  });
+
   it("renders a per-role Cost section when cost is provided (L1-01)", () => {
     const md = renderReportMd({
       runId: "r2",
