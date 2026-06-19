@@ -24,6 +24,7 @@ interface ExploreFlags {
   checklist?: string;
   style?: string;
   routing?: string;
+  fresh?: boolean;
 }
 
 export const exploreModality: Modality = {
@@ -49,6 +50,7 @@ export const exploreModality: Modality = {
       headed: opts.headed,
       checklistText,
       style: opts.style,
+      fresh: opts.fresh,
       onProgress: progress.event,
     }).finally(() => progress.stop());
 
