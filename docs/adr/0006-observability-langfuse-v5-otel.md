@@ -24,6 +24,7 @@ with integration into the LangChain-core LLM layer. **The user already has their
 
 ## Consequences
 
+- (+) The experience few-shot (prior STABLE cases of a URL → design prompt, the RESULTS-level self-improvement) is **skippable per run** via `--fresh` on `design`/`explore` — generate a full set for clean A/B comparisons instead of only the delta. Gate: `experienceForUrl()` in `src/eval/collect.ts`.
 - (+) The whole improvement loop (trace→score→dataset→experiment→promote) runs on your server; data doesn't go to the cloud.
 - (+) SDK-side judges → provider-agnostic (Anthropic or OpenRouter, ADR-0002) and independent of Langfuse EE features.
 - (−) **v5 is OTel-first, a new API** → confirmed by **Spike S5** (Sprint 0), including against the self-hosted instance.

@@ -113,6 +113,11 @@ cairn explore --url https://app.example.com/page --session myapp --checklist pla
 The `--checklist` file steers **what** the bot tests (and is scored as coverage). Copy
 [`examples/plan.md`](examples/plan.md) — a ready-to-run checklist for `https://plune.ai/cairn` — as a starting point.
 
+Add `--fresh` (on `design` and `explore`) to **ignore prior runs of the same URL**. By default a 2nd+
+run on a URL reuses its *previously stable* cases as context and generates only the **delta** (new
+cases), so re-runs get smaller. `--fresh` skips that and generates a **full set** every time — useful
+for clean A/B comparisons. In the TUI it's the "Ignore prior-run experience for this URL?" toggle (default **no**).
+
 New here? Read the **[Getting started guide](docs/getting-started.md)** — it walks the whole cycle with explanations.
 
 ## Authenticated targets
@@ -154,7 +159,7 @@ Then:
 cairn          # launches the terminal UI (requires the Ink packages above)
 ```
 
-Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style) via a
+Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style, fresh) via a
 guided form, watch a **live dashboard** of the pipeline stages as the run progresses, read the result summary
 (scores, green %, Pilot verdict, test cases), and **browse past runs** in `./runs` — opening any run to
 read its test cases, report and logs.
@@ -169,10 +174,10 @@ no arguments also falls back to printing help.
 |---|---|
 | `cairn session capture --url <loginUrl> --name <s>` | Capture a login session once → `.auth/` (`cairn login` is a shorthand; `session ls` / `session rm`) |
 | `cairn observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
-| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>]` | Test cases only (ATC/MTC `.md` + selectors), no code |
+| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>] [--fresh]` | Test cases only (ATC/MTC `.md` + selectors), no code |
 | `cairn automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
 | `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
-| `cairn explore --url <u> --session <s> [--checklist <f>]` | Full pipeline (cases → code → validate → repair → Pilot) |
+| `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).

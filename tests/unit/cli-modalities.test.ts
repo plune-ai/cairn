@@ -110,11 +110,12 @@ describe("explore parity (C1-02)", () => {
       "--headed",
       "--checklist",
       "--style",
+      "--fresh",
       "--routing",
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(9); // 0.3.3: + --channel (drive system Chrome / coexist with host Playwright)
+    expect(longs).toHaveLength(10); // + --fresh (ignore prior-run experience for a clean A/B run)
   });
 
   it("maps flags to runExploration the same way as before the refactor", async () => {
@@ -146,6 +147,15 @@ describe("explore parity (C1-02)", () => {
     // --backend / --routing flow through resolveConfig into the AppConfig
     expect(arg.config.browser.backend).toBe("cli");
     expect(arg.config.roles?.worker?.provider).toBe("openrouter");
+  });
+
+  it("--fresh flows through to runExploration as fresh:true (and is falsy when absent)", async () => {
+    await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test", "--fresh"]);
+    expect(runExploration.mock.calls[0][0].fresh).toBe(true);
+
+    runExploration.mockClear();
+    await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test"]);
+    expect(runExploration.mock.calls[0][0].fresh).toBeFalsy(); // default: dedupe against prior runs (unchanged)
   });
 
   it("prints the same exploration / metrics / cost / summary structure", async () => {

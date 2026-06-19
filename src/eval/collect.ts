@@ -63,3 +63,25 @@ export function formatExperience(titles: string[]): string {
     titles.map((t) => `- ${t}`).join("\n")
   );
 }
+
+/**
+ * The gated experience block injected into the design prompt: STABLE cases from prior runs of this
+ * URL so a 2nd+ run generates only the delta (collectPriorRuns → unionPassedTitles → formatExperience).
+ * The current run is excluded so a run never dedupes against itself.
+ *
+ * `fresh` skips the disk read entirely and returns "" → a clean, full-set run for A/B comparisons
+ * (no dedup against the past). Shared by runExploration and runDesign so the gate is defined once.
+ */
+export async function experienceForUrl(opts: {
+  runsBaseDir: string;
+  url: string;
+  currentRunId: string;
+  /** Ignore prior-run experience for this URL — collectPriorRuns is skipped. */
+  fresh?: boolean;
+}): Promise<string> {
+  if (opts.fresh) return "";
+  const priors = (await collectPriorRuns(opts.runsBaseDir, opts.url)).filter(
+    (r) => r.runId !== opts.currentRunId,
+  );
+  return formatExperience(unionPassedTitles(priors));
+}

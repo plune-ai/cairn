@@ -13,6 +13,7 @@ type StepKey =
   | "session"
   | "checklist"
   | "style"
+  | "fresh"
   | "headed"
   | "validate"
   | "backend"
@@ -25,7 +26,8 @@ function stepsFor(command: Command): StepKey[] {
   // observe runs no LLM, so it omits routing. "(default)" on any of them leaves the env untouched.
   if (command === "automate") return ["runDir", "session", "validate", "backend", "channel", "routing", "submit"];
   if (command === "observe") return ["url", "session", "headed", "backend", "channel", "submit"];
-  return ["url", "session", "checklist", "style", "headed", "backend", "channel", "routing", "submit"]; // explore / design
+  // explore / design — `fresh` mirrors the CLI --fresh flag (skip dedup against prior runs of this URL).
+  return ["url", "session", "checklist", "style", "fresh", "headed", "backend", "channel", "routing", "submit"];
 }
 
 const STYLE_ITEMS = [
@@ -58,7 +60,7 @@ const ROUTING_ITEMS = [
 /** Sequential wizard: one field per step, ⏎ advances, last step runs the command. */
 export function FormScreen({ command, initial }: { command: Command; initial?: Partial<FormValues> }) {
   const { navigate, setInTextField, setBackHandler } = useRouter();
-  const [values, setValues] = useState<FormValues>({ url: "", style: "all", headed: false, ...initial });
+  const [values, setValues] = useState<FormValues>({ url: "", style: "all", headed: false, fresh: false, ...initial });
   const [stepIndex, setStepIndex] = useState(0);
 
   const steps = stepsFor(command);
@@ -144,6 +146,19 @@ export function FormScreen({ command, initial }: { command: Command; initial?: P
               items={STYLE_ITEMS}
               onSelect={(it) => {
                 set("style", it.value as PlanningStyle);
+                advance();
+              }}
+            />
+          </Box>
+        );
+      case "fresh":
+        return (
+          <Box flexDirection="column">
+            <Text>Ignore prior-run experience for this URL?</Text>
+            <SelectInput
+              items={YESNO}
+              onSelect={(it) => {
+                set("fresh", it.value === "yes");
                 advance();
               }}
             />
@@ -247,6 +262,7 @@ function FormSummary({ values, command }: { values: FormValues; command: Command
     if (command !== "observe") {
       if (values.checklist) rows.push(`checklist: ${values.checklist}`);
       rows.push(`style: ${values.style}`);
+      if (values.fresh) rows.push("fresh: yes (ignore prior runs)");
     }
   }
   if (values.session) rows.push(`session: ${values.session}`);

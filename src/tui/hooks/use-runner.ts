@@ -108,6 +108,7 @@ export function useRunner() {
             checklistText,
             style: values.style,
             headed: values.headed,
+            fresh: values.fresh,
             onProgress,
           });
         } else {
@@ -119,6 +120,7 @@ export function useRunner() {
             checklistText,
             style: values.style,
             headed: values.headed,
+            fresh: values.fresh,
             onProgress,
           });
         }
