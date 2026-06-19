@@ -37,8 +37,9 @@ The methodology is ported into versioned Langfuse prompts (ADR-0008, ADR-0004).
                ▼
         ┌──────────────────────────┐   traces/scores   ┌──────────────┐
         │      QA Explorer Bot      │ ────────────────▶ │   Langfuse   │
-        │ (CLI + library, LangGraph)│ ◀── prompts/datasets │ (observ.+eval)│
-        └─────┬───────────────┬─────┘                   └──────────────┘
+        │  (CLI + library, async    │ ◀── prompts/datasets │ (observ.+eval)│
+        │     pipeline)             │                   └──────────────┘
+        └─────┬───────────────┬─────┘
               │ vision/reason │ browse/act
               ▼               ▼
        ┌─────────────┐  ┌──────────────────────┐
@@ -53,18 +54,19 @@ The methodology is ported into versioned Langfuse prompts (ADR-0008, ADR-0004).
 CLI / Library API
       │
       ▼
-LangGraph StateGraph ──────────────────────────────────────────────┐
-  loadSession → observe → identifyElements → [consumeChecklist] →    │
-  designTestCases → generateCode → validate ⇄ repair → score         │
-      │            │              │            │           │         │
-      ▼            ▼              ▼            ▼           ▼         ▼
+Plain async pipeline (runExploreGraph) ────────────────────────────────┐
+  loadSession → observe → identifyElements → [consumeChecklist] →       │
+  designTestCases → [codeless? stop] → generateCode → runRepairLoop      │
+  (validate ⇄ repair, keep-best) → score                                │
+      │            │              │            │           │            │
+      ▼            ▼              ▼            ▼           ▼            ▼
  SessionStore  PageObserver  TestCaseDesigner TestCodegen TestValidator  Judge/Eval
-      │            │              │            │           │         │
-      └────────────┴──────────────┴────────────┴───────────┘         │
-                            BrowserGateway                            │
-                     (playwright-lib | playwright-cli)                │
-                                                                      ▼
-   PromptRegistry (Langfuse + local fallback)  ·  Telemetry (OTel+Langfuse)  ·  ArtifactStore (./runs)
+      │            │              │            │           │            │
+      └────────────┴──────────────┴────────────┴───────────┘            │
+                            BrowserGateway                               │
+                     (playwright-lib | playwright-cli)                   │
+                                                                         ▼
+   PromptRegistry (Langfuse + local fallback)  ·  Telemetry (root span + callbackHandler)  ·  ArtifactStore (./runs)
 ```
 
 ## High-level flow of a single run
@@ -78,11 +80,11 @@ LangGraph StateGraph ───────────────────�
 7. **validate / repair** — run via playwright-lib; on failure — a bounded self-repair loop.
 8. **score** — deterministic scorers + LLM judges → Langfuse; everything lands in `./runs/<id>`.
 
-Each run is one Langfuse trace; each node's LLM call is a nested generation linked to a prompt version.
+Each run is one Langfuse trace (root span via `startActiveObservation`); each stage's LLM call is a nested generation linked to a prompt version via the callback handler.
 
 ## Technology pillars (more detail — in the corresponding ADRs)
 
-- **Agent:** LangGraph.js v1 (StateGraph) — ADR-0001.
+- **Agent:** plain async pipeline (`runExploreGraph`) over `BrowserGateway` + `StructuredInvoke` seams — ADR-0001 / ADR-0013.
 - **LLM:** multi-provider (Anthropic default + OpenRouter/DeepSeek/Qwen as an economical alternative), tier×provider mapping, vision optional — ADR-0002.
 - **Browser:** hybrid lib(PRIMARY)+cli(SECONDARY) behind `BrowserGateway` — ADR-0003.
 - **Prompts:** versioned in Langfuse + local fallback — ADR-0004.

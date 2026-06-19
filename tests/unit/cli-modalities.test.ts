@@ -18,9 +18,8 @@ vi.mock("../../src/agent/index.js", () => ({
   runExploration,
   runDesign,
   runAutomate,
-  // re-exported by src/index.ts (BOT_NAME/BOT_VERSION path) — must exist on the mocked module.
-  buildExploreGraph: vi.fn(),
-  ExploreState: {},
+  // re-exported by src/agent/index.ts (graph.js path) — must exist on the mocked module.
+  runExploreGraph: vi.fn(),
 }));
 
 import { buildProgram } from "../../src/cli/index.js";

@@ -15,13 +15,14 @@ export const BOT_NAME = "@plune-ai/cairn" as const;
 export const BOT_VERSION: string = pkg.version;
 
 // Entry points.
-export { runExploration, runDesign, runAutomate, buildExploreGraph, ExploreState } from "./agent/index.js";
+export { runExploration, runDesign, runAutomate, runExploreGraph } from "./agent/index.js";
 export type {
   ExploreInput,
   ExploreResult,
   DesignResult,
   AutomateResult,
   ExploreDeps,
+  ExploreOutcome,
 } from "./agent/index.js";
 
 // Config.

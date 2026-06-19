@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-19
+
+### Changed
+
+- **Drop `@langchain/langgraph` — plain async pipeline (ADR-0013).** The LangGraph
+  `StateGraph` / `Annotation.Root` orchestrator is replaced by `runExploreGraph(deps, init):
+  Promise<ExploreOutcome>` — a plain async function with sequential `await` calls for each
+  stage. The stage seams (`BrowserGateway`, `StructuredInvoke`) and all domain node bodies are
+  untouched. The generate⇄validate⇄repair portion now delegates to the existing `runRepairLoop`
+  helper (removing the inline keep-best duplicate). `@langchain/core` (provider-agnostic LLM
+  factory) is retained; only the graph orchestration layer is removed.
+- **Telemetry rebound at the LLM layer.** Each run is wrapped in a lazy Langfuse root span
+  (`startActiveObservation` from `@langfuse/tracing`); `RoleRouter` threads the
+  `@langfuse/langchain` `CallbackHandler` into every LLM call config — preserving the full
+  nested trace structure (one root span, one nested generation per stage LLM call) without
+  LangGraph as the propagation vehicle. `last_trace_id` is returned in `ExploreOutcome`.
+- **Ink / React are now optional.** The TUI packages (`ink`, `react`, `ink-select-input`,
+  `ink-text-input`, `ink-spinner`) moved from `dependencies` to `optionalDependencies`. A
+  default `npm install @plune-ai/cairn` no longer pulls them — install them manually to enable
+  the interactive TUI (`npm i ink react ink-select-input ink-spinner ink-text-input`). If the
+  packages are absent, `cairn` with no arguments falls back gracefully to printing help.
+
+### Removed
+
+- **`@langchain/langgraph`** from `dependencies` and the codebase (no import anywhere — grep clean).
+- **`scripts/spike-s5-langfuse.ts`** and its npm script (`spike:s5-langfuse`) — the S5 spike is
+  closed and its langgraph import is no longer valid.
+
+> **Backward compatibility:** the public API (`runExploration`, `runDesign`, `runAutomate`,
+> `loadConfig`), all `explore` / `design` / `automate` / `observe` CLI commands, existing
+> configs, sessions, and run artifacts are unchanged. Telemetry and the TUI are opt-in — install
+> their optional packages to use them. Tests: 416 green (vitest), coverage gate passes.
+
+[0.4.0]: https://github.com/plune-ai/cairn/compare/v0.3.4...v0.4.0
+
 ## [0.3.4] - 2026-06-18
 
 ### Fixed

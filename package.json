@@ -1,7 +1,7 @@
 {
   "name": "@plune-ai/cairn",
-  "version": "0.3.4",
-  "description": "Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent (UI today; API/unit/docs planned) on LangGraph + Claude/OpenRouter, with self-improvement via Langfuse.",
+  "version": "0.4.0",
+  "description": "Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent (UI today; API/unit/docs planned) powered by Claude/OpenRouter, with self-improvement via Langfuse.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "plune-ai",
@@ -12,7 +12,6 @@
     "test-generation",
     "playwright",
     "ui-testing",
-    "langgraph",
     "ai-agent",
     "langfuse",
     "anthropic",
@@ -59,24 +58,24 @@
     "bench": "tsx scripts/benchmark.ts",
     "spike:s1-zod": "tsx scripts/spike-s1-zod.ts",
     "spike:s2-vision": "tsx scripts/spike-s2-vision.ts",
-    "spike:s5-langfuse": "tsx scripts/spike-s5-langfuse.ts",
     "spike:s6-parity": "tsx scripts/spike-s6-parity.ts"
   },
   "dependencies": {
     "@langchain/anthropic": "^1.4.0",
     "@langchain/core": "^1.1.48",
-    "@langchain/langgraph": "^1.3.6",
     "@langchain/openai": "^1.4.7",
     "@playwright/test": "^1.60.0",
     "commander": "^15.0.0",
     "dotenv": "^17.4.2",
+    "playwright": "^1.60.0",
+    "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
     "ink": "^5.2.1",
     "ink-select-input": "^6.2.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
-    "playwright": "^1.60.0",
-    "react": "^18.3.1",
-    "zod": "^4.4.3"
+    "react": "^18.3.1"
   },
   "peerDependencies": {
     "@langfuse/client": "^5.4.1",

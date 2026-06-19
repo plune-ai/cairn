@@ -36,7 +36,7 @@ npm run test:coverage  # coverage gate on core logic
 
 ## Project layout
 
-- `src/agent/` — LangGraph orchestrator (`graph.ts`) + entry points (`runExploration` / `runDesign` / `runAutomate`).
+- `src/agent/` — plain async pipeline (`runExploreGraph` in `graph.ts`) + entry points (`runExploration` / `runDesign` / `runAutomate`).
 - `src/browser/` — `BrowserGateway` + backends (import backends **only** through `gateway.ts`).
 - `src/observe`, `src/analyze`, `src/design`, `src/codegen`, `src/validate` — the pipeline stages.
 - `src/eval/` — deterministic scorers, LLM judge, Pilot supervisor, experiments.

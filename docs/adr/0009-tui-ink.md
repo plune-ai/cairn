@@ -22,16 +22,18 @@ arguments in a TTY**. Constraints honored:
   vs graph.ts EN); all numbers come from typed results.
 - Non-TTY (pipe/CI) with no args prints help — the TUI never grabs raw mode where it can't.
 
-Runtime deps (in `dependencies`, not peer/optional, so `npm i -g` just works): `ink`, `react@18`,
-`ink-select-input`, `ink-text-input`, `ink-spinner`.
+Runtime deps (moved to `optionalDependencies` in 0.4.0 — see ADR-0013): `ink`, `react@18`,
+`ink-select-input`, `ink-text-input`, `ink-spinner`. A default install omits them; install manually to
+enable the TUI: `npm i ink react ink-select-input ink-spinner ink-text-input`. If the packages are absent
+and `cairn` is invoked with no arguments, it falls back to printing help (graceful no-op).
 
 ## Consequences
 
 - (+) One discoverable entry; long runs get a live node checklist + log + result summary; a past-run browser.
 - (+) Additive — zero change to the agent or the frozen library surface; React absent from embedder processes
   (all 102 prior tests stayed green; +23 TUI tests).
-- (−) Adds React/Ink to install size; being interactive, it is covered by `ink-testing-library` render tests
-  rather than the real-TTY path (raw mode needs a real terminal).
+- (−) React/Ink add install size for users who want the TUI; moving them to `optionalDependencies` (0.4.0/ADR-0013) removes the cost for users who only need the library/CLI flags.
+- (−) Being interactive, the TUI is covered by `ink-testing-library` render tests rather than the real-TTY path (raw mode needs a real terminal).
 
 ## Review trigger
 

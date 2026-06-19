@@ -138,21 +138,30 @@ cairn explore --url https://your-app.example.com/dashboard --session myapp
 
 > Working inside the repo? `npm run session:save -- --url <u> --name <s>` still works — it's a thin wrapper over the same capture logic that ships as `cairn session capture`.
 
-## Interactive TUI
+## Interactive TUI (optional)
 
-Run `cairn` with **no arguments** in a terminal to open the interactive TUI (built with Ink):
+Run `cairn` with **no arguments** in a terminal to open the interactive TUI (built with Ink / React-for-CLI).
+Ink and React are **optional dependencies** — a default install omits them to keep the footprint small.
+Install them once to enable the TUI:
 
 ```bash
-cairn          # launches the terminal UI
+npm install ink react ink-select-input ink-spinner ink-text-input
+```
+
+Then:
+
+```bash
+cairn          # launches the terminal UI (requires the Ink packages above)
 ```
 
 Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style) via a
-guided form, watch a **live dashboard** of the graph nodes as the run progresses, read the result summary
+guided form, watch a **live dashboard** of the pipeline stages as the run progresses, read the result summary
 (scores, green %, Pilot verdict, test cases), and **browse past runs** in `./runs` — opening any run to
 read its test cases, report and logs.
 
 The commands below stay available for scripting/CI; in a non-interactive (piped/CI) shell, `cairn` with
-no arguments prints help instead of starting the UI.
+no arguments prints help instead of starting the UI. If the Ink packages are not installed, `cairn` with
+no arguments also falls back to printing help.
 
 ## Commands
 
@@ -287,8 +296,8 @@ npm run lint
 ## Documentation
 
 - **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate), written for people new to the tool.
-- **[Architecture overview](docs/architecture/overview.md)** — how the agent works inside (the LangGraph state machine, locator grounding, self-improvement).
-- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0012, incl. the interactive TUI, the `@playwright/test` output format, the Lex-Bot → Cairn rename, and the Apache-2.0 relicense).
+- **[Architecture overview](docs/architecture/overview.md)** — how the agent works inside (the plain async pipeline, locator grounding, self-improvement).
+- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0013, incl. the interactive TUI, the `@playwright/test` output format, the Lex-Bot → Cairn rename, the Apache-2.0 relicense, and the drop of LangGraph in 0.4.0).
 
 ## License
 

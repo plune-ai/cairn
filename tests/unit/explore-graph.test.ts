@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildExploreGraph, type ExploreDeps } from "../../src/agent/graph.js";
+import { runExploreGraph, type ExploreDeps } from "../../src/agent/graph.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
 import type { StructuredInvoke } from "../../src/llm/structured.js";
 import type { RunWriter } from "../../src/artifacts/index.js";
@@ -89,7 +89,7 @@ function makeDeps(over: Partial<ExploreDeps> & Pick<ExploreDeps, "gateway" | "va
   };
 }
 
-describe("buildExploreGraph — repair convergence (L1-04, Box 2)", () => {
+describe("runExploreGraph — repair convergence (L1-04, Box 2)", () => {
   it("bails early when an attempt makes no progress (does NOT burn all maxRepair attempts)", async () => {
     const stuck: ValidationReport = {
       results: [
@@ -101,7 +101,7 @@ describe("buildExploreGraph — repair convergence (L1-04, Box 2)", () => {
     };
     let validateCalls = 0;
     const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
-    const graph = buildExploreGraph(
+    const out = await runExploreGraph(
       makeDeps({
         gateway,
         maxRepair: 5,
@@ -110,15 +110,14 @@ describe("buildExploreGraph — repair convergence (L1-04, Box 2)", () => {
           return { ...stuck, results: [...stuck.results] };
         },
       }),
+      { url: "https://app.test/page", runId: "r" },
     );
-
-    const out = await graph.invoke({ url: "https://app.test/page", runId: "r" });
 
     // attempt 0 + ONE repair that makes no progress → stop. Without the guard it would be 1 + 5 = 6.
     expect(validateCalls).toBe(2);
     expect(out.stoppedEarly).toBe(true);
     // keep-best: the best (0.5) is preserved.
-    expect(out.bestGreen).toBe(0.5);
+    expect(out.bestValidation?.greenRatio).toBe(0.5);
     expect(out.bestValidation).toBeDefined();
   });
 
@@ -128,7 +127,7 @@ describe("buildExploreGraph — repair convergence (L1-04, Box 2)", () => {
     let i = 0;
     let validateCalls = 0;
     const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
-    const graph = buildExploreGraph(
+    const out = await runExploreGraph(
       makeDeps({
         gateway,
         maxRepair: 2,
@@ -138,25 +137,23 @@ describe("buildExploreGraph — repair convergence (L1-04, Box 2)", () => {
           return { results: [{ test: "A", status: greenRatio >= 0.6 ? "passed" : "failed" }], greenRatio, flakyCount: 0 };
         },
       }),
+      { url: "https://app.test/page", runId: "r" },
     );
-
-    const out = await graph.invoke({ url: "https://app.test/page", runId: "r" });
     // attempt 0 + 2 repairs = 3 (progress every time → no early bail, capped by maxRepair=2).
     expect(validateCalls).toBe(3);
     expect(out.stoppedEarly).toBe(false);
   });
 });
 
-describe("buildExploreGraph — browser/observe degradation (L1-04, Box 1)", () => {
+describe("runExploreGraph — browser/observe degradation (L1-04, Box 1)", () => {
   it("a navigation failure degrades to a readable message, never a raw stack", async () => {
     const { gateway } = fakeGateway(() => {
       throw new Error("page.goto: Timeout 30000ms exceeded\n    at navigate (pw.js:1:1)");
     });
-    const graph = buildExploreGraph(makeDeps({ gateway, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }));
 
     let err: Error | undefined;
     try {
-      await graph.invoke({ url: "https://app.test/x", runId: "r" });
+      await runExploreGraph(makeDeps({ gateway, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }), { url: "https://app.test/x", runId: "r" });
     } catch (e) {
       err = e as Error;
     }
@@ -172,14 +169,13 @@ describe("buildExploreGraph — browser/observe degradation (L1-04, Box 1)", () 
         ? obs('- button "Accept all"\n- button "Reject all"\n- button "Sign in"')
         : obs('- button "Sign in"'),
     );
-    const graph = buildExploreGraph(
+    await runExploreGraph(
       makeDeps({
         gateway,
         validate: async () => ({ results: [{ test: "A", status: "passed" }], greenRatio: 1, flakyCount: 0 }),
       }),
+      { url: "https://app.test/page", runId: "r" },
     );
-
-    await graph.invoke({ url: "https://app.test/page", runId: "r" });
 
     // it clicked the decline control (e2 = "Reject all") and re-observed the page.
     const clicks = acts.filter((a) => a.kind === "click");
@@ -189,11 +185,11 @@ describe("buildExploreGraph — browser/observe degradation (L1-04, Box 1)", () 
   });
 });
 
-describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
+describe("runExploreGraph — durable artifacts (L1-04, #38)", () => {
   it("hands the study to onStudy as soon as observe succeeds, before a later node can fail", async () => {
     const seen: PageStudy[] = [];
     const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
-    const graph = buildExploreGraph(
+    await runExploreGraph(
       makeDeps({
         gateway,
         onStudy: async (s) => {
@@ -204,9 +200,8 @@ describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
           throw new Error("boom after observe");
         },
       }),
-    );
-
-    await graph.invoke({ url: "https://app.test/page", runId: "r" }).catch(() => undefined);
+      { url: "https://app.test/page", runId: "r" },
+    ).catch(() => undefined);
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.elements.length).toBeGreaterThan(0);
@@ -219,7 +214,7 @@ describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
         ? obs('- button "Reject all"\n- button "Sign in"')
         : obs('- button "Sign in"\n- textbox "Email"'),
     );
-    const graph = buildExploreGraph(
+    await runExploreGraph(
       makeDeps({
         gateway,
         onStudy: async (s) => {
@@ -227,9 +222,8 @@ describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
         },
         validate: async () => ({ results: [{ test: "A", status: "passed" }], greenRatio: 1, flakyCount: 0 }),
       }),
+      { url: "https://app.test/page", runId: "r" },
     );
-
-    await graph.invoke({ url: "https://app.test/page", runId: "r" });
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.elements.some((e) => e.name === "Reject all")).toBe(false); // re-observed after dismissal
@@ -237,11 +231,11 @@ describe("buildExploreGraph — durable artifacts (L1-04, #38)", () => {
   });
 });
 
-describe("buildExploreGraph — durable test cases (onTestCases)", () => {
+describe("runExploreGraph — durable test cases (onTestCases)", () => {
   it("hands the cases to onTestCases as soon as designTestCases succeeds, before codegen/validate can fail", async () => {
     const seen: TestCase[][] = [];
     const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
-    const graph = buildExploreGraph(
+    await runExploreGraph(
       makeDeps({
         gateway,
         onTestCases: (cases) => {
@@ -252,9 +246,8 @@ describe("buildExploreGraph — durable test cases (onTestCases)", () => {
           throw new Error("boom after design");
         },
       }),
-    );
-
-    await graph.invoke({ url: "https://app.test/page", runId: "r" }).catch(() => undefined);
+      { url: "https://app.test/page", runId: "r" },
+    ).catch(() => undefined);
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.length).toBe(1); // the single sampleCase
@@ -263,7 +256,7 @@ describe("buildExploreGraph — durable test cases (onTestCases)", () => {
   it("fires onTestCases in codeless (design) mode too — the flow ends right after designTestCases", async () => {
     const seen: TestCase[][] = [];
     const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
-    const graph = buildExploreGraph(
+    await runExploreGraph(
       makeDeps({
         gateway,
         codeless: true,
@@ -272,9 +265,8 @@ describe("buildExploreGraph — durable test cases (onTestCases)", () => {
         },
         validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }),
       }),
+      { url: "https://app.test/page", runId: "r" },
     );
-
-    await graph.invoke({ url: "https://app.test/page", runId: "r" });
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.length).toBe(1);

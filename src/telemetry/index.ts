@@ -18,11 +18,17 @@ export interface Telemetry {
   callbackHandler?: CallbackHandler;
   client?: LangfuseClient;
   shutdown: () => Promise<void>;
+  /**
+   * Wraps `fn` in a root Langfuse span so that all nested LangChain callback-handler
+   * generations are collected under ONE trace (rather than N separate traces). When
+   * telemetry is disabled, `fn` is called directly (no-op path). (Task 2, ADR-0012)
+   */
+  runInTrace: <T>(name: string, metadata: Record<string, unknown>, fn: () => Promise<T>) => Promise<T>;
 }
 
 /** The offline / not-configured / packages-absent result: a no-op so the bot runs without tracing. */
 function noopTelemetry(): Telemetry {
-  return { enabled: false, shutdown: async () => {} };
+  return { enabled: false, shutdown: async () => {}, runInTrace: (_n, _m, fn) => fn() };
 }
 
 /**
@@ -41,11 +47,13 @@ export async function initTelemetry(cfg: AppConfig): Promise<Telemetry> {
   let lfOtel: typeof import("@langfuse/otel");
   let lfLangchain: typeof import("@langfuse/langchain");
   let lfClient: typeof import("@langfuse/client");
+  let lfTracing: typeof import("@langfuse/tracing");
   try {
     otel = await import("@opentelemetry/sdk-node");
     lfOtel = await import("@langfuse/otel");
     lfLangchain = await import("@langfuse/langchain");
     lfClient = await import("@langfuse/client");
+    lfTracing = await import("@langfuse/tracing");
   } catch {
     process.stderr.write(
       "[cairn] Langfuse is configured (LANGFUSE_* set) but the optional tracing packages are not " +
@@ -69,5 +77,18 @@ export async function initTelemetry(cfg: AppConfig): Promise<Telemetry> {
     await sdk.shutdown();
   };
 
-  return { enabled: true, callbackHandler, client, shutdown };
+  /**
+   * Wraps `fn` in a root Langfuse span via `startActiveObservation`, so that all nested
+   * LangChain CallbackHandler generations attach to ONE trace instead of N separate traces.
+   * The span name becomes the Langfuse trace name. `metadata` is stored as span metadata.
+   * (Task 2 — real API: `startActiveObservation(name, fn)`, callback receives `LangfuseSpan`;
+   * `span.updateTrace` does NOT exist in v5.4.1 — use `span.update({ metadata })` instead.)
+   */
+  const runInTrace = <T>(name: string, metadata: Record<string, unknown>, fn: () => Promise<T>): Promise<T> =>
+    lfTracing.startActiveObservation(name, async (span) => {
+      span.update({ metadata });
+      return fn();
+    }) as Promise<T>;
+
+  return { enabled: true, callbackHandler, client, shutdown, runInTrace };
 }

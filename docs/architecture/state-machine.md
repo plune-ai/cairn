@@ -1,104 +1,104 @@
-# Agent State Machine (LangGraph)
+# Agent Pipeline (plain async pipeline, formerly LangGraph)
 
-The agent is a `StateGraph` from `@langchain/langgraph` v1 (ADR-0001). Each node is a small pure function
-`(state) => Promise<Partial<state>>`. Vision and structured output happen *inside* the nodes
-via `ChatAnthropic` + `.withStructuredOutput(zodSchema)`.
+> **Replaced in 0.4.0 (ADR-0013):** the `StateGraph` from `@langchain/langgraph` was removed;
+> `buildExploreGraph` became `runExploreGraph(deps, init): Promise<ExploreOutcome>` — a plain sequence
+> of awaited stage calls over the same service seams (`BrowserGateway`, `StructuredInvoke`).
+> Langfuse tracing is rebound at the LLM layer via a root span (`startActiveObservation`) + the callback
+> handler threaded into each LLM call by `RoleRouter`.
 
-## State (`agent/state.ts`)
+## State (`agent/graph.ts`)
+
+The former `Annotation.Root` (`ExploreState`) is now a plain `ExploreOutcome` interface:
 
 ```ts
-import { Annotation } from "@langchain/langgraph";
-
-export const ExploreState = Annotation.Root({
-  // inputs
-  targetUrl:   Annotation<string>,
-  sessionName: Annotation<string | undefined>,
-  checklist:   Annotation<Checklist | undefined>,
-  // working memory
-  study:       Annotation<PageStudy | undefined>,
-  elements:    Annotation<ElementRef[]>({ default: () => [], reducer: (_, n) => n }),
-  testCases:   Annotation<TestCase[]>({ default: () => [], reducer: (_, n) => n }),
-  suite:       Annotation<GeneratedSuite | undefined>,
-  validation:  Annotation<ValidationReport | undefined>,
+export interface ExploreOutcome {
+  // inputs carried through
+  targetUrl: string;
+  sessionName?: string;
+  checklist?: Checklist;
+  // accumulated results
+  study?: PageStudy;
+  elements: ElementRef[];
+  testCases: TestCase[];
+  suite?: GeneratedSuite;
+  validation?: ValidationReport;
   // control
-  attempts:    Annotation<number>({ default: () => 0, reducer: (_, n) => n }),
-  errors:      Annotation<string[]>({ default: () => [], reducer: (a, n) => a.concat(n) }),
-  runId:       Annotation<string>,
-});
-export type S = typeof ExploreState.State;
+  attempts: number;
+  errors: string[];
+  runId: string;
+  // telemetry
+  last_trace_id?: string;
+}
 ```
 
-## Nodes
+## Pipeline stages
 
-| Node | What it does | Vision | Structured output |
-|------|-----------|:------:|-------------------|
+| Stage | What it does | Vision | Structured output |
+|-------|-------------|:------:|-------------------|
 | `loadSession` | Bring up `storageState` into the gateway session (or a clean start) | – | – |
 | `observe` | Navigation; screenshot + ariaSnapshot + element refs → `study` | – | – |
 | `identifyElements` | reasoning+vision tier: screenshot+aria → ranked elements + semantics | ✅ opt.¹ | `ElementsSchema` |
 | `consumeChecklist` | If a checklist exists → coverage targets; narrow scope | – | `CoverageTargetsSchema` |
 | `designTestCases` | **Opus**: methodology prompt → `TestCase[]` (29119-4) | opt. | `TestCaseSchema` |
 | `generateCode` | **Sonnet**: POM prompt → `@playwright/test` + `.aria.yml` | – | `SuiteSchema` |
-| `validate` | Run the suite via playwright-lib; classify | – | – |
-| `repair` | On failure — code+errors back to the model → patch the suite | – | `SuiteSchema` |
+| `validate / repair` | Run the suite via playwright-lib; on failure — `runRepairLoop` (bounded, keep-best) | – | `SuiteSchema` |
 | `score` | Deterministic scorers + LLM judge → Langfuse; persist artifacts | judge opt. | judge schema |
 
-> **Models per node = tier (ADR-0002), not a specific provider.** The default profile is `anthropic`
+> **Models per stage = tier (ADR-0002), not a specific provider.** The default profile is `anthropic`
 > (Opus reasoning/vision, Sonnet bulk, Haiku judge); the economical one is `openrouter` (DeepSeek/Qwen). The
 > `makeModel(tier)` factory hides the choice.
 >
 > ¹ **Vision is optional:** if the reasoning-tier model has no vision (e.g. DeepSeek), `identifyElements`
-> falls back to **aria-only** mode (only the text ARIA snapshot, no screenshot) — lower quality on
-> visually-complex pages, but full functionality. The `supportsVision` flag controls the mode.
+> falls back to **aria-only** mode — lower quality on visually-complex pages, but full functionality.
 
-## Graph (edges)
+## Flow (control)
 
 ```
-__start__
-   │
-   ▼
-loadSession ─▶ observe ─▶ identifyElements
-                              │
-                    checklist?│
-                  ┌───────────┴───────────┐
-                 yes                       no
-                  │                         │
-            consumeChecklist                │
-                  └───────────┬─────────────┘
-                              ▼
-                       designTestCases ─▶ generateCode ─▶ validate
-                                                             │
-                                              routeAfterValidate (conditional)
-                          ┌──────────────────────┬───────────┴───────────┐
-                     all green            failures & attempts<MAX   failures & attempts≥MAX
-                          │                       │                       │
-                          ▼                       ▼                       ▼
-                        score                  repair ──▶ validate      score
-                          │                                               │
-                          ▼                                               ▼
-                       __end__                                         __end__
+observe → identifyElements
+               │
+     checklist?│
+   ┌───────────┴───────────┐
+  yes                       no
+   │                         │
+ consumeChecklist             │
+   └───────────┬─────────────┘
+               ▼
+        designTestCases
+               │
+       codeless? (design-only mode)
+   ┌───────────┴───────────┐
+  yes                       no
+   │                         │
+  stop                 generateCode
+                             │
+                      runRepairLoop (validate ⇄ repair, keep-best)
+                             │
+                           score
+                             │
+                           done
 ```
 
-- `routeAfterValidate` returns `'repair' | 'score'` and increments `attempts`.
-- `MAX_REPAIR` — from `Config` (default 2) — bounds the self-repair loop.
-- **Backend split:** `observe`/`identifyElements` can go to `playwright-cli` (token-efficient);
+- `runRepairLoop` is the same helper used by `runAutomate`/`runDesign` — no inline duplicate.
+- `MAX_REPAIR` (from `Config`, default 2) bounds the loop.
+- **Backend split:** observe/identifyElements can go to `playwright-cli` (token-efficient);
   `validate` ALWAYS goes to `playwright-lib` (it runs the tests). The gateway routes `runTests`→lib
   regardless of the observe config (ADR-0003).
 
 ## Tracing
 
 ```ts
-await graph.invoke(input, {
-  callbacks: [callbackHandler],            // @langfuse/langchain
-  runName: "exploration",
-  metadata: { runId, backend, promptVersions: { designer, codegen, elements } },
+await telemetry.runInTrace(runId, async (span) => {
+  // RoleRouter threads callbackHandler into every LLM call config
+  const out = await runExploreGraph(deps, init);
+  await scoreRun(span, out);
 });
 ```
 
-→ each node's LLM call = a nested Langfuse generation under a single trace; each links a prompt version,
-so a regression can be attributed to a specific change (see [`self-improvement.md`](./self-improvement.md)).
+→ each stage's LLM call = a nested Langfuse generation under a single root span; each links a prompt
+version, so a regression can be attributed to a specific change (see [`self-improvement.md`](./self-improvement.md)).
 
-## Node design principles
+## Stage design principles
 
-- One node — one responsibility; nodes do not call one another.
-- All the "smart" work goes through services (`design/`, `codegen/`, `observe/`); nodes only orchestrate.
-- Schemas for structured output live next to their node; zod is pinned to `~3.25.67` (Spike S1).
+- One stage — one responsibility; stages do not call one another.
+- All the "smart" work goes through services (`design/`, `codegen/`, `observe/`); stages only orchestrate.
+- Schemas for structured output live next to their stage; zod is pinned (Spike S1).

@@ -112,6 +112,76 @@ describe("RoleRouter — meters per role, falls back per tier", () => {
   });
 });
 
+describe("RoleRouter — callbacks binding (Task 2 telemetry rebind)", () => {
+  const baseCfg = {
+    llmProfile: "anthropic",
+    models: { reasoning: bulk, bulk, judge: bulk, vision },
+    langfuse: { enabled: false },
+    browser: { backend: "lib" },
+    maxRepair: 0,
+    testCaseLanguage: "English",
+  } as unknown as AppConfig;
+
+  it("threads the sentinel callbacks array through to the LLM invoke config", async () => {
+    const sentinel = [{ name: "sentinel-handler" }];
+    const recordedConfigs: unknown[] = [];
+
+    /** Fake model whose invoke records the config arg passed from meteredInvoker. */
+    function configRecordingModel(parsed: unknown, raw: unknown): BaseChatModel {
+      return {
+        withStructuredOutput: (_schema: unknown, opts?: { includeRaw?: boolean; method?: string }) => ({
+          invoke: async (_messages: unknown, config?: unknown) => {
+            recordedConfigs.push(config);
+            return opts?.includeRaw ? { raw, parsed } : parsed;
+          },
+        }),
+      } as unknown as BaseChatModel;
+    }
+
+    const router = new RoleRouter(
+      baseCfg,
+      { anthropicApiKey: "k" },
+      new CallBudget(80),
+      undefined,
+      () => configRecordingModel({ ok: 1 }, { usage_metadata: { input_tokens: 1, output_tokens: 1 } }),
+      undefined,
+      sentinel,
+    );
+
+    const inv = router.invoke("worker", bulk);
+    await inv(z.object({ ok: z.number() }), []);
+
+    expect(recordedConfigs).toHaveLength(1);
+    expect((recordedConfigs[0] as { callbacks: unknown[] }).callbacks).toBe(sentinel);
+  });
+
+  it("passes undefined config when no callbacks are given (backward-compat)", async () => {
+    const recordedConfigs: unknown[] = [];
+
+    function configRecordingModel(parsed: unknown, raw: unknown): BaseChatModel {
+      return {
+        withStructuredOutput: (_schema: unknown, opts?: { includeRaw?: boolean }) => ({
+          invoke: async (_messages: unknown, config?: unknown) => {
+            recordedConfigs.push(config);
+            return opts?.includeRaw ? { raw, parsed } : parsed;
+          },
+        }),
+      } as unknown as BaseChatModel;
+    }
+
+    const router = new RoleRouter(
+      baseCfg,
+      { anthropicApiKey: "k" },
+      new CallBudget(80),
+      undefined,
+      () => configRecordingModel({ ok: 1 }, {}),
+    );
+
+    await router.invoke("worker", bulk)(z.object({ ok: z.number() }), []);
+    expect(recordedConfigs[0]).toBeUndefined();
+  });
+});
+
 describe("structured-output method forwarding (L1-02 Groq fix)", () => {
   it("meteredInvoker forwards the method into withStructuredOutput alongside includeRaw", async () => {
     const sink: { opts?: unknown } = {};

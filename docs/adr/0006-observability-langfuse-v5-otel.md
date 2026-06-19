@@ -7,7 +7,7 @@
 
 The user's requirement: the bot must **improve** — collect data, judge quality, deploy improvements.
 A substrate is needed with tracing, scoring/LLM-as-judge, prompt versioning, and regression experiments,
-with integration into LangChain/LangGraph. **The user already has their own self-hosted Langfuse on their server.**
+with integration into the LangChain-core LLM layer. **The user already has their own self-hosted Langfuse on their server.**
 
 ## Decision
 
@@ -16,7 +16,7 @@ with integration into LangChain/LangGraph. **The user already has their own self
 - Bootstrap once in `telemetry/`: OTel `NodeSDK` + `LangfuseSpanProcessor`; flush on exit.
 - **Default hosting is SELF-HOSTED (the user's server):** `LANGFUSE_BASE_URL` points to their instance;
   `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` come from it. (Cloud remains possible via an env change.)
-- We use: **tracing** (CallbackHandler auto-nests node calls), **scores** (`score.create`/`observation`),
+- We use: **tracing** (a root span via `startActiveObservation` + the `@langfuse/langchain` `CallbackHandler` threaded into each LLM call by `RoleRouter`; each stage's LLM call becomes a nested generation), **scores** (`score.create`/`observation`),
   **Datasets + `runExperiment()`** (bot regression), **prompt management**.
 - **LLM-as-judge — SDK-side (NOT server-managed evaluators):** we call the judge model ourselves in `eval/judge.ts`
   / the `score` node, and write scores via the SDK. This way the loop **does not depend** on Cloud/Enterprise features and is fully
