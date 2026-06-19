@@ -16,7 +16,7 @@ The bot must be both a CLI and a library for embedding into a working project. T
 - `main: dist/index.js` (the library API).
 
 Internal boundaries — directories + barrel exports + ESLint `no-restricted-imports` (backends — only through the gateway).
-The modules are tightly coupled around a single state machine.
+The modules are tightly coupled around a single async pipeline.
 
 ## Consequences
 

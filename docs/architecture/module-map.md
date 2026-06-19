@@ -25,9 +25,8 @@ src/
 ├─ codegen/        # TestCodegen: TestCase[] → @playwright/test + .aria.yml
 ├─ validate/       # TestValidator: run tests, classify
 ├─ agent/
-│  ├─ state.ts     # ExploreState Annotation.Root
-│  ├─ graph.ts     # StateGraph (nodes+edges), compile()
-│  ├─ nodes/       # one file = one node
+│  ├─ graph.ts     # runExploreGraph (plain async pipeline; ExploreOutcome interface)
+│  ├─ nodes/       # one file = one pipeline stage
 │  └─ tools/       # tool() wrappers (when the model needs direct access)
 ├─ eval/
 │  ├─ judge.ts     # LLM-as-judge evaluators
@@ -54,7 +53,7 @@ src/
 | **TestCaseDesigner** | Methodology → cases | `design(input): Promise<TestCase[]>` | llm, PromptRegistry |
 | **TestCodegen** | Cases → `@playwright/test` | `emit(cases, study): GeneratedSuite` | llm, PromptRegistry |
 | **TestValidator** | Run + classify | `validate(suite): Promise<ValidationReport>` | BrowserGateway(lib), artifacts |
-| **Agent (graph)** | Orchestrate the loop | `buildGraph(deps)`; `runExploration(input)` | everything above |
+| **Agent (graph)** | Orchestrate the pipeline | `runExploreGraph(deps, init): Promise<ExploreOutcome>`; `runExploration(input)` | everything above |
 | **Judge/Eval** | LLM judge + scorers → scores | `scoreRun(span, outputs)`; `evaluators[]` | llm, Telemetry |
 | **DatasetExperimentRunner** | Prove an improvement | `runExperiment(datasetName, taskVersion)` | `@langfuse/client`, eval |
 | **ArtifactStore** | Local run artifacts | `openRun(): RunWriter` | fs |
