@@ -4,12 +4,9 @@
  * (other CLI commands and library embedders never load them).
  */
 export async function mountTui(): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let React: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let render: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let App: any;
+  let React: typeof import("react");
+  let render: typeof import("ink")["render"];
+  let App: typeof import("./App.js")["App"];
   try {
     React = (await import("react")).default;
     ({ render } = await import("ink"));

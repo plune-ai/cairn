@@ -212,179 +212,185 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
 
   try {
     // Task 2: wrap in a root trace so nested LangChain CallbackHandler generations attach to ONE trace.
-    const out = await telemetry.runInTrace(
+    // Fix 2: the entire post-graph evaluation (scores + judges + pilot + score-attach) runs INSIDE
+    // the callback so judge/pilot LLM calls fire the handler while the root span is still active.
+    const result = await telemetry.runInTrace(
       "exploration",
       { runId, backend: cfg.browser.backend, profile: cfg.llmProfile },
-      () => runExploreGraph(deps, { url: input.url, runId }),
-    );
-    if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
+      async () => {
+        const out = await runExploreGraph(deps, { url: input.url, runId });
 
-    // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
+        // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
 
-    // keep-best: final = the BEST suite/validation across all attempts (repair could not make it worse).
-    const suite = out.bestSuite ?? out.suite;
-    const validation = out.bestValidation ?? out.validation;
-    if (out.bestSuite) await runWriter.writeSuite(out.bestSuite); // restore the best code on disk
+        // keep-best: final = the BEST suite/validation across all attempts (repair could not make it worse).
+        const suite = out.bestSuite ?? out.suite;
+        const validation = out.bestValidation ?? out.validation;
+        if (out.bestSuite) await runWriter.writeSuite(out.bestSuite); // restore the best code on disk
 
-    // Phase 4: study prior runs of this URL + collect the best (collect-best).
-    const runsBase = resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs"));
-    const priorRuns = (await collectPriorRuns(runsBase, out.study.url)).filter((r) => r.runId !== runId);
-    const currentPassed = (validation?.results ?? [])
-      .filter((r) => r.status === "passed")
-      .map((r) => r.test);
-    const allTimePassing = unionPassedTitles([
-      ...priorRuns,
-      { runId, url: out.study.url, greenRatio: validation?.greenRatio ?? 0, passedTests: currentPassed },
-    ]);
-    const bestPriorGreen = priorRuns[0]?.greenRatio;
-    onProgress(
-      `collect — prior runs for URL: ${priorRuns.length}` +
-        (bestPriorGreen !== undefined ? `; best so far: ${Math.round(bestPriorGreen * 100)}%` : "") +
-        `; stable cases total (all-time): ${allTimePassing.length}`,
-    );
-
-    // B1: run metrics — deterministic scorers + LLM-judge (SDK-side).
-    onProgress("score — scoring (scorers + LLM-judge)…");
-    const scores: Score[] = deterministicScores({
-      study: out.study,
-      verified: out.verified,
-      testCases: out.testCases,
-      suite,
-      validation,
-    });
-    try {
-      scores.push(
-        ...(await judgeTestCases(
-          out.testCases,
-          out.analysis.pageSemantics,
-          router.invoke("judge", cfg.models.judge),
-          prompts,
-        )),
-      );
-    } catch {
-      // the judge is not critical for the run
-    }
-    if (checklistItems.length > 0) {
-      try {
-        const cov = await judgeChecklistCoverage(
-          checklistItems,
-          out.testCases,
-          router.invoke("judge", cfg.models.judge),
-          prompts,
+        // Phase 4: study prior runs of this URL + collect the best (collect-best).
+        const runsBase = resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs"));
+        const priorRuns = (await collectPriorRuns(runsBase, out.study.url)).filter((r) => r.runId !== runId);
+        const currentPassed = (validation?.results ?? [])
+          .filter((r) => r.status === "passed")
+          .map((r) => r.test);
+        const allTimePassing = unionPassedTitles([
+          ...priorRuns,
+          { runId, url: out.study.url, greenRatio: validation?.greenRatio ?? 0, passedTests: currentPassed },
+        ]);
+        const bestPriorGreen = priorRuns[0]?.greenRatio;
+        onProgress(
+          `collect — prior runs for URL: ${priorRuns.length}` +
+            (bestPriorGreen !== undefined ? `; best so far: ${Math.round(bestPriorGreen * 100)}%` : "") +
+            `; stable cases total (all-time): ${allTimePassing.length}`,
         );
-        scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
-      } catch {
-        // fallback: token-based coverage (offline / judge unavailable)
-        scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
-      }
-    }
-    onProgress(`score — ${scores.length} metrics`);
 
-    // Best-effort: write scores to Langfuse against the trace (requires a self-hosted instance).
-    const traceId = telemetry.callbackHandler?.last_trace_id;
-    if (telemetry.enabled && telemetry.client && traceId) {
-      try {
-        for (const sc of scores) {
-          telemetry.client.score.create({
-            traceId,
-            name: sc.name,
-            value: sc.value,
-            comment: sc.comment,
-            dataType: "NUMERIC",
-          });
+        // B1: run metrics — deterministic scorers + LLM-judge (SDK-side).
+        onProgress("score — scoring (scorers + LLM-judge)…");
+        const scores: Score[] = deterministicScores({
+          study: out.study,
+          verified: out.verified,
+          testCases: out.testCases,
+          suite,
+          validation,
+        });
+        try {
+          scores.push(
+            ...(await judgeTestCases(
+              out.testCases,
+              out.analysis.pageSemantics,
+              router.invoke("judge", cfg.models.judge),
+              prompts,
+            )),
+          );
+        } catch {
+          // the judge is not critical for the run
         }
-      } catch {
-        // best-effort
-      }
-    }
+        if (checklistItems.length > 0) {
+          try {
+            const cov = await judgeChecklistCoverage(
+              checklistItems,
+              out.testCases,
+              router.invoke("judge", cfg.models.judge),
+              prompts,
+            );
+            scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
+          } catch {
+            // fallback: token-based coverage (offline / judge unavailable)
+            scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
+          }
+        }
+        onProgress(`score — ${scores.length} metrics`);
 
-    // Pilot supervisor: a holistic verdict for the run (idea from explorbot).
-    let pilot: PilotVerdict | undefined;
-    try {
-      pilot = await pilotReview(
-        out.analysis.pageSemantics,
-        validation,
-        out.testCases,
-        // L1-01: Pilot verdict now runs on the strong `reasoner` role (was the cheap `judge` tier) —
-        // intended behavior change toward a "smart judge". See ADR-0011.
-        router.invoke("reasoner", router.tierFor("reasoner", cfg.models.reasoning)),
-        prompts,
-      );
-      onProgress(`pilot — verdict: ${pilot.verdict} — ${pilot.reason}`);
-    } catch {
-      // pilot is not critical
-    }
+        // Best-effort: write scores to Langfuse against the trace (requires a self-hosted instance).
+        // The trace is still active here (inside runInTrace) so last_trace_id is set.
+        const traceId = telemetry.callbackHandler?.last_trace_id;
+        if (telemetry.enabled && telemetry.client && traceId) {
+          try {
+            for (const sc of scores) {
+              telemetry.client.score.create({
+                traceId,
+                name: sc.name,
+                value: sc.value,
+                comment: sc.comment,
+                dataType: "NUMERIC",
+              });
+            }
+          } catch {
+            // best-effort
+          }
+        }
 
-    const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
-    const budgetReport: BudgetReport = { used: budget.spent, max: budget.max }; // L1-04 (Box 3)
-    const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
+        // Pilot supervisor: a holistic verdict for the run (idea from explorbot).
+        let pilot: PilotVerdict | undefined;
+        try {
+          pilot = await pilotReview(
+            out.analysis.pageSemantics,
+            validation,
+            out.testCases,
+            // L1-01: Pilot verdict now runs on the strong `reasoner` role (was the cheap `judge` tier) —
+            // intended behavior change toward a "smart judge". See ADR-0011.
+            router.invoke("reasoner", router.tierFor("reasoner", cfg.models.reasoning)),
+            prompts,
+          );
+          onProgress(`pilot — verdict: ${pilot.verdict} — ${pilot.reason}`);
+        } catch {
+          // pilot is not critical
+        }
 
-    // #39: also emit ATC/MTC case docs (.md) — explore now produces the human-readable cases like
-    // design, so manual MTC cases are visible deliverables (not just buried inside report.md).
-    const caseSuite = suiteFromUrl(out.study.url);
-    const caseDocs = buildTestCaseDocs(out.testCases, out.verified, caseSuite, checklistItems.length > 0);
-    const testCaseFiles = await runWriter.writeTestCases(caseDocs.docs);
-    onProgress(
-      `explore — wrote ${testCaseFiles.length} cases: ${caseDocs.autoN} ATC, ${caseDocs.manualN} MTC → testcases/`,
-    );
+        const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
+        const budgetReport: BudgetReport = { used: budget.spent, max: budget.max }; // L1-04 (Box 3)
+        const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
 
-    await runWriter.writeStudy(out.study);
-    if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
-    await runWriter.writeAria(out.study.ariaYaml);
-    await runWriter.writeReport({
-      runId,
-      url: out.study.url,
-      pageSemantics: out.analysis.pageSemantics,
-      testCases: out.testCases,
-      validation,
-      scores,
-      pilot,
-      cost,
-      budget: budgetReport,
-      stoppedEarly,
-      history: {
-        priorRuns: priorRuns.length,
-        bestPriorGreen: bestPriorGreen ?? null,
-        allTimePassing,
+        // #39: also emit ATC/MTC case docs (.md) — explore now produces the human-readable cases like
+        // design, so manual MTC cases are visible deliverables (not just buried inside report.md).
+        const caseSuite = suiteFromUrl(out.study.url);
+        const caseDocs = buildTestCaseDocs(out.testCases, out.verified, caseSuite, checklistItems.length > 0);
+        const testCaseFiles = await runWriter.writeTestCases(caseDocs.docs);
+        onProgress(
+          `explore — wrote ${testCaseFiles.length} cases: ${caseDocs.autoN} ATC, ${caseDocs.manualN} MTC → testcases/`,
+        );
+
+        await runWriter.writeStudy(out.study);
+        if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
+        await runWriter.writeAria(out.study.ariaYaml);
+        await runWriter.writeReport({
+          runId,
+          url: out.study.url,
+          pageSemantics: out.analysis.pageSemantics,
+          testCases: out.testCases,
+          validation,
+          scores,
+          pilot,
+          cost,
+          budget: budgetReport,
+          stoppedEarly,
+          history: {
+            priorRuns: priorRuns.length,
+            bestPriorGreen: bestPriorGreen ?? null,
+            allTimePassing,
+          },
+        });
+        await runWriter.writeReportMd(
+          renderReportMd({
+            runId,
+            url: out.study.url,
+            backend: cfg.browser.backend,
+            profile: cfg.llmProfile,
+            pageSemantics: out.analysis.pageSemantics,
+            elements: out.study.elements,
+            testCases: out.testCases,
+            validation,
+            scores,
+            consoleErrors: out.study.consoleErrors,
+            cost,
+            budget: budgetReport,
+            stoppedEarly,
+          }),
+        );
+        const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
+        await runWriter.writeLog(
+          [...logLines, "", `summary: green=${green} testCases=${out.testCases.length} runId=${runId}`].join("\n"),
+        );
+
+        return {
+          runId,
+          runDir: runWriter.dir,
+          study: out.study,
+          analysis: out.analysis,
+          testCases: out.testCases,
+          suite,
+          validation,
+          scores,
+          pilot,
+          cost,
+          budget: budgetReport,
+          stoppedEarly,
+          testCaseFiles,
+        };
       },
-    });
-    await runWriter.writeReportMd(
-      renderReportMd({
-        runId,
-        url: out.study.url,
-        backend: cfg.browser.backend,
-        profile: cfg.llmProfile,
-        pageSemantics: out.analysis.pageSemantics,
-        elements: out.study.elements,
-        testCases: out.testCases,
-        validation,
-        scores,
-        consoleErrors: out.study.consoleErrors,
-        cost,
-        budget: budgetReport,
-        stoppedEarly,
-      }),
-    );
-    const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
-    await runWriter.writeLog(
-      [...logLines, "", `summary: green=${green} testCases=${out.testCases.length} runId=${runId}`].join("\n"),
     );
 
-    return {
-      runId,
-      runDir: runWriter.dir,
-      study: out.study,
-      analysis: out.analysis,
-      testCases: out.testCases,
-      suite,
-      validation,
-      scores,
-      pilot,
-      cost,
-      budget: budgetReport,
-      stoppedEarly,
-      testCaseFiles,
-    };
+    return result;
   } catch (err) {
     // L1-04 (Box 1/3/4): the single failure path — write a partial report + a readable, actionable
     // summary, then throw a friendly Error. The user never sees a raw traceback or a silent halt.
@@ -538,87 +544,92 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
 
   try {
     // Task 2: wrap in a root trace so nested LangChain CallbackHandler generations attach to ONE trace.
-    const out = await telemetry.runInTrace(
+    // Fix 2: the entire post-graph evaluation (scores + judges + score-attach) runs INSIDE
+    // the callback so judge LLM calls fire the handler while the root span is still active.
+    const result = await telemetry.runInTrace(
       "design",
       { runId, backend: cfg.browser.backend, profile: cfg.llmProfile, mode: "design" },
-      () => runExploreGraph(designDeps, { url: input.url, runId }),
-    );
-    if (!out.study || !out.analysis) throw new Error("The graph did not return study/analysis.");
+      async () => {
+        const out = await runExploreGraph(designDeps, { url: input.url, runId });
 
-    // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
+        // (Expired-session detection now fails fast inside the graph's identifyElements node — L1-05.)
 
-    const suite = suiteFromUrl(out.study.url);
-    const { docs, autoN, manualN } = buildTestCaseDocs(
-      out.testCases,
-      out.verified,
-      suite,
-      checklistItems.length > 0,
-    );
-    const testCaseFiles = await runWriter.writeTestCases(docs);
-    onProgress(
-      `design — wrote ${testCaseFiles.length} cases: ${autoN} auto/ATC, ${manualN} manual/MTC (${suite}) → testcases/`,
-    );
-
-    const scores: Score[] = deterministicScores({
-      study: out.study,
-      verified: out.verified,
-      testCases: out.testCases,
-    });
-    try {
-      scores.push(
-        ...(await judgeTestCases(
+        const suite = suiteFromUrl(out.study.url);
+        const { docs, autoN, manualN } = buildTestCaseDocs(
           out.testCases,
-          out.analysis.pageSemantics,
-          router.invoke("judge", cfg.models.judge),
-          prompts,
-        )),
-      );
-    } catch {
-      // judge optional
-    }
-    if (checklistItems.length > 0) {
-      try {
-        const cov = await judgeChecklistCoverage(
-          checklistItems,
-          out.testCases,
-          router.invoke("judge", cfg.models.judge),
-          prompts,
+          out.verified,
+          suite,
+          checklistItems.length > 0,
         );
-        scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
-      } catch {
-        scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
-      }
-    }
+        const testCaseFiles = await runWriter.writeTestCases(docs);
+        onProgress(
+          `design — wrote ${testCaseFiles.length} cases: ${autoN} auto/ATC, ${manualN} manual/MTC (${suite}) → testcases/`,
+        );
 
-    await runWriter.writeStudy(out.study);
-    if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
-    await runWriter.writeAria(out.study.ariaYaml);
-    const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
-    await runWriter.writeReport({
-      runId,
-      url: out.study.url,
-      mode: "design",
-      suite,
-      pageSemantics: out.analysis.pageSemantics,
-      testCases: out.testCases,
-      testCaseFiles,
-      scores,
-      cost,
-    });
-    await runWriter.writeLog(
-      [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),
+        const scores: Score[] = deterministicScores({
+          study: out.study,
+          verified: out.verified,
+          testCases: out.testCases,
+        });
+        try {
+          scores.push(
+            ...(await judgeTestCases(
+              out.testCases,
+              out.analysis.pageSemantics,
+              router.invoke("judge", cfg.models.judge),
+              prompts,
+            )),
+          );
+        } catch {
+          // judge optional
+        }
+        if (checklistItems.length > 0) {
+          try {
+            const cov = await judgeChecklistCoverage(
+              checklistItems,
+              out.testCases,
+              router.invoke("judge", cfg.models.judge),
+              prompts,
+            );
+            scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
+          } catch {
+            scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
+          }
+        }
+
+        await runWriter.writeStudy(out.study);
+        if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
+        await runWriter.writeAria(out.study.ariaYaml);
+        const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
+        await runWriter.writeReport({
+          runId,
+          url: out.study.url,
+          mode: "design",
+          suite,
+          pageSemantics: out.analysis.pageSemantics,
+          testCases: out.testCases,
+          testCaseFiles,
+          scores,
+          cost,
+        });
+        await runWriter.writeLog(
+          [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),
+        );
+
+        return {
+          runId,
+          runDir: runWriter.dir,
+          study: out.study,
+          analysis: out.analysis,
+          testCases: out.testCases,
+          testCaseFiles,
+          scores,
+          cost,
+        };
+      },
     );
 
-    return {
-      runId,
-      runDir: runWriter.dir,
-      study: out.study,
-      analysis: out.analysis,
-      testCases: out.testCases,
-      testCaseFiles,
-      scores,
-      cost,
-    };
+    return result;
   } catch (err) {
     // L1-04 parity with runExploration: write a partial report + a friendly, actionable summary
     // instead of leaking a raw traceback. Study/snapshots/log/cases were already persisted

@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > **Backward compatibility:** the public API (`runExploration`, `runDesign`, `runAutomate`,
 > `loadConfig`), all `explore` / `design` / `automate` / `observe` CLI commands, existing
 > configs, sessions, and run artifacts are unchanged. Telemetry and the TUI are opt-in — install
-> their optional packages to use them. Tests: 141 green (vitest), coverage gate passes.
+> their optional packages to use them. Tests: 416 green (vitest), coverage gate passes.
 
 [0.4.0]: https://github.com/plune-ai/cairn/compare/v0.3.4...v0.4.0
 
