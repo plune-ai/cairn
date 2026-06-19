@@ -5,6 +5,7 @@ import type { PageStudy } from "../observe/index.js";
 import type { VerifiedElement } from "../browser/types.js";
 import { formatTransitions, type Transition } from "../probe/index.js";
 import { DesignResultSchema, type TestCase } from "./schema.js";
+import { dedupCases } from "./dedup.js";
 
 export type { TestCase, DesignedCase } from "./schema.js";
 export {
@@ -69,9 +70,10 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
   const result = await deps.invoke(DesignResultSchema, [new HumanMessage(prompt.text)]);
 
   const known = new Set(els.map((e) => e.ref));
-  return result.testCases.map((c, i) => ({
+  const grounded = result.testCases.map((c, i) => ({
     ...c,
     id: `tc-${i + 1}`,
     elementRefs: c.elementRefs.filter((r) => known.has(r)),
   }));
+  return dedupCases(grounded).merged; // #58: merge high-confidence near-duplicates (reduced count is the report)
 }
