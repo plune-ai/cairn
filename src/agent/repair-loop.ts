@@ -25,6 +25,8 @@ export interface RepairLoopDeps {
   /** Max repair attempts after the initial generation. */
   maxRepair: number;
   onProgress?: (event: string) => void;
+  /** Optional: extra repair guidance from linting the FAILED suite (flaky-hardening, #57). Absent → no-op. */
+  lint?: (suite: GeneratedSuite) => string;
 }
 
 export interface RepairLoopResult {
@@ -56,8 +58,10 @@ export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopRes
   while (bestGreen < 1 && attempts < deps.maxRepair) {
     attempts += 1;
     const failed = failedTestsHint(validation.results);
+    const lintFindings = deps.lint?.(suite) ?? ""; // lint the suite that produced this failing validation
+    const hint = [failed, lintFindings].filter(Boolean).join("\n");
     deps.onProgress?.(`repair — attempt ${attempts}`);
-    suite = await deps.generate(failed);
+    suite = await deps.generate(hint);
     validation = await deps.validate();
 
     if (validation.results.length > 0 && validation.greenRatio > bestGreen) {

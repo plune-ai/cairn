@@ -86,4 +86,25 @@ describe("runRepairLoop (L1-04 #40 — shared validate⇄repair⇄keep-best)", (
     expect(r.bestValidation.greenRatio).toBe(0.5); // kept, not dropped to 0
     expect(r.bestSuite.files[0]?.path).toBe("s0.spec.ts"); // the first (best) suite
   });
+
+  it("with a lint dep, appends lint findings to the repair hint, keeping the failure cause (#57)", async () => {
+    const h = harness([
+      report([{ test: "t", status: "failed", error: "boom" }], 0),
+      report([{ test: "t", status: "passed" }], 1),
+    ]);
+    const lint = (): string => "Flaky-hardening — fix these fragile patterns:\n- [bad-wait] s0.spec.ts: waitForTimeout";
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3, lint });
+    expect(r.bestValidation.greenRatio).toBe(1);
+    expect(h.hints[1]).toContain("t: boom");        // #73 failure cause preserved
+    expect(h.hints[1]).toContain("Flaky-hardening"); // #57 lint findings appended
+  });
+
+  it("without a lint dep, the repair hint is byte-identical to failedTestsHint (#73 guard)", async () => {
+    const h = harness([
+      report([{ test: "t", status: "failed", error: "boom" }], 0),
+      report([{ test: "t", status: "passed" }], 1),
+    ]);
+    await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3 });
+    expect(h.hints[1]).toBe("- t: boom"); // nothing appended
+  });
 });
