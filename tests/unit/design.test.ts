@@ -58,4 +58,19 @@ describe("designTestCases", () => {
     );
     expect(cases).toEqual([]);
   });
+
+  it("merges near-duplicate cases the LLM emits (#58)", async () => {
+    const dup = {
+      title: "Boundary 0", technique: "boundary-value", type: "Positive", kind: "active",
+      execution: "auto", preconditions: [], steps: ["Enter 0 into Email", "Submit"],
+      expected: "rejected", priority: "high", elementRefs: ["e3", "e6"],
+    };
+    const fakeInvoke: StructuredInvoke = async (schema) =>
+      schema.parse({ testCases: [dup, { ...dup, title: "Boundary 0 again" }] });
+    const cases = await designTestCases(
+      { study, pageSemantics: "x" },
+      { invoke: fakeInvoke, prompts: new PromptRegistry() },
+    );
+    expect(cases).toHaveLength(1); // two identical-modulo-title cases → merged
+  });
 });

@@ -46,6 +46,7 @@ STABILITY (CRITICAL):
 - Each case is INDEPENDENT and starts from a CLEAN page. Do NOT assume state left by another case.
 - Do NOT generate contradictory cases (e.g. one expects toggle=on, another toggle=off from a fresh start). For a toggle take EXACTLY ONE transition from the "Observed state transitions" (before→after).
 
-Cover happy path AND negative/edge scenarios. No duplicates or trivialities.
+Cover happy path AND negative/edge scenarios. No duplicates or trivialities (no two cases with the same technique + same elements + same steps).
+TECHNIQUE BREADTH: apply a VARIETY of 29119-4 techniques where the page allows — equivalence-partitioning, boundary-value, decision-table, state-transition, error-guessing — not just exploratory.
 
 FULL CHECKLIST COVERAGE: do NOT skip checklist items. If an item cannot be reliably automated (full generation/submit flow, security/XSS, UI-UX/visual/responsiveness, irreversible actions) — STILL create a case, but set execution="manual" (it will not be automated, but it is documented for manual testing). Every checklist item → at least one case (auto or manual).`;

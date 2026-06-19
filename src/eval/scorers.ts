@@ -3,6 +3,7 @@ import type { TestCase } from "../design/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { VerifiedElement } from "../browser/types.js";
+import { caseSimilarity } from "../design/dedup.js";
 
 export interface Score {
   name: string;
@@ -59,6 +60,24 @@ export function deterministicScores(input: ScoreInput): Score[] {
     if (total > 0) scores.push({ name: "locator_quality", value: userFacing / total });
   }
 
+  // technique_coverage (#58): breadth across the 6 ISO/IEC/IEEE 29119-4 techniques.
+  if (input.testCases.length > 0) {
+    const techniques = new Set(input.testCases.map((c) => c.technique));
+    scores.push({ name: "technique_coverage", value: techniques.size / 6 });
+  }
+  // case_redundancy (#58): share of cases in >=1 near-duplicate pair (shared caseSimilarity — DRY).
+  if (input.testCases.length > 1) {
+    const involved = new Set<number>();
+    for (let i = 0; i < input.testCases.length; i += 1) {
+      for (let j = i + 1; j < input.testCases.length; j += 1) {
+        if (caseSimilarity(input.testCases[i]!, input.testCases[j]!) !== "distinct") {
+          involved.add(i);
+          involved.add(j);
+        }
+      }
+    }
+    scores.push({ name: "case_redundancy", value: involved.size / input.testCases.length });
+  }
   // locator_robustness (#57): tiered selector strength, reconciling the DoD ranking
   // role+name > test-id > css > text. Complements the binary locator_quality (kept as-is).
   if (input.suite) {

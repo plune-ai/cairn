@@ -66,4 +66,20 @@ describe("deterministicScores", () => {
     expect(byName(scores, "runs_green")).toBeUndefined();
     expect(byName(scores, "grounding")).toBe(0.5);
   });
+
+  it("technique_coverage and case_redundancy (#58)", () => {
+    const mk = (over: Partial<(typeof testCases)[number]>) => ({
+      id: "x", title: "t", technique: "boundary-value", type: "Positive",
+      preconditions: [], steps: ["enter 0"], expected: "e", priority: "high", elementRefs: ["e1"],
+      ...over,
+    });
+    const cases = [
+      mk({ id: "1" }),
+      mk({ id: "2" }), // near-dup of 1
+      mk({ id: "3", technique: "equivalence-partitioning", elementRefs: ["e9"], steps: ["other"] }),
+    ];
+    const scores = deterministicScores({ study, verified, testCases: cases as never, suite: undefined, validation: undefined });
+    expect(byName(scores, "technique_coverage")).toBeCloseTo(2 / 6, 5); // boundary-value + equivalence-partitioning
+    expect(byName(scores, "case_redundancy")).toBeCloseTo(2 / 3, 5); // cases 1 & 2 near-dup → 2 of 3
+  });
 });
