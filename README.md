@@ -113,6 +113,11 @@ cairn explore --url https://app.example.com/page --session myapp --checklist pla
 The `--checklist` file steers **what** the bot tests (and is scored as coverage). Copy
 [`examples/plan.md`](examples/plan.md) — a ready-to-run checklist for `https://plune.ai/cairn` — as a starting point.
 
+> **Run id / Windows tip:** `--run` (and `--from-run`) accept just the run id — `--run <id>` — in addition to
+> `runs/<id>` or an absolute path. In **Git Bash (MINGW64)** quote the path or use forward slashes
+> (`--run 'runs/<id>'`), because an unquoted `\` is eaten by the shell *before* Cairn sees it (so `runs\<id>`
+> would otherwise arrive as `runs<id>`). The bare-id form sidesteps the issue entirely.
+
 Add `--fresh` (on `design` and `explore`) to **ignore prior runs of the same URL**. By default a 2nd+
 run on a URL reuses its *previously stable* cases as context and generates only the **delta** (new
 cases), so re-runs get smaller. `--fresh` skips that and generates a **full set** every time — useful

@@ -20,11 +20,12 @@ import { ingestChecklist, formatChecklist, coverageScore, styleDirective } from 
 import { loadKnowledge } from "../knowledge/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
+import { resolveRunDir, defaultRunsBaseDir } from "../fs/run-dir.js";
 import { runExploreGraph } from "./graph.js";
 import { finalizeFailure } from "./finalize.js";
 import { runRepairLoop } from "./repair-loop.js";
 import { buildTestCaseDocs } from "./testcase-docs.js";
-import type { BudgetReport } from "./summary.js";
+import { displayPath, type BudgetReport } from "./summary.js";
 import type { AppConfig } from "../config/index.js";
 import type { StorageState } from "../browser/index.js";
 import type { PageStudy } from "../observe/index.js";
@@ -144,7 +145,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     headless: !input.headed,
   });
   const prompts = new PromptRegistry();
-  const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
+  const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
   const runId = randomUUID();
   const runWriter = await artifacts.openRun(runId);
   // #38: now that the run dir exists, flush run.log on every progress event (best-effort).
@@ -157,7 +158,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
   // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
   const experienceText = await experienceForUrl({
-    runsBaseDir: resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")),
+    runsBaseDir: resolve(input.runsBaseDir ?? defaultRunsBaseDir()),
     url: input.url,
     currentRunId: runId,
     fresh: input.fresh,
@@ -231,7 +232,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         if (out.bestSuite) await runWriter.writeSuite(out.bestSuite); // restore the best code on disk
 
         // Phase 4: study prior runs of this URL + collect the best (collect-best).
-        const runsBase = resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs"));
+        const runsBase = resolve(input.runsBaseDir ?? defaultRunsBaseDir());
         const priorRuns = (await collectPriorRuns(runsBase, out.study.url)).filter((r) => r.runId !== runId);
         const currentPassed = (validation?.results ?? [])
           .filter((r) => r.status === "passed")
@@ -479,7 +480,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     headless: !input.headed,
   });
   const prompts = new PromptRegistry();
-  const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")));
+  const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
   const runId = randomUUID();
   const runWriter = await artifacts.openRun(runId);
   // #38: now that the run dir exists, flush run.log on every progress event (best-effort).
@@ -490,7 +491,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
   // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
   const experienceText = await experienceForUrl({
-    runsBaseDir: resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")),
+    runsBaseDir: resolve(input.runsBaseDir ?? defaultRunsBaseDir()),
     url: input.url,
     currentRunId: runId,
     fresh: input.fresh,
@@ -672,6 +673,8 @@ export interface AutomateResult {
 export async function runAutomate(input: {
   runDir: string;
   config: AppConfig;
+  /** Base directory for runs/ (default ./runs) — used to resolve a bare run id passed as runDir. */
+  runsBaseDir?: string;
   sessionName?: string;
   sessionFile?: string;
   sessionsDir?: string;
@@ -691,7 +694,7 @@ export async function runAutomate(input: {
     }
   };
   const router = new RoleRouter(cfg, keys, budget, undefined, undefined, onCharge); // L1-01 routing + ledger
-  const runDir = resolve(input.runDir);
+  const runDir = await resolveRunDir(input.runDir, { runsBaseDir: resolve(input.runsBaseDir ?? defaultRunsBaseDir()) });
 
   const rep = JSON.parse(await readFile(join(runDir, "report.json"), "utf8")) as {
     url?: string;
@@ -707,7 +710,7 @@ export async function runAutomate(input: {
   // Only auto/ATC — manual/MTC cases are NOT automated (they are manual).
   const cases = allCases.filter((c) => c.execution !== "manual" && !c.id.startsWith("MTC"));
   const skipped = allCases.length - cases.length;
-  onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${tcDir}`);
+  onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${displayPath(tcDir)}`);
 
   const invoke = router.invoke("worker", router.tierFor("worker", cfg.models.bulk));
   const prompts = new PromptRegistry();

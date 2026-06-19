@@ -20,6 +20,7 @@ import { SessionStore, captureSession } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
 import { runDesign, runAutomate } from "../agent/index.js";
 import { renderRunSummary, displayPath } from "../agent/summary.js";
+import { resolveRunDir, defaultRunsBaseDir, readInputFile } from "../fs/run-dir.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
 import { makeModel, structuredMethodFor } from "../llm/index.js";
@@ -118,13 +119,14 @@ export function buildProgram(): Command {
   program
     .command("dataset-add")
     .description("Add a run (study.json) to an experiment dataset")
-    .requiredOption("--from-run <dir>", "runs/<id> folder")
+    .requiredOption("--from-run <dir>", "run folder: runs/<id> or a bare <id>")
     .requiredOption("--to <file>", "dataset file (JSON)")
     .action(async (opts: { fromRun: string; to: string }) => {
-      const study = JSON.parse(await readFile(join(opts.fromRun, "study.json"), "utf8")) as PageStudy;
+      const fromRun = await resolveRunDir(opts.fromRun, { runsBaseDir: defaultRunsBaseDir() });
+      const study = JSON.parse(await readFile(join(fromRun, "study.json"), "utf8")) as PageStudy;
       let pageSemantics = "";
       try {
-        const rep = JSON.parse(await readFile(join(opts.fromRun, "report.json"), "utf8")) as {
+        const rep = JSON.parse(await readFile(join(fromRun, "report.json"), "utf8")) as {
           pageSemantics?: string;
         };
         pageSemantics = rep.pageSemantics ?? "";
@@ -157,13 +159,13 @@ export function buildProgram(): Command {
         openrouterApiKey: config.openrouterApiKey,
         groqApiKey: config.groqApiKey,
       };
-      const ds = JSON.parse(await readFile(opts.dataset, "utf8")) as { items: DatasetItem[] };
+      const ds = JSON.parse(await readInputFile(opts.dataset, "Dataset")) as { items: DatasetItem[] };
 
       const variants: Variant[] = [{ label: "production", prompts: new PromptRegistry() }];
       if (opts.candidate) {
         const eq = opts.candidate.indexOf("=");
         const name = opts.candidate.slice(0, eq);
-        const text = await readFile(opts.candidate.slice(eq + 1), "utf8");
+        const text = await readInputFile(opts.candidate.slice(eq + 1), "Candidate prompt");
         variants.push({
           label: "candidate",
           prompts: new PromptRegistry({ local: { ...LOCAL_PROMPTS, [name]: text } }),
@@ -233,7 +235,7 @@ export function buildProgram(): Command {
         fresh?: boolean;
       }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
-        const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
+        const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
         process.stderr.write(`▸ Designing test cases for ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
@@ -274,7 +276,7 @@ export function buildProgram(): Command {
   program
     .command("automate")
     .description("Generate @playwright/test from ready cases (runs/<id>/testcases/*.md)")
-    .requiredOption("--run <dir>", "design run folder (runs/<id>)")
+    .requiredOption("--run <dir>", "run folder: runs/<id>, a bare <id>, or an absolute path (Git Bash: quote or use /)")
     .option("--validate", "run the generated tests (a session is required)")
     .option("--session <name>", "session name for validation")
     .option("--session-file <path>", "path to storageState for validation")
@@ -283,7 +285,7 @@ export function buildProgram(): Command {
     .action(
       async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
-        process.stderr.write(`▸ Automating cases from ${opts.run}…\n`);
+        process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
           isTTY: Boolean(process.stderr.isTTY),
@@ -348,14 +350,14 @@ export function buildProgram(): Command {
   program
     .command("promote")
     .description("Promote manual MTC case(s) to automatable ATC (.md only; run `automate` to generate code)")
-    .requiredOption("--run <dir>", "run folder (runs/<id>)")
+    .requiredOption("--run <dir>", "run folder: runs/<id>, a bare <id>, or an absolute path (Git Bash: quote or use /)")
     .requiredOption("--cases <ids>", "comma-separated MTC ids, e.g. MTC-DEMO-001,MTC-DEMO-003")
     .option("--session <name>", "session for the live selector fallback")
     .option("--session-file <path>", "storageState path for the live selector fallback")
     .action(
       async (opts: { run: string; cases: string; session?: string; sessionFile?: string }) => {
         const config = loadConfig(process.env);
-        const runDir = resolve(opts.run);
+        const runDir = await resolveRunDir(opts.run, { runsBaseDir: defaultRunsBaseDir() });
         const ids = opts.cases.split(",").map((s) => s.trim()).filter(Boolean);
 
         // Live fallback only when a session is provided (best-effort — see note).
@@ -378,12 +380,12 @@ export function buildProgram(): Command {
           };
         }
 
-        process.stderr.write(`▸ Promoting ${String(ids.length)} case(s) from ${opts.run}…\n`);
+        process.stderr.write(`▸ Promoting ${String(ids.length)} case(s) from ${displayPath(opts.run)}…\n`);
         for (const id of ids) {
           const res = await promoteCase(runDir, id, { collectLive });
           process.stdout.write(`${res.oldId} → ${res.newId}${res.warning ? ` (⚠ ${res.warning})` : ""}\n`);
         }
-        process.stdout.write(`\nDone. Run \`cairn automate --run ${opts.run}\` to generate code for the new ATC case(s).\n`);
+        process.stdout.write(`\nDone. Run \`cairn automate --run ${displayPath(runDir)}\` to generate code for the new ATC case(s).\n`);
       },
     );
 
