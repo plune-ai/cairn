@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`--fresh` flag on `cairn design` and `cairn explore`** (and a matching TUI toggle) — ignore
+  prior-run experience for a URL. By default a 2nd+ run on the same URL reuses its *previously stable*
+  cases as design-prompt context and generates only the **delta** (new cases); `--fresh` skips that
+  disk read entirely (`collectPriorRuns`) and generates a **full set** every time, for clean A/B
+  comparisons. The gate is shared by both flows via `experienceForUrl()` in `src/eval/collect.ts`.
+  Behavior is unchanged when the flag is absent — no generated artifact differs. (See ADR-0006.)
+
 ## [0.4.0] - 2026-06-19
 
 ### Changed
