@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Inline metric legend.** `report.md`'s Metrics table now carries a `meaning` column and a ↑/↓
+  direction per metric (plus a one-line key explaining the glyphs and the `judge` tag); the console
+  `=== Metrics ===` output appends the same ↑/↓ glyph so `case_redundancy` / `flaky_ratio` (lower is
+  better) can't be misread. A new README **Metrics** section documents every metric. All three render
+  from one source of truth — `METRIC_LEGEND` in `src/eval/legend.ts` — so they can't drift. No metric
+  value or name changed.
+
 ## [0.4.0] - 2026-06-19
 
 ### Changed
