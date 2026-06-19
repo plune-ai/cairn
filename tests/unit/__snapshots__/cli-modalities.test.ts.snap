@@ -58,6 +58,8 @@ Options:
   --headed               visible browser (debug)
   --checklist <file>     checklist file (md/text) — guides what to test
   --style <s>            planning style: happy | negative | coverage | all
+  --fresh                ignore prior runs for this URL — generate a full set,
+                         don't dedupe against past cases
   --routing <preset>     role-routing preset: fast (Groq worker) | volume
                          (OpenRouter worker) (sets LLM_ROUTING)
   -h, --help             display help for command

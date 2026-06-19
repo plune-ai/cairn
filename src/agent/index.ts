@@ -15,7 +15,7 @@ import { lintSuite, lintHint } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
-import { collectPriorRuns, unionPassedTitles, formatExperience } from "../eval/collect.js";
+import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
 import { ingestChecklist, formatChecklist, coverageScore, styleDirective } from "../checklist/index.js";
 import { loadKnowledge } from "../knowledge/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
@@ -57,6 +57,8 @@ export interface ExploreInput {
   headed?: boolean;
   /** Live per-node progress (CLI prints to stderr). */
   onProgress?: (event: string) => void;
+  /** Ignore prior-run experience for this URL (collectPriorRuns is skipped). */
+  fresh?: boolean;
 }
 
 export interface ExploreResult {
@@ -152,13 +154,14 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const checklistFormatted = formatChecklist(checklistItems);
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
-  const experienceText = formatExperience(
-    unionPassedTitles(
-      (
-        await collectPriorRuns(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")), input.url)
-      ).filter((r) => r.runId !== runId),
-    ),
-  );
+  // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
+  // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
+  const experienceText = await experienceForUrl({
+    runsBaseDir: resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")),
+    url: input.url,
+    currentRunId: runId,
+    fresh: input.fresh,
+  });
   const styleText = styleDirective(input.style ?? "all");
   const languageText = input.language ?? cfg.testCaseLanguage;
 
@@ -484,13 +487,14 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
 
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
-  const experienceText = formatExperience(
-    unionPassedTitles(
-      (
-        await collectPriorRuns(resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")), input.url)
-      ).filter((r) => r.runId !== runId),
-    ),
-  );
+  // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
+  // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
+  const experienceText = await experienceForUrl({
+    runsBaseDir: resolve(input.runsBaseDir ?? resolve(process.cwd(), "runs")),
+    url: input.url,
+    currentRunId: runId,
+    fresh: input.fresh,
+  });
   const styleText = styleDirective(input.style ?? "all");
   const languageText = input.language ?? cfg.testCaseLanguage;
   // L1-01: resolve per-role tiers (override ?? profile tier), then build metered invokers.

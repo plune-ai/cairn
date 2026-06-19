@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectPriorRuns, unionPassedTitles, formatExperience } from "../../src/eval/collect.js";
+import { collectPriorRuns, unionPassedTitles, formatExperience, experienceForUrl } from "../../src/eval/collect.js";
 
 async function writeRun(
   base: string,
@@ -48,5 +48,44 @@ describe("collectPriorRuns / unionPassedTitles", () => {
     const txt = formatExperience(["Кейс A", "Кейс B"]);
     expect(txt).toContain("Кейс A");
     expect(txt).toContain("STABLE");
+  });
+});
+
+describe("experienceForUrl (the --fresh gate)", () => {
+  it("default (no fresh): injects the STABLE-cases dedup block from prior runs of the URL", async () => {
+    const base = await mkdtemp(join(tmpdir(), "qa-exp-"));
+    try {
+      await writeRun(base, "r1", "http://x", 0.8, [{ test: "Login works", status: "passed" }]);
+
+      const txt = await experienceForUrl({ runsBaseDir: base, url: "http://x", currentRunId: "current" });
+      expect(txt).toContain("Login works");
+      expect(txt).toContain("STABLE");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("fresh: true → '' even when prior runs exist on disk (clean A/B run, no dedup)", async () => {
+    const base = await mkdtemp(join(tmpdir(), "qa-exp-"));
+    try {
+      await writeRun(base, "r1", "http://x", 0.8, [{ test: "Login works", status: "passed" }]);
+
+      const txt = await experienceForUrl({ runsBaseDir: base, url: "http://x", currentRunId: "current", fresh: true });
+      expect(txt).toBe("");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes the current run id (a run never dedupes against itself)", async () => {
+    const base = await mkdtemp(join(tmpdir(), "qa-exp-"));
+    try {
+      await writeRun(base, "self", "http://x", 1.0, [{ test: "Only my own case", status: "passed" }]);
+
+      const txt = await experienceForUrl({ runsBaseDir: base, url: "http://x", currentRunId: "self" });
+      expect(txt).toBe("");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   });
 });

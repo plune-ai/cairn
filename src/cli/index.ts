@@ -108,6 +108,7 @@ export function buildProgram(): Command {
     .option("--headed", "visible browser (debug)")
     .option("--checklist <file>", "checklist file (md/text) — guides what to test")
     .option("--style <s>", "planning style: happy | negative | coverage | all")
+    .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
@@ -215,6 +216,7 @@ export function buildProgram(): Command {
     .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download; helps OAuth)")
     .option("--checklist <file>", "checklist file — guides what to test")
     .option("--style <s>", "planning style: happy | negative | coverage | all")
+    .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
     .option("--headed", "visible browser (debug)")
     .action(
@@ -227,6 +229,7 @@ export function buildProgram(): Command {
         style?: string;
         headed?: boolean;
         routing?: string;
+        fresh?: boolean;
       }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
@@ -244,6 +247,7 @@ export function buildProgram(): Command {
           checklistText,
           style: opts.style,
           headed: opts.headed,
+          fresh: opts.fresh,
           onProgress: progress.event,
         }).finally(() => progress.stop());
 
