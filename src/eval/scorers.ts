@@ -78,6 +78,20 @@ export function deterministicScores(input: ScoreInput): Score[] {
     }
     scores.push({ name: "case_redundancy", value: involved.size / input.testCases.length });
   }
+  // locator_robustness (#57): tiered selector strength, reconciling the DoD ranking
+  // role+name > test-id > css > text. Complements the binary locator_quality (kept as-is).
+  if (input.suite) {
+    const code = input.suite.files.map((f) => f.content).join("\n");
+    const roleName = (code.match(/getByRole\(/g) ?? []).length;
+    const labelText = (code.match(/getBy(Label|Text|Placeholder|AltText|Title)\(/g) ?? []).length;
+    const testid = (code.match(/getByTestId\(/g) ?? []).length;
+    const css = (code.match(/\.locator\(|page\.\$\(|xpath=|>>|:nth-/g) ?? []).length;
+    const total = roleName + labelText + testid + css;
+    if (total > 0) {
+      const weighted = roleName * 1 + labelText * 0.8 + testid * 0.5 + css * 0;
+      scores.push({ name: "locator_robustness", value: weighted / total });
+    }
+  }
 
   return scores;
 }

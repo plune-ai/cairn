@@ -11,6 +11,7 @@ import { ArtifactStore } from "../artifacts/index.js";
 import { renderReportMd } from "../artifacts/report.js";
 import { parseTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases } from "../codegen/index.js";
+import { lintSuite, lintHint } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
@@ -713,6 +714,7 @@ export async function runAutomate(input: {
       validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
       maxRepair: cfg.maxRepair,
       onProgress,
+      lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
     });
     suite = result.bestSuite;
     validation = result.bestValidation;

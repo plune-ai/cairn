@@ -24,6 +24,7 @@ Rules (STRICT):
 - Locators ONLY user-facing by role+name: page.getByRole('button', { name: 'Sign In' }), getByLabel, getByText. NO CSS/XPath/testid.
 - Repeated elements (marked ×N — list/table rows): the locator resolves to several → ALWAYS use .first() (or .nth(i)), e.g. page.getByRole('button', { name: 'Download PDF' }).first(). Otherwise Playwright throws a strict-mode error.
 - An element marked [first click tab "X"] lives behind a tab/view: first await page.getByRole(...{ name: 'X' }).click(), and ONLY then interact with it (otherwise it is not visible).
+- Waiting (STRICT): rely on web-first auto-retrying assertions (await expect(locator).toBeVisible()/toBeEnabled()). NEVER page.waitForTimeout(...) or waitForLoadState('networkidle') — both are flaky. Playwright auto-waits for actionability; do NOT add manual sleeps.
 - One test case → one test('<name>', async ({ page }) => { ... }) with verifiable await expect(...).
 - Wrap logical steps in await test.step('<step description>', async () => { ... }) — a more readable run report.
 - Assertions must match really observable behavior; do not invent elements outside the list.

@@ -47,7 +47,18 @@ describe("deterministicScores", () => {
     expect(byName(scores, "verified_ratio")).toBe(0.5); // 1/2 verified
     expect(byName(scores, "grounding")).toBe(0.5); // tc-1 grounded (e1), tc-2 not (e2 unverified)
     expect(byName(scores, "locator_quality")).toBeCloseTo(2 / 3, 5); // 2 user-facing vs 1 css/testid
+    expect(byName(scores, "locator_robustness")).toBeCloseTo(1.8 / 3, 5); // role 1 + label .8 + css 0 over 3
     expect(byName(scores, "flaky_ratio")).toBe(0);
+  });
+
+  it("locator_robustness counts xpath/positional action selectors against robustness", () => {
+    const scores = deterministicScores({
+      study,
+      verified,
+      testCases,
+      suite: { files: [{ path: "x.spec.ts", content: "await page.click('xpath=//button');" }] },
+    });
+    expect(byName(scores, "locator_robustness")).toBe(0); // xpath= → css tier (weight 0)
   });
 
   it("without validation/suite — skips the corresponding scores, does not crash", () => {
