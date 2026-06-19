@@ -2,6 +2,7 @@ import type { ElementRef } from "../browser/types.js";
 import type { TestCase } from "../design/index.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { Score } from "../eval/scorers.js";
+import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
 import type { CostReport } from "../llm/cost.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
@@ -55,9 +56,20 @@ export function renderReportMd(r: ReportInput): string {
   lines.push("");
 
   if (r.scores && r.scores.length > 0) {
-    lines.push("## Metrics (scores)", "", "| metric | value |", "|---|---|");
+    lines.push(
+      "## Metrics (scores)",
+      "",
+      "↑ higher is better · ↓ lower is better · judge = scored by an LLM, the rest are computed from run data.",
+      "",
+      "| metric | value | meaning |",
+      "|---|---|---|",
+    );
     for (const s of r.scores) {
-      lines.push(`| ${s.name} | ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""} |`);
+      const meta = METRIC_LEGEND[s.name]; // unknown metric → no glyph, empty meaning (graceful)
+      const glyph = dirGlyph(s.name);
+      const name = `${s.name}${glyph ? ` ${glyph}` : ""}${meta?.kind === "judge" ? " (judge)" : ""}`;
+      const value = `${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""}`;
+      lines.push(`| ${name} | ${value} | ${meta?.blurb ?? ""} |`);
     }
     lines.push("");
   }

@@ -29,6 +29,7 @@ import { runExperiment, type DatasetItem, type Variant } from "../eval/experimen
 import type { PageStudy } from "../observe/index.js";
 // C1-01 — shared umbrella core: flag→config, the cost footer, and the modality registry/dispatch.
 import { resolveConfig, printCost, runModality, MODALITIES, makeCliProgress } from "../core/index.js";
+import { dirGlyph } from "../eval/legend.js";
 
 /**
  * Shared capture action for `cairn session capture` and the flat `cairn login` alias.
@@ -260,9 +261,10 @@ export function buildProgram(): Command {
         }
         for (const f of result.testCaseFiles) process.stdout.write(`  ${displayPath(f)}\n`);
         if (result.scores.length > 0) {
-          process.stdout.write("\n=== Metrics ===\n");
+          process.stdout.write("\n=== Metrics ===  (↑ higher is better · ↓ lower is better)\n");
           for (const s of result.scores) {
-            process.stdout.write(`  ${s.name}: ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""}\n`);
+            const g = dirGlyph(s.name);
+            process.stdout.write(`  ${s.name}${g ? ` ${g}` : ""}: ${s.value.toFixed(2)}${s.comment ? ` — ${s.comment}` : ""}\n`);
           }
         }
         printCost(result.cost);
