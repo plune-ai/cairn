@@ -5,7 +5,7 @@
  * printCost + renderRunSummary). The CLI `explore` command is now a thin delegate to this `run`,
  * so its output is identical to the pre-extraction inline action (locked by the C1-02 parity test).
  */
-import { readFile } from "node:fs/promises";
+import { readInputFile } from "../../fs/run-dir.js";
 import { runExploration } from "../../agent/index.js";
 import { renderRunSummary, displayPath } from "../../agent/summary.js";
 import { resolveConfig } from "../config.js";
@@ -36,7 +36,7 @@ export const exploreModality: Modality = {
     // commander hands the action untyped options; the command's option defs guarantee this shape.
     const opts = ctx.flags as unknown as ExploreFlags;
     const config = resolveConfig({ backend: opts.backend, routing: opts.routing, channel: opts.channel });
-    const checklistText = opts.checklist ? await readFile(opts.checklist, "utf8") : undefined;
+    const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
     ctx.err(
       `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}…\n`,
     );

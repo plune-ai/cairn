@@ -97,6 +97,10 @@ Promote renames the file to the next free `ATC-*` number, flips it to automatabl
 from the run's data. It does **not** generate code — that's the next step. (If a case has no usable selectors,
 add `--session <name>` so it can verify locators live in a browser.)
 
+> **Tip — run id & Git Bash:** `--run` (and `dataset-add --from-run`) accept the bare run id (`--run <id>`)
+> as well as `runs/<id>` or an absolute path. In **Git Bash (MINGW64)** quote the path or use forward slashes —
+> an unquoted `\` is eaten by the shell, so `runs\<id>` would arrive as `runs<id>`. The bare-id form avoids the trap.
+
 ## Step 6 — Automate and validate
 
 Generate `@playwright/test` code from the approved `ATC` cases, and run them:
