@@ -11,310 +11,96 @@
 [![node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-<!-- Inline player badge (optional): `asciinema upload docs/demo/cairn.cast`, then replace the line below
-     with [![Cairn demo](https://asciinema.org/a/<id>.svg)](https://asciinema.org/a/<id>) — see docs/demo/. -->
 ▶ **Demo:** [`docs/demo/cairn.cast`](docs/demo/cairn.cast) — play with `asciinema play docs/demo/cairn.cast`
 
-> Autonomous QA agent (Node.js / TypeScript) that logs into a web app with a saved session, explores
-> pages (ARIA snapshot + screenshot), designs methodology-based UI test cases (ISO/IEC/IEEE 29119-4),
-> generates runnable `@playwright/test` code, self-validates and self-repairs, and **self-improves**
-> via Langfuse. A portable utility (CLI + library) for embedding into other TypeScript projects.
+Autonomous QA agent (Node.js / TypeScript) that logs into a web app with a saved session, explores
+pages (ARIA snapshot + screenshot), designs methodology-based UI test cases (ISO/IEC/IEEE 29119-4),
+generates runnable `@playwright/test` code, self-validates, self-repairs, and **self-improves** via
+Langfuse. A portable CLI + library for embedding into other TypeScript projects.
 
-**Cairn is the generation layer** — it produces tests across surfaces (UI today; API / unit / docs planned),
-each arriving by demand, one at a time. A separate **Plune** layer owns record / management / eval.
+**Cairn is the generation layer** — it produces tests across surfaces (UI today; API / unit / docs
+planned), each arriving by demand. A separate **Plune** layer owns record / management / eval.
 
-> **Renamed from Lex-Bot → Cairn.** The old `lex-bot` command and the `@plune-ai/lex-bot` package still
-> work — the CLI prints a one-line deprecation notice — but switch to `cairn` / `@plune-ai/cairn`; the old
-> names will be removed in 1–2 releases. Legacy `LEX_`/`LEXBOT_` env vars still work too; prefer `CAIRN_`.
+> **Renamed Lex-Bot → Cairn.** The old `lex-bot` command and `@plune-ai/lex-bot` package still work
+> (the CLI prints a one-line deprecation notice) — prefer `cairn` / `@plune-ai/cairn`. Legacy
+> `LEX_`/`LEXBOT_` env vars still work too; prefer `CAIRN_`.
 
 ## What it does
 
-Point it at a URL (behind login, with a saved Playwright `storageState`) and it will:
+Point it at a URL (behind login, with a saved Playwright `storageState`) and it will **observe** (ARIA
++ screenshot + interactive elements), **ground** (verify every locator, explore tabs/views, probe safe
+state transitions — so it tests what is *actually* there, not hallucinations), **design** 29119-4 cases
+(EP / BVA / decision-table / state-transition / error-guessing), **generate & validate** POM-style
+`@playwright/test` specs with **self-repair** (keep-best: a repair never makes the suite worse), and
+**judge & learn** (deterministic scorers + an LLM judge + a holistic **Pilot** verdict, traced to Langfuse).
 
-1. **Observe** — navigate, wait for SPA hydration, capture an ARIA snapshot + screenshot, extract interactive elements.
-2. **Ground** — verify every locator (`getByRole().count()`), explore tabs/views (multi-state), probe safe state transitions — so it tests what is *actually* there, not hallucinations.
-3. **Design** — write methodology-based test cases (29119-4: EP / BVA / decision-table / state-transition / error-guessing), steered by an optional checklist and domain knowledge files.
-4. **Generate & validate** — emit POM-style `@playwright/test` specs (role-based locators, `test.step`), run them, classify pass/fail/flaky, and **self-repair** failures (with keep-best: a repair never makes the suite worse).
-5. **Judge & learn** — deterministic scorers + an LLM judge + a holistic **Pilot** verdict + semantic checklist coverage, all traced to Langfuse; accumulate the best cases across runs.
+It writes two kinds of case: **ATC** (*Automatable* — code is generated) and **MTC** (*Manual* — full
+submits, security/XSS, visual/UX, irreversible actions — left for a human).
 
 ## Two decoupled modes
 
-- **`design`** — explore + write test cases as Markdown files (`ATC-*` automatable / `MTC-*` manual) with recorded selectors. **No code.** Review them as a human, automate later.
-- **`automate`** — generate `@playwright/test` code from approved `ATC-*` cases (skips `MTC-*` manual ones).
+- **`design`** — explore + write cases as Markdown (`ATC-*` / `MTC-*`) with recorded selectors. **No code.**
+- **`automate`** — generate `@playwright/test` code from approved `ATC-*` cases (skips `MTC-*`).
 - **`explore`** — the full pipeline at once (cases → code → validation → repair → Pilot verdict).
 
-## How it works — the full cycle
-
-New to this? The bot writes two kinds of test case:
-- **ATC** (*Automatable Test Case*) — the bot is confident it can drive reliably (read-only checks, verified locators) → it generates Playwright code for these.
-- **MTC** (*Manual Test Case*) — needs a human (full form submits, security/XSS, visual/UX, irreversible actions) → left for you to run by hand.
-
-The typical flow:
-
-1. **Capture a session** (once) — log in so the bot can reach pages behind auth.
-2. **Design** — the bot studies the page and writes test cases (`ATC-*` / `MTC-*` `.md` files with recorded selectors). No code yet.
-3. **Review** — you read the cases (in the TUI: *Browse past runs* → open a run → *Cases*).
-4. **Promote** *(optional)* — reviewed an `MTC` and decided it's actually automatable? `cairn promote …` (or `a` in the TUI) converts it to an `ATC` in place. It's then picked up by automate.
-5. **Automate** — generate `@playwright/test` code from the `ATC` cases.
-6. **Validate** — run the generated tests, classify pass/fail/flaky, and self-repair failures.
-
-`explore` runs steps 2–6 in one go; `design` + `automate` split them so you can review (and promote) in between. Full walkthrough: **[docs/getting-started.md](docs/getting-started.md)**.
+Full walkthrough: **[Getting started](docs/getting-started.md)**.
 
 ## Install
 
 ```bash
 npm install -g @plune-ai/cairn      # global CLI → run `cairn …`
-# …or local / library install:
-npm install @plune-ai/cairn         # → run via `npx cairn …`
+# …or local / library:  npm install @plune-ai/cairn   → run via `npx cairn …`
 
-# one-time: download the Chromium build Cairn drives (NOT shipped inside the npm package)
-cairn install-browsers              # uses Cairn's OWN Playwright → always the right Chromium revision
-# …or skip the download entirely and drive your installed Google Chrome:  pass --channel chrome
+cairn install-browsers              # one-time: the Chromium Cairn drives (its OWN Playwright revision)
 ```
 
-Requires Node.js 20+. Copy `.env.example` → `.env` and fill in your keys.
-
-> **Two ways to invoke.** A **global** install (`-g`) puts `cairn` on your PATH, so `cairn design …` works
-> anywhere. A **local** install does *not* — run it as **`npx cairn design …`** from the folder where you
-> installed it. The examples below use the bare `cairn`; prefix them with `npx` if you installed locally.
->
-> **Browsers are a separate download.** `npm install` pulls the Playwright *library* but not its *browser
-> binaries*. Run **`cairn install-browsers`** once — it uses Cairn's own Playwright, so the Chromium
-> revision always matches what Cairn launches. Prefer your existing Chrome? Skip the download and pass
-> **`--channel chrome`** (this is also how Cairn coexists with a project that already ships its *own*
-> Playwright). Otherwise `explore` / `automate --validate` stop early with a clear *"Playwright browsers
-> are not installed"* message that prints both fixes — run **`cairn doctor`** any time to see the state.
+Requires Node.js 20+. Copy `.env.example` → `.env` and add your keys. Browsers are a **separate
+download** — run `cairn install-browsers` once, or pass `--channel chrome` to drive your installed
+Chrome with **zero download** (also the simplest path for OAuth and for projects that already ship
+Playwright). `cairn doctor` diagnoses the setup. See **[Authenticated targets](docs/sessions.md)** and
+**[Configuration](docs/configuration.md)**.
 
 ## Quickstart
 
-> Installed locally (without `-g`)? Prefix every `cairn …` below with `npx` (e.g. `npx cairn design …`).
+> Installed locally (without `-g`)? Prefix every `cairn …` below with `npx`.
 
 ```bash
-# 0. One-time: download the browser Cairn drives (skip if you already ran it during install,
-#    or skip entirely and add --channel chrome to drive your installed Google Chrome)
-cairn install-browsers
-
-# 1. Capture a session (opens a browser to log in)
+# 1. Capture a login session once (a browser opens — log in, then press Enter)
 cairn session capture --url https://app.example.com/login --name myapp
 
 # 2. Design test cases (no code) — review the .md files it writes
 cairn design --url https://app.example.com/page --session myapp --checklist plan.md
 
-# 3. (optional) Promote a manual case you decided is automatable: MTC → ATC
-cairn promote --run runs/<id> --cases MTC-LOGIN-001
-
-# 4. Automate the approved (ATC) cases → @playwright/test code, and run them
+# 3. Automate the approved (ATC) cases → @playwright/test code, and run them
 cairn automate --run runs/<id> --validate --session myapp
 
 # …or do everything at once:
 cairn explore --url https://app.example.com/page --session myapp --checklist plan.md
 ```
 
-The `--checklist` file steers **what** the bot tests (and is scored as coverage). Copy
-[`examples/plan.md`](examples/plan.md) — a ready-to-run checklist for `https://plune.ai/cairn` — as a starting point.
+`--checklist` steers **what** the bot tests (and is scored as coverage) — copy
+[`examples/plan.md`](examples/plan.md) as a starting point. Add `--fresh` to ignore prior runs of a URL,
+`--style <pack>` to restyle cases ([Prompts & styles](docs/prompts-and-styles.md)), or `--critique` to
+prune weak cases and top up technique gaps. (Git Bash: quote `--run 'runs/<id>'` or use the bare id.)
 
-> **Run id / Windows tip:** `--run` (and `--from-run`) accept just the run id — `--run <id>` — in addition to
-> `runs/<id>` or an absolute path. In **Git Bash (MINGW64)** quote the path or use forward slashes
-> (`--run 'runs/<id>'`), because an unquoted `\` is eaten by the shell *before* Cairn sees it (so `runs\<id>`
-> would otherwise arrive as `runs<id>`). The bare-id form sidesteps the issue entirely.
+## Interactive TUI
 
-Add `--fresh` (on `design` and `explore`) to **ignore prior runs of the same URL**. By default a 2nd+
-run on a URL reuses its *previously stable* cases as context and generates only the **delta** (new
-cases), so re-runs get smaller. `--fresh` skips that and generates a **full set** every time — useful
-for clean A/B comparisons. In the TUI it's the "Ignore prior-run experience for this URL?" toggle (default **no**).
-
-New here? Read the **[Getting started guide](docs/getting-started.md)** — it walks the whole cycle with explanations.
-
-## Authenticated targets
-
-Cairn explores your app **as a logged-in user**. You capture the login **once** into a Playwright
-`storageState` (cookies + localStorage); every later run reuses it — no credentials in code, no
-re-login per run.
-
-```bash
-# 1. Capture once — a real browser opens; log in by hand, then press Enter.
-cairn session capture --url https://your-app.example.com/login --name myapp
-
-# 2. Point Cairn at any page behind that login, reusing the session.
-cairn explore --url https://your-app.example.com/dashboard --session myapp
-```
-
-- **Pointing Cairn at your OWN gated app?** That's the intended flow — capture against your login page, then `explore` / `design` any authenticated page with `--session <name>`.
-- **OAuth / Google login** (blocks automated browsers): add `--channel chrome` to drive your real Google Chrome. `--channel` works on `session capture`, `observe`, `design`, `explore`, and `automate --validate` — and needs **no bundled-Chromium download**, so it's also the simplest way to run inside a project that already has its own Playwright. (Without a channel, Cairn uses the bundled Chromium from `cairn install-browsers`.)
-- **Manage sessions:** `cairn session ls` lists saved sessions; `cairn session rm <name>` deletes one. (`cairn login` is a shorthand for `cairn session capture`.)
-- **Already have a `storageState.json`?** Skip capture and pass it directly: `--session-file ./path/to/state.json`.
-- **Expired session?** If the first page Cairn sees looks like a login screen, it stops with a clear *re-capture* message instead of exploring the sign-in page.
-- **Secrets hygiene:** sessions live in `.auth/` (matching `*.storageState.json`), which is **gitignored** — never committed. Treat the files like passwords.
-
-> Working inside the repo? `npm run session:save -- --url <u> --name <s>` still works — it's a thin wrapper over the same capture logic that ships as `cairn session capture`.
-
-## Interactive TUI (optional)
-
-Run `cairn` with **no arguments** in a terminal to open the interactive TUI (built with Ink / React-for-CLI).
-Ink and React are **optional dependencies** — a default install omits them to keep the footprint small.
-Install them once to enable the TUI:
-
-```bash
-npm install ink react ink-select-input ink-spinner ink-text-input
-```
-
-Then:
-
-```bash
-cairn          # launches the terminal UI (requires the Ink packages above)
-```
-
-Pick a command (explore / design / automate), fill parameters (URL, session, checklist, style, fresh) via a
-guided form, watch a **live dashboard** of the pipeline stages as the run progresses, read the result summary
-(scores, green %, Pilot verdict, test cases), and **browse past runs** in `./runs` — opening any run to
-read its test cases, report and logs.
-
-The commands below stay available for scripting/CI; in a non-interactive (piped/CI) shell, `cairn` with
-no arguments prints help instead of starting the UI. If the Ink packages are not installed, `cairn` with
-no arguments also falls back to printing help.
+Run `cairn` with **no arguments** in a terminal for a guided UI (launcher → form → live dashboard →
+result summary → past-run browser). Ink/React are optional deps — see **[docs/tui.md](docs/tui.md)**.
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `cairn session capture --url <loginUrl> --name <s>` | Capture a login session once → `.auth/` (`cairn login` is a shorthand; `session ls` / `session rm`) |
+| `cairn session capture --url <loginUrl> --name <s>` | Capture a login session → `.auth/` (`cairn login` is a shorthand; `session ls` / `rm`) |
 | `cairn observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
-| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>] [--fresh]` | Test cases only (ATC/MTC `.md` + selectors), no code |
+| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>] [--fresh] [--critique]` | Test cases only (ATC/MTC `.md` + selectors), no code |
 | `cairn automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
 | `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
-| `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh]` | Full pipeline (cases → code → validate → repair → Pilot) |
+| `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).
-
-## Configuration (env)
-
-| Var | Purpose |
-|---|---|
-| `LLM_PROFILE` | `anthropic` \| `openrouter` \| `mixed` (per-tier default models) |
-| `LLM_ROUTING` | per-role preset: `fast` (Groq worker) \| `volume` (OpenRouter worker) — see [Role routing](#role-routing) |
-| `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` / `GROQ_API_KEY` | provider keys (per profile / routing) |
-| `QA_TESTCASE_LANG` | test-case language (default `English`; e.g. `Ukrainian`, `uk`) |
-| `LANGFUSE_BASE_URL` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse — **cloud or self-hosted** (optional; see [below](#optional-langfuse)) |
-| `BROWSER_BACKEND` | `lib` (in-process Playwright) \| `cli` |
-| `BROWSER_CHANNEL` | `chrome`/`msedge` → drive a system browser (helps with OAuth; **no bundled-Chromium download**, and coexists with a host project's own Playwright). Per-command flag: `--channel`. |
-| `MAX_REPAIR` | repair attempts (default 2) |
-
-- **Env var prefix:** every variable above is read as-is **or** with a `CAIRN_` prefix (e.g. `CAIRN_LLM_PROFILE`, `CAIRN_MAX_REPAIR`). Legacy `LEX_`/`LEXBOT_` prefixes still work but print a one-time deprecation warning — prefer `CAIRN_`.
-- <a id="role-routing"></a>**Role routing (`LLM_ROUTING`, optional):** layer a cheap **worker** over any profile while keeping the strong **reasoner**. One flag picks where the mechanical steps (identify-elements, generate-code/repair) run:
-  - `fast` → worker on **Groq** `llama-3.3-70b-versatile` — lowest latency/cost, OpenAI-compatible tool-calling.
-  - `volume` → worker on **OpenRouter** `deepseek/deepseek-chat` — model breadth.
-  - default (unset) → the profile's own per-tier models.
-
-  In **every** preset the reasoner (design test cases + Pilot verdict) stays on **Anthropic** `claude-opus-4-8` for judgment quality, and the cheap `judge` scorer keeps the profile tier (routing never touches it). Override any role with `CAIRN_ROLE_WORKER` / `CAIRN_ROLE_REASONER=provider:model`; pass `--routing <preset>` on `explore`/`design`/`automate` to set it per run. Per-run **per-role cost** (tokens + $) is printed in the run summary.
-- **Domain knowledge:** put `*.md` files in `./knowledge/` with a `url:` front-matter to inject credentials/validation rules into design.
-- **Prompt overrides:** drop `./prompts/<name>.md` to override any built-in prompt without rebuilding.
-
-## Metrics
-
-Every run scores itself. The numbers appear in the console (`=== Metrics ===`), in each run's
-`report.md` (with a one-line meaning per metric), and in Langfuse when configured. **↑ = higher is
-better, ↓ = lower is better.** `case_redundancy` and `flaky_ratio` are the **only** "lower is better"
-metrics — every other metric is higher-is-better.
-
-<!-- KEEP IN SYNC with src/eval/legend.ts (METRIC_LEGEND) — same metric names, directions, and blurbs. -->
-
-**Deterministic** (computed from run data, no LLM):
-
-| metric | direction | meaning |
-|---|---|---|
-| `runs_green` | ↑ higher is better | Share of generated tests that pass on validation. |
-| `flaky_ratio` | ↓ lower is better | Share of tests classified flaky (inconsistent pass/fail). |
-| `verified_ratio` | ↑ higher is better | Share of identified elements that resolve to exactly one element (unique locator). |
-| `grounding` | ↑ higher is better | Share of cases whose element refs all point to real on-page elements (no hallucinated refs). |
-| `locator_quality` | ↑ higher is better | Share of user-facing locators (getByRole/Label/Text…) vs fragile (.locator/getByTestId). |
-| `locator_robustness` | ↑ higher is better | Weighted selector strength: role 1.0 > label/text 0.8 > test-id 0.5 > css 0. |
-| `technique_coverage` | ↑ higher is better | Distinct test techniques used out of the 6 (ISO/IEC/IEEE 29119-4). |
-| `case_redundancy` | ↓ lower is better | Share of cases that are near-duplicates of another (0 = all distinct). |
-
-**Judge** (LLM-scored):
-
-| metric | direction | meaning |
-|---|---|---|
-| `test_case_quality` | ↑ higher is better | Holistic quality of the cases (clarity, correctness, usefulness). |
-| `methodology_adherence` | ↑ higher is better | How well the cases follow the testing methodology. |
-| `checklist_coverage` | ↑ higher is better | Semantic coverage of the provided checklist by the cases. |
-
-(The holistic **Pilot** verdict is separate — a pass / needs-work / fail judgment on the whole run, not a 0–1 score.)
-
-## Cost benchmark
-
-What does a run cost on each [routing preset](#role-routing)? The table below is generated by
-`npm run bench`: it runs `cairn explore` against a fixed target once per preset and reads the per-run
-cost ledger (tokens + $) already written into each run's `report.json` (L1-01) — it re-prices nothing.
-Treat the numbers as an **approximate, single-run snapshot** (LLM token counts vary run-to-run).
-
-<!-- BENCHMARK:START -->
-<!-- Generated by `npm run bench` — do not edit between the BENCHMARK markers by hand. -->
-
-_Snapshot: 2026-06-13 · commit `a2906cf` · profile `anthropic` · MAX_REPAIR=0 · target: `https://demoqa.com/text-box` (no session) · approximate, single-run._
-
-| Preset | Worker | Reasoner | Tokens/run | $/run | Wall-clock/run | $/hour† |
-|---|---|---|---|---|---|---|
-| `default` | claude-haiku-4-5+claude-sonnet-4-6 | claude-opus-4-8 | 27,191 | $0.2854 | 390.6s | $2.63 |
-| `volume` | deepseek/deepseek-chat | claude-opus-4-8 | 13,923 | $0.1209 | 58.2s | $7.48 |
-| `fast` | llama-3.3-70b-versatile | claude-opus-4-8 | n/a — run failed: 400 Failed to call a function. Please adjust your prompt. See 'fail… | — | — | — |
-
-† **$/hour is an extrapolation**, not a steady-state rate: `$/run × (3600 / seconds-per-run)` — the cost if runs fired back-to-back for an hour. Real throughput varies with target complexity, retries, and provider latency.
-
-Reproduce: `npm run bench -- --url https://demoqa.com/text-box --session <name>`
-
-> Token counts vary run-to-run (LLM nondeterminism). OpenRouter/Groq prices are approximate and movable ([ADR-0002](docs/adr/0002-llm-anthropic-tiering.md)); Anthropic prices follow the published rates. `$/run` is `—` when a model has no configured price (tokens are still counted).
-<!-- BENCHMARK:END -->
-
-Regenerate it yourself — you need the provider keys for the presets you want measured and, ideally, a
-[captured session](#authenticated-targets) so the target is a real page rather than `example.com`:
-
-```bash
-npm run bench -- --url https://your-app.example.com/dashboard --session myapp --write
-```
-
-For reproducibility the benchmark **pins `LLM_PROFILE=anthropic` and `MAX_REPAIR=0`** (both shown in the
-snapshot line) instead of inheriting your `.env` — so `default` always means the same baseline and the
-[reasoner stays on Opus in every preset](#role-routing); only the worker changes. Override with
-`--profile <p>` / `--max-repair <n>`. A preset whose provider key is unset is **skipped** and shown as
-`n/a`, so a partial run (e.g. only `ANTHROPIC_API_KEY` available) still produces a useful table.
-
-## Optional: Langfuse
-
-Langfuse is **entirely optional** — leave the `LANGFUSE_*` variables unset and the bot runs fully offline.
-Everything core still works: `observe` / `design` / `automate` / `explore`, locator grounding, the LLM judge,
-deterministic scorers, self-repair, and results-level learning (best cases are read from local
-`runs/<id>/report.json`). Prompts fall back to the built-in defaults — override any of them with `./prompts/<name>.md`.
-
-Set the three `LANGFUSE_*` variables to **additionally** get: traces in the Langfuse UI, scores/datasets
-recorded centrally, and versioned prompts (with production labels & A/B prompt experiments via `cairn experiment`).
-
-Tracing ships as an **optional add-on** (0.3.3): the `@langfuse/*` / `@opentelemetry/*` packages are no
-longer part of the default install — that keeps the footprint small and `npm audit` clean. Install them
-once to enable it:
-
-```bash
-npm install @langfuse/client @langfuse/langchain @langfuse/otel @langfuse/tracing @opentelemetry/api @opentelemetry/sdk-node
-```
-
-If the `LANGFUSE_*` variables are set but the packages aren't installed, Cairn prints a one-line hint and
-keeps running **without** tracing — it never crashes a run over telemetry.
-
-**Cloud or self-hosted — same setup.** Langfuse Cloud and a self-hosted instance are configured identically:
-you only pass the host URL and the API keys, nothing else changes.
-
-```bash
-# Pick ONE base URL:
-LANGFUSE_BASE_URL=https://cloud.langfuse.com       # Langfuse Cloud (EU)
-# LANGFUSE_BASE_URL=https://us.cloud.langfuse.com  # Langfuse Cloud (US)
-# LANGFUSE_BASE_URL=https://langfuse.your-host.tld # self-hosted
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-```
-
-> Enablement is all-or-nothing: Langfuse turns on only when **all three** variables are set; otherwise
-> telemetry is a no-op and the bot behaves exactly as offline.
 
 ## Library API
 
@@ -326,6 +112,14 @@ const result = await runDesign({ url, config, sessionName: "myapp", checklistTex
 // result.testCases, result.testCaseFiles, result.scores
 ```
 
+## Documentation
+
+- **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate).
+- **[Authenticated targets](docs/sessions.md)** · **[Configuration & role routing](docs/configuration.md)** · **[Prompts & styles](docs/prompts-and-styles.md)** · **[Interactive TUI](docs/tui.md)**
+- **[Metrics](docs/metrics.md)** · **[Cost benchmark](docs/cost.md)** · **[Langfuse](docs/langfuse.md)**
+- **[Architecture overview](docs/architecture/overview.md)** — the plain async pipeline, locator grounding, self-improvement.
+- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0013).
+
 ## Development
 
 ```bash
@@ -335,12 +129,6 @@ npm run test:coverage
 npm run lint
 ```
 
-## Documentation
-
-- **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate), written for people new to the tool.
-- **[Architecture overview](docs/architecture/overview.md)** — how the agent works inside (the plain async pipeline, locator grounding, self-improvement).
-- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0013, incl. the interactive TUI, the `@playwright/test` output format, the Lex-Bot → Cairn rename, the Apache-2.0 relicense, and the drop of LangGraph in 0.4.0).
-
 ## License
 
-Apache-2.0 (relicensed from GPL-3.0 in 0.3.0 — see [`docs/adr/0012`](docs/adr/0012-relicense-to-apache-2.0.md)). Methodology prompts ported from `AZANIR/qa-skills` (see `docs/adr/0008`).
+Apache-2.0 (relicensed from GPL-3.0 in 0.3.0 — see [`docs/adr/0012`](docs/adr/0012-relicense-to-apache-2.0.md)). Methodology prompts ported from `AZANIR/qa-skills` (see [`docs/adr/0008`](docs/adr/0008-methodology-port-from-qa-skills.md)).

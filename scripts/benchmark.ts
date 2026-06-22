@@ -9,7 +9,7 @@
  *   npm run bench                                   # all presets vs https://example.com (no session)
  *   npm run bench -- --url <u> --session <name>     # against a captured login-gated session (#27)
  *   npm run bench -- --url <u> --session-file <p>   # against a storageState file directly
- *   npm run bench -- --write                        # rewrite the README BENCHMARK section in place
+ *   npm run bench -- --write                        # rewrite the docs/cost.md BENCHMARK section in place
  *   npm run bench -- --profile openrouter           # pin a different LLM_PROFILE (default: anthropic baseline)
  *   npm run bench -- --max-repair 2                 # include self-repair cost (default: 0 — faster + comparable)
  *
@@ -43,7 +43,8 @@ const url = arg("--url") ?? "https://example.com";
 const sessionName = arg("--session");
 const sessionFile = arg("--session-file");
 const write = hasFlag("--write");
-const readmePath = arg("--readme") ?? "README.md";
+// The BENCHMARK markers live in docs/cost.md (README links to it); --readme overrides the target.
+const benchDocPath = arg("--readme") ?? "docs/cost.md";
 // Pinned for reproducibility — the bench must NOT inherit the ambient .env profile, or "default"
 // would mean different models on different machines. Default profile = the documented Anthropic
 // baseline (so the reasoner is Opus in every preset, matching the routing docs). MAX_REPAIR=0 keeps
@@ -117,9 +118,9 @@ const block = renderBenchmarkTable(rows, {
 console.log(`\n${block}\n`);
 
 if (write) {
-  const readme = await readFile(readmePath, "utf8");
-  await writeFile(readmePath, rewriteBetweenMarkers(readme, block), "utf8");
-  console.log(`✓ Updated ${readmePath} between the BENCHMARK markers.`);
+  const doc = await readFile(benchDocPath, "utf8");
+  await writeFile(benchDocPath, rewriteBetweenMarkers(doc, block), "utf8");
+  console.log(`✓ Updated ${benchDocPath} between the BENCHMARK markers.`);
 } else {
-  console.log("(dry run — pass --write to update the README between the BENCHMARK markers)");
+  console.log(`(dry run — pass --write to update ${benchDocPath} between the BENCHMARK markers)`);
 }
