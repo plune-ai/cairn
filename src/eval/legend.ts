@@ -1,9 +1,9 @@
 /**
  * Single source of truth for metric explanations — used by report.md (`renderReportMd`), the console
- * `=== Metrics ===` loops, and the README "Metrics" section, so the three never drift.
+ * `=== Metrics ===` loops, and the docs/metrics.md table, so the three never drift.
  *
- * KEEP IN SYNC: the README "Metrics" section mirrors this record (same blurbs + directions). If you
- * change a blurb/direction here, update README.md too (and vice-versa). The metric NAMES must match
+ * KEEP IN SYNC: docs/metrics.md mirrors this record (same blurbs + directions). If you change a
+ * blurb/direction here, update docs/metrics.md too (and vice-versa). The metric NAMES must match
  * the score names produced by scorers.ts (deterministic) and judge.ts / agent (judge).
  */
 

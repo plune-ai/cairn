@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from one source of truth — `METRIC_LEGEND` in `src/eval/legend.ts` — so they can't drift. No metric
   value or name changed.
 
+### Changed
+
+- **Slimmed the README into a ~30-second shop window (#81).** The README is now ≤ ~150 lines in a
+  what/why → install → quickstart → command table → doc-links order; the reference material moved into
+  dedicated, linked pages under `docs/`: `sessions.md` (authenticated targets), `configuration.md`
+  (env + role routing), `prompts-and-styles.md` (NEW — methodology vs style, override precedence,
+  `--style` packs), `tui.md`, `metrics.md`, `cost.md`, `langfuse.md`. The `BENCHMARK` markers moved
+  with the cost section, so `npm run bench` now rewrites `docs/cost.md` (was `README.md`), and the
+  `KEEP IN SYNC` note for the metric legend now points at `docs/metrics.md`. No code behavior changed.
+
 ## [0.4.0] - 2026-06-19
 
 ### Changed

@@ -2,14 +2,14 @@
  * Cost-benchmark pure core (L1-03, #8). NO I/O, NO network, NO SDK — every function here is a
  * deterministic transform so it can be unit-tested with fixture report.json objects and added to
  * the coverage gate. The side-effectful orchestration (running `cairn explore`, reading
- * report.json, git, rewriting the README) lives in the sibling `benchmark.ts` shell.
+ * report.json, git, rewriting docs/cost.md) lives in the sibling `benchmark.ts` shell.
  *
  * Reuses the existing cost ledger: the benchmark READS the `cost` block already written into every
  * run's report.json (per-role + totals, L1-01/ADR-0011) — it never re-prices or re-counts tokens.
  */
 import type { CostReport } from "../src/llm/cost.js";
 
-/** README section fences — the script rewrites only what sits between them. */
+/** docs/cost.md section fences — the script rewrites only what sits between them. */
 export const BENCH_START = "<!-- BENCHMARK:START -->";
 export const BENCH_END = "<!-- BENCHMARK:END -->";
 
@@ -183,13 +183,13 @@ export function renderBenchmarkTable(rows: BenchRow[], meta: BenchMeta): string 
     "",
     `Reproduce: \`npm run bench -- --url ${meta.url} --session <name>\``,
     "",
-    "> Token counts vary run-to-run (LLM nondeterminism). OpenRouter/Groq prices are approximate and movable ([ADR-0002](docs/adr/0002-llm-anthropic-tiering.md)); Anthropic prices follow the published rates. `$/run` is `—` when a model has no configured price (tokens are still counted).",
+    "> Token counts vary run-to-run (LLM nondeterminism). OpenRouter/Groq prices are approximate and movable ([ADR-0002](adr/0002-llm-anthropic-tiering.md)); Anthropic prices follow the published rates. `$/run` is `—` when a model has no configured price (tokens are still counted).",
   ].join("\n");
 }
 
 /**
  * Pure + idempotent: replace the content between `start` and `end` with `block`, leaving everything
- * else untouched. Throws if the markers are missing or reversed — the README must own the fences.
+ * else untouched. Throws if the markers are missing or reversed — docs/cost.md must own the fences.
  */
 export function rewriteBetweenMarkers(
   content: string,
