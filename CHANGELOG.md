@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Journey state & data setup — `--setup` (#60).** Multi-page journeys (#59) often need a
+  starting state beyond auth (a logged-in user *with* specific data). With `--setup`, Cairn turns each
+  journey's prose preconditions into **structured** ones (worker tier, `CAIRN_ROLE_WORKER`) and assigns
+  a satisfaction **strategy** in priority order: reuse the captured **session** → a Playwright
+  **fixture** (`beforeEach`) → an **API seed** when a concrete endpoint is named → a documented
+  **manual** fallback. It emits a runnable `@playwright/test` spec per journey under `runs/<id>/journeys/`,
+  with the setup established **before** the steps; steps stay read-only (`toBeVisible`) and refs are
+  resolved per page. Safety: an `api-seed` without a concrete endpoint is **downgraded to manual** —
+  Cairn never fabricates (possibly destructive) seeding. Opt-in; absent `--setup`, nothing changes.
+  The setup plans are recorded in `report.json` (`flow.setup`).
+
 - **Multi-page / flow exploration — `--flow` / `--max-pages N` (#59).** Opt-in, Cairn now follows
   in-app navigation from the start page to build a **page/flow graph** (nodes = studied pages, edges =
   observed transitions), reusing the captured `--session` storageState across pages, and designs

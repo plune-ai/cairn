@@ -5,6 +5,8 @@ import { designTestCases, type TestCase } from "../design/index.js";
 import { critiqueCases, type CritiqueDelta } from "../design/critique.js";
 import { crawlFlow, type FlowGraph } from "../flow/crawl.js";
 import { designJourneys } from "../flow/journey.js";
+import { planSetup, type SetupPlan } from "../flow/setup.js";
+import { buildJourneySetupSuite } from "../codegen/journey-setup.js";
 import type { JourneyCase } from "../design/schema.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
@@ -32,6 +34,10 @@ export interface ExploreDeps {
   flow?: boolean;
   /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). Default 1 (single page). */
   maxPages?: number;
+  /** #60: plan + emit starting-state setup (fixtures / API seed) for journeys. Opt-in. */
+  setup?: boolean;
+  /** #60: worker-tier invoker for setup planning (precondition extraction). Absent → no setup. */
+  setupInvoke?: StructuredInvoke;
   useVision: boolean;
   checklistText?: string;
   knowledgeText?: string;
@@ -87,6 +93,8 @@ export interface ExploreOutcome {
   flowGraph?: FlowGraph;
   /** #59: multi-page journey cases designed from the graph (undefined for single-page runs). */
   journeys?: JourneyCase[];
+  /** #60: per-journey structured setup plans (undefined unless `setup` ran). */
+  setupPlans?: SetupPlan[];
 }
 
 /** Sprint 3: observe → identify → design → generateCode → validate ⇄ repair (bounded by maxRepair). */
@@ -263,6 +271,7 @@ export async function runExploreGraph(
   // so single-page output is unchanged; best-effort so a crawl failure can't sink the per-page cases.
   let flowGraph: FlowGraph | undefined;
   let journeys: JourneyCase[] | undefined;
+  let setupPlans: SetupPlan[] | undefined;
   if (deps.flow && (deps.maxPages ?? 1) > 1) {
     deps.onProgress?.(`flow — crawling up to ${deps.maxPages} pages (reusing the session)…`);
     try {
@@ -274,6 +283,28 @@ export async function runExploreGraph(
         { invoke: deps.designInvoke, prompts: deps.prompts },
       );
       deps.onProgress?.(`flow — ${journeys.length} journey case(s) spanning ≥2 pages`);
+
+      // #60: plan the starting-state setup per journey + emit runnable journey specs (fixtures / seed).
+      if (deps.setup && deps.setupInvoke && journeys.length > 0) {
+        deps.onProgress?.("flow — planning starting-state setup for journeys (worker)…");
+        setupPlans = [];
+        for (const j of journeys) {
+          try {
+            setupPlans.push(
+              await planSetup({ journey: j, pageSemantics: analysis.pageSemantics }, { invoke: deps.setupInvoke, prompts: deps.prompts }),
+            );
+          } catch {
+            setupPlans.push({ preconditions: [] }); // a planning failure → an empty (no-precondition) spec
+          }
+        }
+        try {
+          const suite = buildJourneySetupSuite(journeys, setupPlans, flowGraph, study.url);
+          const written = await deps.runWriter.writeJourneySpecs(suite.files);
+          deps.onProgress?.(`flow — wrote ${written.length} journey spec(s) with setup → journeys/`);
+        } catch {
+          // best-effort: a write failure must not sink the run
+        }
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       deps.onProgress?.(`flow — skipped (${msg})`); // best-effort: keep the per-page cases
@@ -282,7 +313,7 @@ export async function runExploreGraph(
 
   // ── codeless short-circuit ────────────────────────────────────────────────
   if (deps.codeless) {
-    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys };
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans };
   }
 
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
@@ -333,5 +364,6 @@ export async function runExploreGraph(
     critique,
     flowGraph,
     journeys,
+    setupPlans,
   };
 }
