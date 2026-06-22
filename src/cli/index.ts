@@ -117,6 +117,7 @@ export function buildProgram(): Command {
     .option("--flow", "follow in-app navigation across pages and design multi-page journey cases (opt-in)")
     .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
+    .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
     });
@@ -230,6 +231,7 @@ export function buildProgram(): Command {
     .option("--flow", "follow in-app navigation across pages and design multi-page journey cases (opt-in)")
     .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
+    .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--headed", "visible browser (debug)")
     .action(
       async (opts: {
@@ -246,6 +248,7 @@ export function buildProgram(): Command {
         flow?: boolean;
         maxPages?: string;
         setup?: boolean;
+        gaps?: boolean;
       }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
@@ -272,6 +275,7 @@ export function buildProgram(): Command {
           flow: opts.flow,
           maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
           setup: opts.setup,
+          gaps: opts.gaps,
           onProgress: progress.event,
         }).finally(() => progress.stop());
 
