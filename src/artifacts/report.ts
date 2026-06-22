@@ -1,5 +1,6 @@
 import type { ElementRef } from "../browser/types.js";
 import type { TestCase } from "../design/index.js";
+import type { JourneyCase } from "../design/schema.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { Score } from "../eval/scorers.js";
 import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
@@ -28,6 +29,8 @@ export interface ReportInput {
   budget?: { used: number; max: number };
   /** The repair loop bailed early because it stopped making progress (L1-04, Box 2). */
   stoppedEarly?: boolean;
+  /** #59: multi-page journey cases (rendered as a section when present). */
+  journeys?: JourneyCase[];
 }
 
 function mark(status: string): string {
@@ -113,6 +116,20 @@ export function renderReportMd(r: ReportInput): string {
     lines.push(`- ⇒ ${tc.expected}`);
     if (tc.elementRefs.length) lines.push(`- refs: ${tc.elementRefs.join(", ")}`);
     lines.push("");
+  }
+
+  // #59: multi-page user journeys (only present on a --flow run).
+  if (r.journeys && r.journeys.length > 0) {
+    lines.push(`## User journeys (${r.journeys.length}) — multi-page`, "");
+    for (const j of r.journeys) {
+      lines.push(`### ${j.id} · [${j.priority} · ${j.technique}] ${j.title}`);
+      if (j.preconditions.length) lines.push(`- Preconditions: ${j.preconditions.join("; ")}`);
+      for (const s of j.steps) {
+        const refs = s.elementRefs.length ? ` [refs: ${s.elementRefs.join(", ")}]` : "";
+        lines.push(`- (${s.page}) ${s.action}${refs}`);
+      }
+      lines.push(`- ⇒ ${j.expected}`, "");
+    }
   }
   return lines.join("\n");
 }

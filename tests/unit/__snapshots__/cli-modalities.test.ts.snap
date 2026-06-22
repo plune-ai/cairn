@@ -64,6 +64,9 @@ Options:
                          (OpenRouter worker) (sets LLM_ROUTING)
   --critique             self-critique pass after design: prune weak cases + top
                          up technique gaps (1 extra worker-tier LLM call)
+  --flow                 follow in-app navigation across pages and design
+                         multi-page journey cases (opt-in)
+  --max-pages <n>        max pages to crawl with --flow (page cap; default 3)
   -h, --help             display help for command
 "
 `;

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-page / flow exploration — `--flow` / `--max-pages N` (#59).** Opt-in, Cairn now follows
+  in-app navigation from the start page to build a **page/flow graph** (nodes = studied pages, edges =
+  observed transitions), reusing the captured `--session` storageState across pages, and designs
+  **multi-page USER JOURNEY cases** (ordered steps that cross page boundaries) in **addition** to the
+  per-page cases. The crawl is pure browser mechanics (no LLM), bounded by `--max-pages` (default 3),
+  stays in-origin, dedupes revisits, and **never follows destructive links** (log out / delete) — so
+  the session and read-only safety hold across the whole walk. Journey steps are grounded **per page**
+  (a step only references elements that exist on its own page), and only journeys spanning ≥2 distinct
+  pages are kept. The graph + journeys are persisted in `report.json` (`flow`) and rendered in
+  `report.md`. Without `--flow`, single-page behavior is byte-for-byte unchanged. The design
+  methodology / assertion-safety rules are untouched.
+
 - **First-class prompt overrides + house-style packs (#80).** A committed `prompts/` scaffold now
   ships in the repo: a `prompts/README.md` documenting the override precedence (Langfuse →
   `prompts/<name>.md` → built-in constant) and `prompts/qa-testcase-from-ui.md` — the built-in design
