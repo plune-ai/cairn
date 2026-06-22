@@ -52,6 +52,8 @@ export interface ExploreInput {
   knowledgeDir?: string;
   /** Planning style: happy | negative | coverage | all (default all). */
   style?: string;
+  /** #80: pre-resolved text for the prompt's {{style}} slot (a house-style pack). Wins over `style`. */
+  styleText?: string;
   /** Test-case language (override; otherwise cfg.testCaseLanguage / env QA_TESTCASE_LANG / "English"). */
   language?: string;
   /** Visible browser (debug). */
@@ -165,7 +167,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     currentRunId: runId,
     fresh: input.fresh,
   });
-  const styleText = styleDirective(input.style ?? "all");
+  const styleText = input.styleText ?? styleDirective(input.style ?? "all");
   const languageText = input.language ?? cfg.testCaseLanguage;
 
   // L1-01: resolve per-role tiers (override ?? profile tier), then build metered invokers.
@@ -502,7 +504,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     currentRunId: runId,
     fresh: input.fresh,
   });
-  const styleText = styleDirective(input.style ?? "all");
+  const styleText = input.styleText ?? styleDirective(input.style ?? "all");
   const languageText = input.language ?? cfg.testCaseLanguage;
   // L1-01: resolve per-role tiers (override ?? profile tier), then build metered invokers.
   const visionTier = cfg.models.vision ?? cfg.models.reasoning;
