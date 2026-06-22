@@ -13,6 +13,8 @@ import { parseTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases } from "../codegen/index.js";
 import { lintSuite, lintHint } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
+import { computeCoverage } from "../eval/coverage.js";
+import { designGapCases } from "../eval/gap-cases.js";
 import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
 import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
@@ -71,6 +73,8 @@ export interface ExploreInput {
   maxPages?: number;
   /** #60: plan + emit starting-state setup (fixtures / API seed) for journeys. Default off. */
   setup?: boolean;
+  /** #61: also suggest cases for the top untested surface (the coverage VIEW is always emitted). Default off. */
+  gaps?: boolean;
 }
 
 export interface ExploreResult {
@@ -345,6 +349,32 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
         const flowReport = flowReportPayload(out.flowGraph, out.journeys, out.setupPlans); // #59/#60: graph + journeys + setup
 
+        // #61: coverage view (always — a read-only set-difference); --gaps additionally suggests cases.
+        const coveragePages = out.flowGraph
+          ? out.flowGraph.nodes.map((n) => ({ url: n.url, elements: n.verified }))
+          : [{ url: out.study.url, elements: out.verified }];
+        const coverage = computeCoverage({
+          pages: coveragePages,
+          edges: out.flowGraph?.edges ?? [],
+          testCases: out.testCases,
+          journeys: out.journeys,
+        });
+        let gapCases: TestCase[] = [];
+        if (input.gaps) {
+          const topGaps = coverage.byPage.flatMap((p) => p.gaps).slice(0, 12); // bound cost
+          if (topGaps.length > 0) {
+            onProgress(`gaps — suggesting cases for ${topGaps.length} untested element(s) (worker)…`);
+            try {
+              gapCases = await designGapCases(
+                { gaps: topGaps, pageSemantics: out.analysis.pageSemantics, language: languageText },
+                { invoke: router.invoke("worker", router.tierFor("worker", cfg.models.bulk)), prompts },
+              );
+            } catch {
+              // best-effort — the coverage view still ships without suggestions
+            }
+          }
+        }
+
         // #39: also emit ATC/MTC case docs (.md) — explore now produces the human-readable cases like
         // design, so manual MTC cases are visible deliverables (not just buried inside report.md).
         const caseSuite = suiteFromUrl(out.study.url);
@@ -370,6 +400,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           stoppedEarly,
           critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
           flow: flowReport, // #59: page/flow graph + journey cases (undefined for single-page runs)
+          coverage, // #61: covered vs observed-but-untested surface
+          ...(gapCases.length ? { gapCases } : {}),
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -392,6 +424,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             budget: budgetReport,
             stoppedEarly,
             journeys: out.journeys,
+            coverage,
+            gapCases,
           }),
         );
         const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
@@ -636,6 +670,31 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         await runWriter.writeStudy(out.study);
         if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
         await runWriter.writeAria(out.study.ariaYaml);
+        // #61: coverage view (always) + optional gap-case suggestions (--gaps).
+        const coveragePages = out.flowGraph
+          ? out.flowGraph.nodes.map((n) => ({ url: n.url, elements: n.verified }))
+          : [{ url: out.study.url, elements: out.verified }];
+        const coverage = computeCoverage({
+          pages: coveragePages,
+          edges: out.flowGraph?.edges ?? [],
+          testCases: out.testCases,
+          journeys: out.journeys,
+        });
+        let gapCases: TestCase[] = [];
+        if (input.gaps) {
+          const topGaps = coverage.byPage.flatMap((p) => p.gaps).slice(0, 12);
+          if (topGaps.length > 0) {
+            try {
+              gapCases = await designGapCases(
+                { gaps: topGaps, pageSemantics: out.analysis.pageSemantics, language: languageText },
+                { invoke: router.invoke("worker", router.tierFor("worker", cfg.models.bulk)), prompts },
+              );
+            } catch {
+              // best-effort
+            }
+          }
+        }
+
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         await runWriter.writeReport({
           runId,
@@ -649,6 +708,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           cost,
           critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
           flow: flowReportPayload(out.flowGraph, out.journeys, out.setupPlans), // #59/#60: graph + journeys + setup
+          coverage, // #61: covered vs observed-but-untested surface
+          ...(gapCases.length ? { gapCases } : {}),
         });
         await runWriter.writeLog(
           [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),

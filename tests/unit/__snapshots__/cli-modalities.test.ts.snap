@@ -69,6 +69,8 @@ Options:
   --max-pages <n>        max pages to crawl with --flow (page cap; default 3)
   --setup                for journeys (--flow): plan + emit starting-state setup
                          (fixture / API seed; manual fallback)
+  --gaps                 suggest cases for the top untested surface (the
+                         coverage view is always emitted)
   -h, --help             display help for command
 "
 `;

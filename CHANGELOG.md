@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Coverage gap-analysis (#61).** After design, every run now emits a **coverage view** — the observed
+  interactive surface (elements per page + flow transitions, #59) **minus** what any case or journey
+  references (by `elementRefs` + journey steps). `report.json` gains a `coverage` block and `report.md`
+  a **Coverage** section: covered vs observed-but-untested, grouped by page, each gap with a short
+  "why it matters", plus any untested transitions. With **`--gaps`**, Cairn additionally suggests cases
+  for the top untested elements (worker tier), grounded to the gap refs and clearly marked as
+  SUGGESTIONS (a `gap-` id prefix). The coverage view is read-only and additive (it changes no generated
+  test artifact); `--gaps` is opt-in and bounded (top-N gaps) to keep cost predictable.
+
 - **Journey state & data setup — `--setup` (#60).** Multi-page journeys (#59) often need a
   starting state beyond auth (a logged-in user *with* specific data). With `--setup`, Cairn turns each
   journey's prose preconditions into **structured** ones (worker tier, `CAIRN_ROLE_WORKER`) and assigns

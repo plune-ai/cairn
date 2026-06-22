@@ -1,6 +1,7 @@
 import type { ElementRef } from "../browser/types.js";
 import type { TestCase } from "../design/index.js";
 import type { JourneyCase } from "../design/schema.js";
+import type { CoverageReport } from "../eval/coverage.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { Score } from "../eval/scorers.js";
 import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
@@ -31,6 +32,10 @@ export interface ReportInput {
   stoppedEarly?: boolean;
   /** #59: multi-page journey cases (rendered as a section when present). */
   journeys?: JourneyCase[];
+  /** #61: coverage view (covered vs observed-but-untested surface). */
+  coverage?: CoverageReport;
+  /** #61: suggested gap cases (--gaps) — rendered as clearly-marked suggestions. */
+  gapCases?: TestCase[];
 }
 
 function mark(status: string): string {
@@ -116,6 +121,36 @@ export function renderReportMd(r: ReportInput): string {
     lines.push(`- ⇒ ${tc.expected}`);
     if (tc.elementRefs.length) lines.push(`- refs: ${tc.elementRefs.join(", ")}`);
     lines.push("");
+  }
+
+  // #61: coverage gap-analysis — covered vs observed-but-untested, grouped by page.
+  if (r.coverage) {
+    const c = r.coverage;
+    lines.push(`## Coverage (${c.covered}/${c.observed} interactive elements — ${Math.round(c.ratio * 100)}%)`, "");
+    if (c.untestedEdges.length > 0) {
+      lines.push(`- **Untested transitions:** ${c.untestedEdges.length}`);
+      for (const e of c.untestedEdges) lines.push(`  - ${e.from} → ${e.to} (via ${e.via.role} "${e.via.name ?? ""}")`);
+      lines.push("");
+    }
+    for (const p of c.byPage) {
+      if (p.gaps.length === 0) continue;
+      lines.push(`### Untested on ${p.url} (${p.covered}/${p.observed} covered)`, "");
+      lines.push("| ref | role | name | why it matters |", "|---|---|---|---|");
+      for (const g of p.gaps) lines.push(`| ${g.ref} | ${g.role} | ${g.name ?? ""} | ${g.why} |`);
+      lines.push("");
+    }
+  }
+
+  // #61: suggested cases to close the top gaps (only with --gaps) — clearly marked as suggestions.
+  if (r.gapCases && r.gapCases.length > 0) {
+    lines.push(`## Suggested gap cases (${r.gapCases.length}) — SUGGESTIONS, review before adopting`, "");
+    for (const tc of r.gapCases) {
+      lines.push(`### ${tc.id} · [${tc.priority} · ${tc.technique}] ${tc.title}`);
+      for (const s of tc.steps) lines.push(`- ${s}`);
+      lines.push(`- ⇒ ${tc.expected}`);
+      if (tc.elementRefs.length) lines.push(`- refs: ${tc.elementRefs.join(", ")}`);
+      lines.push("");
+    }
   }
 
   // #59: multi-page user journeys (only present on a --flow run).
