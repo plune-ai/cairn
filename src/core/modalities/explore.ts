@@ -7,6 +7,7 @@
  */
 import { readInputFile } from "../../fs/run-dir.js";
 import { runExploration } from "../../agent/index.js";
+import { resolveStyleText } from "../../design/style.js";
 import { renderRunSummary, displayPath } from "../../agent/summary.js";
 import { resolveConfig } from "../config.js";
 import { printCost } from "../reporting.js";
@@ -38,6 +39,9 @@ export const exploreModality: Modality = {
     const opts = ctx.flags as unknown as ExploreFlags;
     const config = resolveConfig({ backend: opts.backend, routing: opts.routing, channel: opts.channel });
     const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
+    // #80: --style resolves to a house-style pack (prompts/styles/<v>.md or a path) → {{style}} slot,
+    // else the built-in inline hint. Methodology / assertion-safety are never touched.
+    const styleText = await resolveStyleText(opts.style);
     ctx.err(
       `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}…\n`,
     );
@@ -52,6 +56,7 @@ export const exploreModality: Modality = {
       headed: opts.headed,
       checklistText,
       style: opts.style,
+      styleText,
       fresh: opts.fresh,
       critique: opts.critique,
       onProgress: progress.event,

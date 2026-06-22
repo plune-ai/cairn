@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-class prompt overrides + house-style packs (#80).** A committed `prompts/` scaffold now
+  ships in the repo: a `prompts/README.md` documenting the override precedence (Langfuse →
+  `prompts/<name>.md` → built-in constant) and `prompts/qa-testcase-from-ui.md` — the built-in design
+  prompt **verbatim** — so you can see exactly what is overridable (a drift guard keeps it in sync).
+  `--style <value>` is promoted to a dual resolver: a **style pack** (`prompts/styles/<value>.md` or an
+  explicit `.md` path) is loaded into the prompt's `{{style}}` slot, otherwise it falls back to the
+  existing inline hint (`happy` / `negative` / `coverage`). Three built-in packs ship —
+  `concise`, `gherkin`, `detailed-manual`. Style affects **only** naming / format / language / tone;
+  it never changes technique coverage or assertion safety (the methodology stays fixed). Back-compat:
+  the short `--style happy|negative|coverage|all` behavior is unchanged.
+
 - **`--critique` flag on `cairn design` and `cairn explore` (#82)** — an opt-in design-time
   self-critique pass that runs once AFTER the first design set and BEFORE finalization. On the cheap
   **worker** role (`CAIRN_ROLE_WORKER`) it (a) prunes trivial / contradictory / unverifiable cases and

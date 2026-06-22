@@ -21,6 +21,7 @@ import { loadConfig } from "../config/index.js";
 import { runDesign, runAutomate } from "../agent/index.js";
 import { renderRunSummary, displayPath } from "../agent/summary.js";
 import { resolveRunDir, defaultRunsBaseDir, readInputFile } from "../fs/run-dir.js";
+import { resolveStyleText } from "../design/style.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
 import { makeModel, structuredMethodFor } from "../llm/index.js";
@@ -239,6 +240,9 @@ export function buildProgram(): Command {
       }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
+        // #80: --style resolves to a house-style pack file (prompts/styles/<v>.md or a path) → {{style}} slot,
+        // else the built-in inline hint (happy/negative/coverage). Methodology is never touched.
+        const styleText = await resolveStyleText(opts.style);
         process.stderr.write(`▸ Designing test cases for ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
@@ -252,6 +256,7 @@ export function buildProgram(): Command {
           sessionFile: opts.sessionFile,
           checklistText,
           style: opts.style,
+          styleText,
           headed: opts.headed,
           fresh: opts.fresh,
           critique: opts.critique,
