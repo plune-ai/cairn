@@ -4,6 +4,7 @@ import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import type { PageStudy } from "../observe/index.js";
 import type { Transition } from "../probe/index.js";
 import type { JourneyCase } from "../design/schema.js";
+import type { SetupPlan } from "./setup.js";
 
 /** One studied page in the flow graph. */
 export interface FlowNode {
@@ -126,15 +127,21 @@ export async function crawlFlow(
   return { nodes, edges };
 }
 
-/** Compact flow payload for report.json — pages + edges + journeys, WITHOUT page screenshots/ARIA. */
+/** Compact flow payload for report.json — pages + edges + journeys (+ setup), WITHOUT screenshots/ARIA. */
 export interface FlowReport {
   pages: { url: string; interactive: number }[];
   edges: FlowEdge[];
   journeys: JourneyCase[];
+  /** #60: per-journey structured setup plans (omitted when setup didn't run). */
+  setup?: SetupPlan[];
 }
 
 /** Build the report.json `flow` block (undefined when no crawl happened). Pure — unit-testable. */
-export function flowReportPayload(graph?: FlowGraph, journeys?: JourneyCase[]): FlowReport | undefined {
+export function flowReportPayload(
+  graph?: FlowGraph,
+  journeys?: JourneyCase[],
+  setupPlans?: SetupPlan[],
+): FlowReport | undefined {
   if (!graph) return undefined;
   return {
     pages: graph.nodes.map((n) => ({
@@ -143,5 +150,6 @@ export function flowReportPayload(graph?: FlowGraph, journeys?: JourneyCase[]): 
     })),
     edges: graph.edges,
     journeys: journeys ?? [],
+    ...(setupPlans ? { setup: setupPlans } : {}),
   };
 }

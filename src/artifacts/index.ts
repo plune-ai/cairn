@@ -19,6 +19,8 @@ export interface RunWriter {
   writeLog(text: string): Promise<void>;
   /** Test cases in the user's format → testcases/<id>.md; returns the paths. */
   writeTestCases(docs: { id: string; md: string }[]): Promise<string[]>;
+  /** #60: journey spec files (with setup) → journeys/; clean-start; returns the paths written. */
+  writeJourneySpecs(files: { path: string; content: string }[]): Promise<string[]>;
 }
 
 /** Local trail of each run: runs/<id>/ (study, tests, snapshots, report). */
@@ -78,6 +80,23 @@ export class ArtifactStore {
           const p = join(tcDir, `${d.id}.md`);
           await writeFile(p, d.md, "utf8");
           out.push(p);
+        }
+        return out;
+      },
+      writeJourneySpecs: async (files) => {
+        // Clean start (like writeSuite) but a SEPARATE tree — never touches tests/.
+        const jDir = join(dir, "journeys");
+        await rm(jDir, { recursive: true, force: true });
+        await mkdir(jDir, { recursive: true });
+        const out: string[] = [];
+        for (const f of files) {
+          const rel0 = f.path.replace(/^journeys[/\\]/, ""); // paths are emitted as "journeys/<id>.spec.ts"
+          const target = resolve(jDir, rel0);
+          const rel = relative(jDir, target);
+          if (rel.startsWith("..") || isAbsolute(rel)) continue; // traversal — skip
+          await mkdir(dirname(target), { recursive: true });
+          await writeFile(target, f.content, "utf8");
+          out.push(target);
         }
         return out;
       },

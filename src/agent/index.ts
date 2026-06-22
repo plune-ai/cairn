@@ -69,6 +69,8 @@ export interface ExploreInput {
   flow?: boolean;
   /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). */
   maxPages?: number;
+  /** #60: plan + emit starting-state setup (fixtures / API seed) for journeys. Default off. */
+  setup?: boolean;
 }
 
 export interface ExploreResult {
@@ -191,6 +193,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     critique: input.critique,
     flow: input.flow,
     maxPages: input.maxPages,
+    setup: input.setup,
+    // #60: setup planning runs on the worker tier (CAIRN_ROLE_WORKER); built only when opted in.
+    setupInvoke: input.setup ? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)) : undefined,
     useVision: analyzeTier.supportsVision,
     checklistText: checklistFormatted,
     knowledgeText,
@@ -338,7 +343,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         const budgetReport: BudgetReport = { used: budget.spent, max: budget.max }; // L1-04 (Box 3)
         const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
-        const flowReport = flowReportPayload(out.flowGraph, out.journeys); // #59: compact graph + journeys (no screenshots)
+        const flowReport = flowReportPayload(out.flowGraph, out.journeys, out.setupPlans); // #59/#60: graph + journeys + setup
 
         // #39: also emit ATC/MTC case docs (.md) — explore now produces the human-readable cases like
         // design, so manual MTC cases are visible deliverables (not just buried inside report.md).
@@ -533,6 +538,9 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     critique: input.critique,
     flow: input.flow,
     maxPages: input.maxPages,
+    setup: input.setup,
+    // #60: setup planning runs on the worker tier (CAIRN_ROLE_WORKER); built only when opted in.
+    setupInvoke: input.setup ? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)) : undefined,
     useVision: analyzeTier.supportsVision,
     checklistText: formatChecklist(checklistItems),
     knowledgeText,
@@ -640,7 +648,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           scores,
           cost,
           critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
-          flow: flowReportPayload(out.flowGraph, out.journeys), // #59: graph + journeys (undefined single-page)
+          flow: flowReportPayload(out.flowGraph, out.journeys, out.setupPlans), // #59/#60: graph + journeys + setup
         });
         await runWriter.writeLog(
           [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),

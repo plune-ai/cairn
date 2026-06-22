@@ -67,6 +67,8 @@ Options:
   --flow                 follow in-app navigation across pages and design
                          multi-page journey cases (opt-in)
   --max-pages <n>        max pages to crawl with --flow (page cap; default 3)
+  --setup                for journeys (--flow): plan + emit starting-state setup
+                         (fixture / API seed; manual fallback)
   -h, --help             display help for command
 "
 `;

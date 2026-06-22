@@ -30,6 +30,7 @@ interface ExploreFlags {
   critique?: boolean;
   flow?: boolean;
   maxPages?: string;
+  setup?: boolean;
 }
 
 export const exploreModality: Modality = {
@@ -63,6 +64,7 @@ export const exploreModality: Modality = {
       critique: opts.critique,
       flow: opts.flow,
       maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
+      setup: opts.setup,
       onProgress: progress.event,
     }).finally(() => progress.stop());
 
