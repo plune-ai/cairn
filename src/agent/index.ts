@@ -60,6 +60,8 @@ export interface ExploreInput {
   onProgress?: (event: string) => void;
   /** Ignore prior-run experience for this URL (collectPriorRuns is skipped). */
   fresh?: boolean;
+  /** #82: run the design-time self-critique pass (prune + technique top-up) on the worker tier. Default off. */
+  critique?: boolean;
 }
 
 export interface ExploreResult {
@@ -177,6 +179,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     analyzeInvoke: router.invoke("worker", analyzeTier),
     designInvoke: router.invoke("reasoner", designTier),
     codegenInvoke: router.invoke("worker", codegenTier),
+    // #82: self-critique runs on the worker tier (CAIRN_ROLE_WORKER) to bound cost; built only when opted in.
+    critiqueInvoke: input.critique ? router.invoke("worker", codegenTier) : undefined,
+    critique: input.critique,
     useVision: analyzeTier.supportsVision,
     checklistText: checklistFormatted,
     knowledgeText,
@@ -348,6 +353,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           cost,
           budget: budgetReport,
           stoppedEarly,
+          critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -510,6 +516,9 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     analyzeInvoke: router.invoke("worker", analyzeTier),
     designInvoke: router.invoke("reasoner", designTier),
     codegenInvoke: router.invoke("worker", codegenTier),
+    // #82: self-critique runs on the worker tier (CAIRN_ROLE_WORKER) to bound cost; built only when opted in.
+    critiqueInvoke: input.critique ? router.invoke("worker", codegenTier) : undefined,
+    critique: input.critique,
     useVision: analyzeTier.supportsVision,
     checklistText: formatChecklist(checklistItems),
     knowledgeText,
@@ -616,6 +625,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           testCaseFiles,
           scores,
           cost,
+          critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
         });
         await runWriter.writeLog(
           [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),

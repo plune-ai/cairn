@@ -112,6 +112,7 @@ export function buildProgram(): Command {
     .option("--style <s>", "planning style: happy | negative | coverage | all")
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
+    .option("--critique", "self-critique pass after design: prune weak cases + top up technique gaps (1 extra worker-tier LLM call)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
     });
@@ -221,6 +222,7 @@ export function buildProgram(): Command {
     .option("--style <s>", "planning style: happy | negative | coverage | all")
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
+    .option("--critique", "self-critique pass after design: prune weak cases + top up technique gaps (1 extra worker-tier LLM call)")
     .option("--headed", "visible browser (debug)")
     .action(
       async (opts: {
@@ -233,6 +235,7 @@ export function buildProgram(): Command {
         headed?: boolean;
         routing?: string;
         fresh?: boolean;
+        critique?: boolean;
       }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
@@ -251,6 +254,7 @@ export function buildProgram(): Command {
           style: opts.style,
           headed: opts.headed,
           fresh: opts.fresh,
+          critique: opts.critique,
           onProgress: progress.event,
         }).finally(() => progress.stop());
 

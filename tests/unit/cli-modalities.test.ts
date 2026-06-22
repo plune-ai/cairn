@@ -112,10 +112,11 @@ describe("explore parity (C1-02)", () => {
       "--style",
       "--fresh",
       "--routing",
+      "--critique",
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(10); // + --fresh (ignore prior-run experience for a clean A/B run)
+    expect(longs).toHaveLength(11); // + --critique (opt-in design-time self-critique pass, #82)
   });
 
   it("maps flags to runExploration the same way as before the refactor", async () => {

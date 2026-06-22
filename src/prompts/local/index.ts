@@ -1,5 +1,6 @@
 import { QA_TESTCASE_FROM_UI } from "./qa-testcase-from-ui.js";
 import { QA_MANUAL_TEST_DESIGNER } from "./qa-manual-test-designer.js";
+import { QA_CASE_CRITIQUE } from "./qa-case-critique.js";
 import { QA_PLAYWRIGHT_TS_WRITER } from "./qa-playwright-ts-writer.js";
 import { IDENTIFY_ELEMENTS } from "./identify-elements.js";
 import { JUDGE_TEST_CASES } from "./judge-test-cases.js";
@@ -10,6 +11,7 @@ import { PILOT_REVIEW } from "./pilot-review.js";
 export const LOCAL_PROMPTS: Record<string, string> = {
   "qa-testcase-from-ui": QA_TESTCASE_FROM_UI,
   "qa-manual-test-designer": QA_MANUAL_TEST_DESIGNER,
+  "qa-case-critique": QA_CASE_CRITIQUE,
   "qa-playwright-ts-writer": QA_PLAYWRIGHT_TS_WRITER,
   "identify-elements": IDENTIFY_ELEMENTS,
   "judge-test-cases": JUDGE_TEST_CASES,
