@@ -62,6 +62,8 @@ Options:
                          don't dedupe against past cases
   --routing <preset>     role-routing preset: fast (Groq worker) | volume
                          (OpenRouter worker) (sets LLM_ROUTING)
+  --critique             self-critique pass after design: prune weak cases + top
+                         up technique gaps (1 extra worker-tier LLM call)
   -h, --help             display help for command
 "
 `;

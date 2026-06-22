@@ -2,6 +2,7 @@ import { capture, type PageStudy } from "../observe/index.js";
 import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import { analyzePage, type PageAnalysis } from "../analyze/index.js";
 import { designTestCases, type TestCase } from "../design/index.js";
+import { critiqueCases, type CritiqueDelta } from "../design/critique.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
@@ -20,6 +21,10 @@ export interface ExploreDeps {
   analyzeInvoke: StructuredInvoke;
   designInvoke: StructuredInvoke;
   codegenInvoke: StructuredInvoke;
+  /** #82: worker-tier invoker for the design-time self-critique pass. Absent → pass is skipped. */
+  critiqueInvoke?: StructuredInvoke;
+  /** #82: run the self-critique pass (prune + technique top-up). Conservative default: off. */
+  critique?: boolean;
   useVision: boolean;
   checklistText?: string;
   knowledgeText?: string;
@@ -69,6 +74,8 @@ export interface ExploreOutcome {
   stoppedEarly: boolean;
   /** Repair attempts actually run (0 = green on the first try, or maxRepair=0 or codeless). */
   attempts: number;
+  /** #82: before/after delta of the self-critique pass (undefined when the pass didn't run). */
+  critique?: CritiqueDelta;
 }
 
 /** Sprint 3: observe → identify → design → generateCode → validate ⇄ repair (bounded by maxRepair). */
@@ -190,7 +197,7 @@ export async function runExploreGraph(
 
   // ── designTestCases ───────────────────────────────────────────────────────
   deps.onProgress?.("designTestCases — designing cases (LLM reasoning, may take ~a minute)…");
-  const testCases = await designTestCases(
+  let testCases = await designTestCases(
     {
       study,
       pageSemantics: analysis.pageSemantics,
@@ -205,6 +212,33 @@ export async function runExploreGraph(
     { invoke: deps.designInvoke, prompts: deps.prompts },
   );
   deps.onProgress?.(`designTestCases — generated ${testCases.length} cases`);
+
+  // ── critique (opt-in, #82) ────────────────────────────────────────────────
+  // One cheap worker-tier pass that prunes weak cases + tops up under-represented techniques.
+  // Best-effort: a critique failure must never sink a run that already has a valid design set.
+  let critique: CritiqueDelta | undefined;
+  if (deps.critique && deps.critiqueInvoke && testCases.length > 0) {
+    deps.onProgress?.("critique — pruning weak cases + topping up technique gaps (worker)…");
+    try {
+      const out = await critiqueCases(
+        {
+          testCases,
+          pageSemantics: analysis.pageSemantics,
+          knownRefs: verified.filter((v) => v.count >= 1).map((v) => v.ref),
+          language: deps.languageText,
+        },
+        { invoke: deps.critiqueInvoke, prompts: deps.prompts },
+      );
+      testCases = out.cases;
+      critique = out.delta;
+      deps.onProgress?.(
+        `critique — pruned ${critique.pruned}, topped up ${critique.toppedUp}; ` +
+          `technique coverage ${critique.techniqueCoverageBefore.toFixed(2)}→${critique.techniqueCoverageAfter.toFixed(2)}`,
+      );
+    } catch {
+      // critique is best-effort — keep the original design set on any failure.
+    }
+  }
   // Durability: persist the cases NOW (best-effort), mirroring onStudy (#38) — a kill during the later
   // codegen/validate phase (minutes for explore) must not lose what we already designed.
   try {
@@ -215,7 +249,7 @@ export async function runExploreGraph(
 
   // ── codeless short-circuit ────────────────────────────────────────────────
   if (deps.codeless) {
-    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0 };
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique };
   }
 
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
@@ -263,5 +297,6 @@ export async function runExploreGraph(
     bestValidation,
     stoppedEarly,
     attempts,
+    critique,
   };
 }

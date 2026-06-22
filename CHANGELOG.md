@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--critique` flag on `cairn design` and `cairn explore` (#82)** — an opt-in design-time
+  self-critique pass that runs once AFTER the first design set and BEFORE finalization. On the cheap
+  **worker** role (`CAIRN_ROLE_WORKER`) it (a) prunes trivial / contradictory / unverifiable cases and
+  (b) tops up techniques under-represented across the 6 × ISO/IEC/IEEE 29119-4 set — feeding quality
+  signal back into generation instead of only scoring it post-hoc. The prune/top-up delta (cases
+  pruned, techniques added, technique-coverage before→after) is recorded in `report.json` under
+  `critique`, next to the existing `technique_coverage` / `case_redundancy` metrics. Bounded to a
+  **single** worker-tier LLM call; conservative default (**off** unless `--critique` is passed). The
+  methodology and assertion-safety rules are unchanged — the pass only prunes and fills gaps, and
+  top-up refs are grounded against real elements like the main design step. Behavior is identical to
+  before when the flag is absent.
+
 - **`--fresh` flag on `cairn design` and `cairn explore`** (and a matching TUI toggle) — ignore
   prior-run experience for a URL. By default a 2nd+ run on the same URL reuses its *previously stable*
   cases as design-prompt context and generates only the **delta** (new cases); `--fresh` skips that
