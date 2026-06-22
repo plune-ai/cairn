@@ -45,3 +45,35 @@ export const DesignResultSchema = z.object({ testCases: z.array(DesignedCaseSche
 export interface TestCase extends DesignedCase {
   id: string;
 }
+
+/**
+ * One step of a multi-page journey (#59): which page it runs on, the action, and the element refs it
+ * touches. Refs are grounded PER PAGE (a step only references elements that exist on its own page).
+ */
+export const JourneyStepSchema = z.object({
+  /** URL of the page this step runs on (must be one of the graph's node URLs). */
+  page: z.string(),
+  /** Human-readable step (real element labels). */
+  action: z.string(),
+  elementRefs: z.array(z.string()).default([]),
+});
+export type JourneyStep = z.infer<typeof JourneyStepSchema>;
+
+/** A user journey that spans ≥2 pages — an ordered list of cross-page steps (#59). */
+export const DesignedJourneySchema = z.object({
+  title: z.string(),
+  technique: TestTechniqueSchema,
+  type: TestTypeSchema.default("Positive"),
+  preconditions: z.array(z.string()).default([]),
+  steps: z.array(JourneyStepSchema),
+  expected: z.string(),
+  priority: TestPrioritySchema,
+});
+export type DesignedJourney = z.infer<typeof DesignedJourneySchema>;
+
+export const JourneyResultSchema = z.object({ journeys: z.array(DesignedJourneySchema) });
+
+/** Final journey case with an assigned id. */
+export interface JourneyCase extends DesignedJourney {
+  id: string;
+}

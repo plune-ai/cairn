@@ -22,6 +22,7 @@ import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
 import { resolveRunDir, defaultRunsBaseDir } from "../fs/run-dir.js";
 import { runExploreGraph } from "./graph.js";
+import { flowReportPayload } from "../flow/crawl.js";
 import { finalizeFailure } from "./finalize.js";
 import { runRepairLoop } from "./repair-loop.js";
 import { buildTestCaseDocs } from "./testcase-docs.js";
@@ -64,6 +65,10 @@ export interface ExploreInput {
   fresh?: boolean;
   /** #82: run the design-time self-critique pass (prune + technique top-up) on the worker tier. Default off. */
   critique?: boolean;
+  /** #59: follow in-app navigation and design multi-page journey cases. Default off (single page). */
+  flow?: boolean;
+  /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). */
+  maxPages?: number;
 }
 
 export interface ExploreResult {
@@ -184,6 +189,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // #82: self-critique runs on the worker tier (CAIRN_ROLE_WORKER) to bound cost; built only when opted in.
     critiqueInvoke: input.critique ? router.invoke("worker", codegenTier) : undefined,
     critique: input.critique,
+    flow: input.flow,
+    maxPages: input.maxPages,
     useVision: analyzeTier.supportsVision,
     checklistText: checklistFormatted,
     knowledgeText,
@@ -331,6 +338,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         const budgetReport: BudgetReport = { used: budget.spent, max: budget.max }; // L1-04 (Box 3)
         const stoppedEarly = Boolean(out.stoppedEarly); // L1-04 (Box 2)
+        const flowReport = flowReportPayload(out.flowGraph, out.journeys); // #59: compact graph + journeys (no screenshots)
 
         // #39: also emit ATC/MTC case docs (.md) — explore now produces the human-readable cases like
         // design, so manual MTC cases are visible deliverables (not just buried inside report.md).
@@ -356,6 +364,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           budget: budgetReport,
           stoppedEarly,
           critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
+          flow: flowReport, // #59: page/flow graph + journey cases (undefined for single-page runs)
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -377,6 +386,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             cost,
             budget: budgetReport,
             stoppedEarly,
+            journeys: out.journeys,
           }),
         );
         const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
@@ -521,6 +531,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     // #82: self-critique runs on the worker tier (CAIRN_ROLE_WORKER) to bound cost; built only when opted in.
     critiqueInvoke: input.critique ? router.invoke("worker", codegenTier) : undefined,
     critique: input.critique,
+    flow: input.flow,
+    maxPages: input.maxPages,
     useVision: analyzeTier.supportsVision,
     checklistText: formatChecklist(checklistItems),
     knowledgeText,
@@ -628,6 +640,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           scores,
           cost,
           critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
+          flow: flowReportPayload(out.flowGraph, out.journeys), // #59: graph + journeys (undefined single-page)
         });
         await runWriter.writeLog(
           [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),

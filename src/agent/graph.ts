@@ -3,6 +3,9 @@ import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import { analyzePage, type PageAnalysis } from "../analyze/index.js";
 import { designTestCases, type TestCase } from "../design/index.js";
 import { critiqueCases, type CritiqueDelta } from "../design/critique.js";
+import { crawlFlow, type FlowGraph } from "../flow/crawl.js";
+import { designJourneys } from "../flow/journey.js";
+import type { JourneyCase } from "../design/schema.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
@@ -25,6 +28,10 @@ export interface ExploreDeps {
   critiqueInvoke?: StructuredInvoke;
   /** #82: run the self-critique pass (prune + technique top-up). Conservative default: off. */
   critique?: boolean;
+  /** #59: follow in-app navigation, build a page/flow graph, design multi-page journey cases. Opt-in. */
+  flow?: boolean;
+  /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). Default 1 (single page). */
+  maxPages?: number;
   useVision: boolean;
   checklistText?: string;
   knowledgeText?: string;
@@ -76,6 +83,10 @@ export interface ExploreOutcome {
   attempts: number;
   /** #82: before/after delta of the self-critique pass (undefined when the pass didn't run). */
   critique?: CritiqueDelta;
+  /** #59: the page/flow graph crawled when `flow` is on (undefined for single-page runs). */
+  flowGraph?: FlowGraph;
+  /** #59: multi-page journey cases designed from the graph (undefined for single-page runs). */
+  journeys?: JourneyCase[];
 }
 
 /** Sprint 3: observe → identify → design → generateCode → validate ⇄ repair (bounded by maxRepair). */
@@ -247,9 +258,31 @@ export async function runExploreGraph(
     // durability is best-effort — never let it break the run.
   }
 
+  // ── flow exploration (opt-in, #59) ────────────────────────────────────────
+  // Crawl in-app navigation → page/flow graph → multi-page journey cases. Runs AFTER per-page design
+  // so single-page output is unchanged; best-effort so a crawl failure can't sink the per-page cases.
+  let flowGraph: FlowGraph | undefined;
+  let journeys: JourneyCase[] | undefined;
+  if (deps.flow && (deps.maxPages ?? 1) > 1) {
+    deps.onProgress?.(`flow — crawling up to ${deps.maxPages} pages (reusing the session)…`);
+    try {
+      const startNode = { url: study.url, study, verified: verified.filter((v) => v.count >= 1), transitions };
+      flowGraph = await crawlFlow(startNode, { gateway: deps.gateway, onProgress: deps.onProgress }, { maxPages: deps.maxPages ?? 1 });
+      deps.onProgress?.(`flow — graph: ${flowGraph.nodes.length} pages, ${flowGraph.edges.length} transitions`);
+      journeys = await designJourneys(
+        { graph: flowGraph, language: deps.languageText },
+        { invoke: deps.designInvoke, prompts: deps.prompts },
+      );
+      deps.onProgress?.(`flow — ${journeys.length} journey case(s) spanning ≥2 pages`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
+      deps.onProgress?.(`flow — skipped (${msg})`); // best-effort: keep the per-page cases
+    }
+  }
+
   // ── codeless short-circuit ────────────────────────────────────────────────
   if (deps.codeless) {
-    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique };
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys };
   }
 
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
@@ -298,5 +331,7 @@ export async function runExploreGraph(
     stoppedEarly,
     attempts,
     critique,
+    flowGraph,
+    journeys,
   };
 }

@@ -28,6 +28,8 @@ interface ExploreFlags {
   routing?: string;
   fresh?: boolean;
   critique?: boolean;
+  flow?: boolean;
+  maxPages?: string;
 }
 
 export const exploreModality: Modality = {
@@ -59,6 +61,8 @@ export const exploreModality: Modality = {
       styleText,
       fresh: opts.fresh,
       critique: opts.critique,
+      flow: opts.flow,
+      maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
       onProgress: progress.event,
     }).finally(() => progress.stop());
 

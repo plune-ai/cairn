@@ -114,6 +114,8 @@ export function buildProgram(): Command {
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
     .option("--critique", "self-critique pass after design: prune weak cases + top up technique gaps (1 extra worker-tier LLM call)")
+    .option("--flow", "follow in-app navigation across pages and design multi-page journey cases (opt-in)")
+    .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
     });
@@ -224,6 +226,8 @@ export function buildProgram(): Command {
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
     .option("--critique", "self-critique pass after design: prune weak cases + top up technique gaps (1 extra worker-tier LLM call)")
+    .option("--flow", "follow in-app navigation across pages and design multi-page journey cases (opt-in)")
+    .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
     .option("--headed", "visible browser (debug)")
     .action(
       async (opts: {
@@ -237,6 +241,8 @@ export function buildProgram(): Command {
         routing?: string;
         fresh?: boolean;
         critique?: boolean;
+        flow?: boolean;
+        maxPages?: string;
       }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
@@ -260,6 +266,8 @@ export function buildProgram(): Command {
           headed: opts.headed,
           fresh: opts.fresh,
           critique: opts.critique,
+          flow: opts.flow,
+          maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
           onProgress: progress.event,
         }).finally(() => progress.stop());
 
