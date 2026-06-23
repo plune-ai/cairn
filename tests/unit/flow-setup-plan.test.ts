@@ -48,4 +48,13 @@ describe("planSetup (#60)", () => {
     expect(plan.preconditions[0]?.strategy).toBe("api-seed");
     expect(plan.preconditions[0]?.endpoint).toBe("/api/items");
   });
+
+  it("#91: forces a delete/clear precondition to manual (never auto-deletes pre-existing data)", async () => {
+    const fake: StructuredInvoke = async (schema) =>
+      schema.parse({
+        preconditions: [{ description: "delete all existing items so the list is empty", strategy: "api-seed", endpoint: "/api/items" }],
+      });
+    const plan = await planSetup({ journey }, { invoke: fake, prompts: new PromptRegistry() });
+    expect(plan.preconditions[0]?.strategy).toBe("manual"); // data-protection guardrail downgraded it
+  });
 });
