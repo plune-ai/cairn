@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import type { BrowserBackend } from "../gateway.js";
 import { isMissingBrowserError, missingBrowsersError } from "../preflight.js";
+import { navigateWithRecovery } from "../recovery.js";
 import type {
   ActResult,
   Action,
@@ -75,12 +76,45 @@ export class PlaywrightLibBackend implements BrowserBackend {
     return this.page;
   }
 
+  /**
+   * Navigate with tiered transient-error recovery (#90): a transient SPA nav error (e.g. ERR_ABORTED)
+   * gets a cheap settle + retry on the SAME page — grounded state (refMap) stays valid — and only a
+   * fatal / retry-exhausted error escalates to the expensive {@link recreatePage}.
+   */
+  private async navigate(url: string): Promise<void> {
+    await this.ensurePage();
+    await navigateWithRecovery({
+      goto: async () => {
+        await this.page!.goto(url, { waitUntil: "domcontentloaded" });
+      },
+      settle: async () => {
+        await this.page!.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+        await this.page!.waitForTimeout(300);
+      },
+      recreate: async () => {
+        await this.recreatePage();
+      },
+    });
+  }
+
+  /**
+   * EXPENSIVE recovery: drop the current page and open a fresh one on the SAME context — auth /
+   * storageState survive, but the grounded refMap is cleared, so the caller must re-observe. Reached
+   * only for fatal / retry-exhausted navigation (transient errors retry the same page instead).
+   */
+  private async recreatePage(): Promise<void> {
+    await this.page?.close().catch(() => undefined);
+    this.page = undefined;
+    this.refMap.clear();
+    await this.ensurePage();
+  }
+
   async observe(opts: ObserveOptions): Promise<Observation> {
-    const page = await this.ensurePage();
     if (opts.url) {
-      await page.goto(opts.url, { waitUntil: "domcontentloaded" });
+      await this.navigate(opts.url);
       this.currentUrl = opts.url;
     }
+    const page = await this.ensurePage(); // after navigate: picks up a recreated page if recovery ran
     // SPA hydration: content loads asynchronously AFTER domcontentloaded.
     // Without this, the snapshot = only the static shell (nav), without the real page content.
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
@@ -106,7 +140,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
     try {
       const page = await this.ensurePage();
       if (action.kind === "navigate") {
-        await page.goto(action.url, { waitUntil: "domcontentloaded" });
+        await this.navigate(action.url);
         this.currentUrl = action.url;
         return { ok: true };
       }
