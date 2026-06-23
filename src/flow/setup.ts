@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { JourneyCase } from "../design/schema.js";
+import { isDeletionIntent } from "../safety/guardrails.js";
 
 /**
  * How a precondition's starting state is established, in priority order:
@@ -60,6 +61,19 @@ export function enforceSafeStrategies(plan: SetupPlan): SetupPlan {
 }
 
 /**
+ * Data-protection guardrail (#91): a precondition that establishes its state by DELETING / clearing data
+ * is forced to the `manual` fallback — at setup time nothing is self-created yet, so any such deletion
+ * would hit pre-existing data, which is forbidden. The deletion is never auto-seeded; a human decides.
+ */
+export function enforceDataProtection(plan: SetupPlan): SetupPlan {
+  return {
+    preconditions: plan.preconditions.map((p) =>
+      p.strategy !== "manual" && isDeletionIntent(p.description) ? { ...p, strategy: "manual" as const } : p,
+    ),
+  };
+}
+
+/**
  * #60 — extract STRUCTURED preconditions from a journey's prose preconditions, on the worker tier.
  * The planner assigns each one a satisfaction strategy (session > fixture > api-seed > manual);
  * unsafe/unfounded seeding is forced to manual by {@link enforceSafeStrategies}.
@@ -73,5 +87,5 @@ export async function planSetup(input: SetupInput, deps: SetupDeps): Promise<Set
     pageSemantics: input.pageSemantics ?? "",
   });
   const result = await deps.invoke(SetupPlanSchema, [new HumanMessage(prompt.text)]);
-  return enforceSafeStrategies(result);
+  return enforceDataProtection(enforceSafeStrategies(result));
 }

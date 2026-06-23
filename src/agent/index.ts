@@ -330,6 +330,12 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         // Pilot supervisor: a holistic verdict for the run (idea from explorbot).
         let pilot: PilotVerdict | undefined;
         try {
+          // #91: the session log the provenance check verifies a "pass" against — what the run actually
+          // touched (case titles/steps + observed element names). A "pass" naming an absent entity is rejected.
+          const sessionLog = [
+            ...out.testCases.flatMap((tc) => [tc.title, ...tc.steps]),
+            ...out.verified.map((v) => v.name ?? "").filter(Boolean),
+          ];
           pilot = await pilotReview(
             out.analysis.pageSemantics,
             validation,
@@ -338,6 +344,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             // intended behavior change toward a "smart judge". See ADR-0011.
             router.invoke("reasoner", router.tierFor("reasoner", cfg.models.reasoning)),
             prompts,
+            sessionLog,
           );
           onProgress(`pilot — verdict: ${pilot.verdict} — ${pilot.reason}`);
         } catch {
