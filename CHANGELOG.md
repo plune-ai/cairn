@@ -101,6 +101,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Flow crawl now follows links on client-routed SPAs (#102).** `explore --flow` built a 1-node graph
+  on SPA front-ends (e.g. Next.js): after a link click the router updates `location.href` asynchronously,
+  but `observe` returned the cached `currentUrl` (only refreshed on an explicit navigation), so every
+  crawled URL collapsed back to the start → 0 cross-page journeys → the setup planner never ran. The
+  crawl now (a) waits for the URL to change after a click (`ObserveOptions.waitForUrlChange`, polled
+  best-effort in the lib backend) and reads the **live** `page.url()` when not navigating explicitly,
+  and (b) dedups links by `(name, href)` so a repeated link name (e.g. 3× "See the platform") isn't
+  followed multiple times. Link hrefs are captured from the ARIA `/url` property. Server-side navigation
+  (click → new URL + full load) is unchanged.
+
 - **Provider-safe strict JSON schemas for all structured LLM invokes (#89).** Strict structured-output
   providers (Groq `fast`, OpenRouter `volume`, Anthropic tool-calling) require **every** property to be
   in `required`; an `.optional()` key is dropped from `required` and causes intermittent cross-provider

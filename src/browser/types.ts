@@ -12,6 +12,8 @@ export interface ElementRef {
   interactive: boolean;
   /** Testing importance (higher = more important). */
   rank: number;
+  /** Resolved href for links (from the ARIA `/url` property) — used to dedup crawl links (#102). */
+  url?: string;
 }
 
 /** Observed element state (for act→observe grounding). */
@@ -49,6 +51,11 @@ export interface ObserveOptions {
   url?: string;
   /** Screenshot of the whole page (not just the viewport). */
   fullPage?: boolean;
+  /**
+   * If set — before snapshotting, wait (briefly, best-effort) for `location.href` to differ from this
+   * value. Lets a client-routed SPA settle after a link click before we read the URL/DOM (#102).
+   */
+  waitForUrlChange?: string;
 }
 
 export type Action =
