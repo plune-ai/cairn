@@ -115,10 +115,22 @@ export class PlaywrightLibBackend implements BrowserBackend {
       this.currentUrl = opts.url;
     }
     const page = await this.ensurePage(); // after navigate: picks up a recreated page if recovery ran
+    // #102: after a SPA link click the router updates location.href asynchronously — wait (briefly,
+    // best-effort) for it to differ from the previous URL before snapshotting, so the crawl sees the
+    // new page instead of the stale one.
+    if (opts.waitForUrlChange) {
+      // Poll the live frame URL (Node-side, no browser eval) until the SPA router updates it, ~3s cap.
+      for (let i = 0; i < 20 && page.url() === opts.waitForUrlChange; i++) {
+        await page.waitForTimeout(150);
+      }
+    }
     // SPA hydration: content loads asynchronously AFTER domcontentloaded.
     // Without this, the snapshot = only the static shell (nav), without the real page content.
     await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => undefined);
     await page.waitForTimeout(500);
+    // #102: when not navigating explicitly (e.g. after a click), the live page.url() is the source of
+    // truth — the SPA may have client-routed — so sync currentUrl instead of returning the stale value.
+    if (!opts.url) this.currentUrl = page.url();
     const ariaSnapshot = await page.locator("body").ariaSnapshot();
     const buf = await page.screenshot({ fullPage: opts.fullPage ?? false });
 

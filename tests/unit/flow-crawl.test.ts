@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { crawlFlow, type FlowNode } from "../../src/flow/crawl.js";
+import { designJourneys } from "../../src/flow/journey.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
+import { PromptRegistry } from "../../src/prompts/index.js";
+import type { StructuredInvoke } from "../../src/llm/structured.js";
 import type { BrowserGateway } from "../../src/browser/gateway.js";
 
 /**
@@ -107,5 +110,124 @@ describe("crawlFlow (#59)", () => {
 
     // home + dashboard only; external other.com skipped; dashboard→home is a revisit (no new node)
     expect(graph.nodes.map((n) => n.url).sort()).toEqual(["http://app/dashboard", "http://app/home"]);
+  });
+});
+
+/**
+ * Client-routed SPA fake: act(click) sets a PENDING nav; the URL only "settles" when the next observe
+ * is asked to waitForUrlChange — a bare observe still returns the OLD page. Without the #102 fix the
+ * crawl observed without waiting → stale URL → 1-node graph.
+ */
+function spaGateway(pages: Record<string, FakePage>, startKey: string): BrowserGateway {
+  let current = startKey;
+  let pending: string | null = null;
+  const keyOfUrl = (u: string): string => Object.keys(pages).find((k) => pages[k]!.url === u) ?? startKey;
+  return {
+    observe: async ({ url, waitForUrlChange }) => {
+      if (url) {
+        current = keyOfUrl(url);
+        pending = null;
+      } else if (waitForUrlChange && pending) {
+        current = pending; // the SPA router finally updates the URL
+        pending = null;
+      }
+      const p = pages[current]!;
+      return { url: p.url, screenshotB64: "", ariaSnapshot: p.aria, capturedBy: "lib" };
+    },
+    act: async ({ kind, ref }) => {
+      if (kind === "click" && ref) {
+        const target = pages[current]!.links[ref];
+        if (target) pending = target; // deferred — a bare observe still sees the source page
+      }
+      return { ok: true, ref };
+    },
+    verify: async (els) => els.map((e) => ({ ...e, count: 1, verified: true })),
+    getState: async () => ({ visible: true, enabled: true }),
+    session: () => ({ load: async () => undefined, save: async () => ({ cookies: [], origins: [] }) }),
+    runTests: async () => ({ passed: 0, failed: 0, flaky: 0 }),
+    close: async () => undefined,
+  };
+}
+
+describe("crawlFlow — client-routed SPA (#102)", () => {
+  it("follows SPA links whose URL settles only after waitForUrlChange → multi-node graph", async () => {
+    const pages: Record<string, FakePage> = {
+      home: {
+        url: "http://app/",
+        aria: aria(['- link "Platform"', '- link "Blog"']),
+        links: { e1: "plat", e2: "blog" },
+      },
+      plat: { url: "http://app/platform", aria: aria(['- link "Home"']), links: { e1: "home" } },
+      blog: { url: "http://app/blog", aria: aria(['- link "Home"']), links: { e1: "home" } },
+    };
+    const graph = await crawlFlow(nodeFrom(pages.home!), { gateway: spaGateway(pages, "home") }, { maxPages: 3 });
+
+    expect(graph.nodes.length).toBeGreaterThan(1); // the bug produced exactly 1
+    expect(graph.nodes.map((n) => n.url).sort()).toEqual([
+      "http://app/",
+      "http://app/blog",
+      "http://app/platform",
+    ]);
+  });
+
+  it("dedupes links by (name, href) so a repeated link isn't followed twice", async () => {
+    let clicks = 0;
+    const pages: Record<string, FakePage> = {
+      home: {
+        url: "http://app/",
+        // 3 link rows, but two are the SAME (name + /url) — must collapse to one followed link.
+        aria: aria([
+          '- link "Platform":',
+          "  - /url: /platform",
+          '- link "Platform":',
+          "  - /url: /platform",
+          '- link "Blog":',
+          "  - /url: /blog",
+        ]),
+        links: { e1: "plat", e2: "plat", e3: "blog" },
+      },
+      plat: { url: "http://app/platform", aria: aria(['- heading "Platform"']), links: {} },
+      blog: { url: "http://app/blog", aria: aria(['- heading "Blog"']), links: {} },
+    };
+    const gw = spaGateway(pages, "home");
+    const realAct = gw.act;
+    gw.act = async (a) => {
+      if (a.kind === "click") clicks += 1;
+      return realAct(a);
+    };
+    await crawlFlow(nodeFrom(pages.home!), { gateway: gw }, { maxPages: 5 });
+
+    expect(clicks).toBe(2); // 3 link rows → 2 unique (name, href) → 2 clicks (not 3)
+  });
+
+  it("a SPA crawl yields a multi-page graph → designJourneys can span ≥2 pages", async () => {
+    const pages: Record<string, FakePage> = {
+      home: { url: "http://app/", aria: aria(['- link "Platform"']), links: { e1: "plat" } },
+      plat: { url: "http://app/platform", aria: aria(['- link "Home"']), links: { e1: "home" } },
+    };
+    const graph = await crawlFlow(nodeFrom(pages.home!), { gateway: spaGateway(pages, "home") }, { maxPages: 3 });
+    expect(graph.nodes.length).toBeGreaterThanOrEqual(2);
+
+    const fakeInvoke: StructuredInvoke = async (schema) =>
+      schema.parse({
+        journeys: [
+          {
+            title: "Home → Platform",
+            technique: "state-transition",
+            type: "Positive",
+            preconditions: [],
+            steps: [
+              { page: "http://app/", action: "click Platform", elementRefs: [] },
+              { page: "http://app/platform", action: "see platform", elementRefs: [] },
+            ],
+            expected: "platform page is shown",
+            priority: "high",
+          },
+        ],
+      });
+    const journeys = await designJourneys({ graph }, { invoke: fakeInvoke, prompts: new PromptRegistry() });
+
+    expect(journeys.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(journeys[0]!.steps.map((s) => s.page)).size).toBeGreaterThanOrEqual(2);
   });
 });

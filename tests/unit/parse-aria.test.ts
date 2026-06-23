@@ -36,6 +36,13 @@ describe("parseAriaSnapshot", () => {
     expect(link?.interactive).toBe(true);
   });
 
+  it("#102: captures the /url property as the link's href (for crawl dedup)", () => {
+    expect(els.find((e) => e.name === "View list")?.url).toBe("/list.html");
+    expect(els.find((e) => e.name === "Open modal page")?.url).toBe("/modal.html");
+    // a non-link element has no url
+    expect(els.find((e) => e.role === "button")?.url).toBeUndefined();
+  });
+
   it("heading/landmark are not interactive", () => {
     const heading = els.find((e) => e.role === "heading");
     expect(heading?.name).toBe("Sign in");

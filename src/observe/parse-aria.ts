@@ -57,7 +57,16 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
     if (!line.startsWith("- ")) continue;
 
     const content = line.slice(2).trim();
-    if (content.startsWith("/")) continue; // property: /url, /checked, /disabled…
+    if (content.startsWith("/")) {
+      // Property line (/url, /checked, /disabled…). Capture /url onto the preceding element (its link)
+      // so crawl can dedup links by (name, href) — #102. Other properties are skipped.
+      const last = out[out.length - 1];
+      if (content.startsWith("/url") && last) {
+        const u = content.slice(4).replace(/^:\s*/, "").replace(/^"|"$/g, "").trim();
+        if (u) last.url = u;
+      }
+      continue;
+    }
 
     const role = content.match(/^([a-zA-Z][\w-]*)/)?.[1];
     if (!role || role === "text") continue; // text node or unparseable
