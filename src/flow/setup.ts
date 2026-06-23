@@ -19,12 +19,16 @@ export const StructuredPreconditionSchema = z.object({
   /** Human-readable precondition (always present — also the manual-fallback text). */
   description: z.string(),
   strategy: SetupStrategySchema,
-  /** Grounded entity the state is about, e.g. "item", "user on plan Pro". */
-  entity: z.string().optional(),
-  /** api-seed only: the endpoint to seed against (required for the strategy to stand). */
-  endpoint: z.string().optional(),
-  /** api-seed only: HTTP method (default POST when seeding). */
-  method: z.enum(["GET", "POST", "PUT", "PATCH"]).optional(),
+  /**
+   * Grounded entity the state is about, e.g. "item", "user on plan Pro" (null when not applicable).
+   * `.nullable().default(null)` keeps the key in `required` (provider-safe, #89) while tolerating a
+   * provider that omits it — instead of `.optional()`, which drops it from `required`.
+   */
+  entity: z.string().nullable().default(null),
+  /** api-seed only: the endpoint to seed against — null unless the strategy is api-seed. */
+  endpoint: z.string().nullable().default(null),
+  /** api-seed only: HTTP method (null ⇒ POST when seeding). */
+  method: z.enum(["GET", "POST", "PUT", "PATCH"]).nullable().default(null),
 });
 export type StructuredPrecondition = z.infer<typeof StructuredPreconditionSchema>;
 

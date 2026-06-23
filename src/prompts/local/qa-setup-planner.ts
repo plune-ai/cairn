@@ -21,6 +21,7 @@ Rules:
 - NEVER invent an endpoint. If you can't name a concrete one, do NOT use api-seed — use fixture or manual.
 - NEVER propose destructive seeding (deleting/overwriting real data) — use manual.
 - "description" is always required (it doubles as the documented manual precondition).
-- "entity" is the thing the state is about (e.g. "item", "user on plan Pro"), when identifiable.
+- "entity" is the thing the state is about (e.g. "item", "user on plan Pro"), or null if not identifiable.
+- ALWAYS return EVERY field in EACH precondition object — "description", "strategy", "entity", "endpoint" and "method". When a field does not apply (entity has none, or endpoint/method for a non-api-seed strategy), return it EXPLICITLY as null. Never omit a field.
 
-Return { preconditions: [ { description, strategy, entity?, endpoint?, method? } ] }.`;
+Return { preconditions: [ { description, strategy, entity, endpoint, method } ] } — every key present in every object; use null for any that doesn't apply (endpoint and method are non-null ONLY for api-seed).`;
