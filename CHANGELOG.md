@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Provenance-checked Pilot verdicts + data-protection guardrails (#91).** Two cheap safety rules
+  (borrowed from Explorbot) that land **before** any stateful / destructive automation. (1) The Pilot's
+  holistic `pass` is now **provenance-checked**: the verdict carries the name of the entity the run
+  claims to have created/edited, and a `pass` is downgraded to `needs-work` (reason recorded) when that
+  entity is **absent** from the run's session log (case titles + steps + observed element names) —
+  killing a class of LLM false-positives. (2) A reusable `guardDeletion` policy refuses to delete
+  **pre-existing** data or the resource under the **current URL**; only self-created items are
+  disposable. The setup planner gains `enforceDataProtection`, which forces any delete/clear
+  precondition to the **manual** fallback (at setup time nothing is self-created yet, so such a deletion
+  would hit pre-existing data). Pure helpers in `src/safety/guardrails.ts`; the Tester side stays
+  read-only by existing prompt policy.
+
 - **Coverage gap-analysis (#61).** After design, every run now emits a **coverage view** — the observed
   interactive surface (elements per page + flow transitions, #59) **minus** what any case or journey
   references (by `elementRefs` + journey steps). `report.json` gains a `coverage` block and `report.md`
@@ -86,6 +98,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--style` packs), `tui.md`, `metrics.md`, `cost.md`, `langfuse.md`. The `BENCHMARK` markers moved
   with the cost section, so `npm run bench` now rewrites `docs/cost.md` (was `README.md`), and the
   `KEEP IN SYNC` note for the metric legend now points at `docs/metrics.md`. No code behavior changed.
+
+### Fixed
+
+- **Provider-safe strict JSON schemas for all structured LLM invokes (#89).** Strict structured-output
+  providers (Groq `fast`, OpenRouter `volume`, Anthropic tool-calling) require **every** property to be
+  in `required`; an `.optional()` key is dropped from `required` and causes intermittent cross-provider
+  schema-parse failures. The lone offending schema — `StructuredPreconditionSchema`'s
+  `entity`/`endpoint`/`method` — moves from `.optional()` to `.nullable().default(null)`: kept in
+  `required` (provider-safe) yet tolerant of a provider that omits the key (parses to `null`). A new
+  **schema-lint** (`src/llm/schema-lint.ts`, over zod 4's native `z.toJSONSchema`) asserts
+  `required == properties` across all 9 structured-invoke schemas, with a drift guard that fails the
+  build if a new `invoke(...Schema)` isn't covered. Validated live on both `volume` (OpenRouter) and
+  `fast` (Groq); a companion `qa-setup-planner` prompt tweak makes the weaker Groq model always emit the
+  nullable keys as `null` (strict tool-call validation rejects an omitted required key).
+
+- **Tiered transient-error recovery in BrowserGateway (#90).** A transient SPA navigation error (an
+  in-app redirect aborting the in-flight `goto`, a network blip, a load-state timeout) previously killed
+  the step — `observe()` did a bare `page.goto` with no handling. Navigation now runs through a
+  classification ladder (`src/browser/recovery.ts`): a **transient** error gets a cheap settle + retry on
+  the **same** page — grounded state (the ref→locator map) is preserved — and only a **fatal** /
+  retry-exhausted error escalates to the expensive recovery (recreate the page on the same context; auth
+  survives, grounding is rebuilt). Unknown errors default to `fatal`, so real bugs aren't masked by
+  silent retries. lib backend (PRIMARY); the CLI backend is out of scope.
 
 ## [0.4.0] - 2026-06-19
 
