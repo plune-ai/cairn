@@ -46,6 +46,8 @@ export interface RunWriter {
   writeTestCases(docs: { id: string; md: string }[]): Promise<string[]>;
   /** #60: journey spec files (with setup) → journeys/; clean-start; returns the paths written. */
   writeJourneySpecs(files: { path: string; content: string }[]): Promise<string[]>;
+  /** #103: per-page crawl snapshots — each page's aria.yaml + screenshot.png under its own dir. */
+  writeFlowSnapshots(pages: { dir: string; ariaYaml: string; screenshotB64: string }[]): Promise<void>;
 }
 
 /** Local trail of each run: runs/<id>/ (study, tests, snapshots, report). */
@@ -124,6 +126,18 @@ export class ArtifactStore {
           out.push(target);
         }
         return out;
+      },
+      writeFlowSnapshots: async (pages) => {
+        for (const p of pages) {
+          const pdir = resolve(dir, p.dir);
+          const rel = relative(dir, pdir);
+          if (rel.startsWith("..") || isAbsolute(rel)) continue; // traversal — skip
+          await mkdir(pdir, { recursive: true });
+          await writeFile(join(pdir, "aria.yaml"), p.ariaYaml, "utf8");
+          if (p.screenshotB64) {
+            await writeFile(join(pdir, "screenshot.png"), Buffer.from(p.screenshotB64, "base64"));
+          }
+        }
       },
     };
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { crawlFlow, type FlowNode } from "../../src/flow/crawl.js";
+import { crawlFlow, flowReportPayload, flowSnapshotPath, type FlowNode } from "../../src/flow/crawl.js";
 import { designJourneys } from "../../src/flow/journey.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
@@ -229,5 +229,27 @@ describe("crawlFlow — client-routed SPA (#102)", () => {
 
     expect(journeys.length).toBeGreaterThanOrEqual(1);
     expect(new Set(journeys[0]!.steps.map((s) => s.page)).size).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("flowSnapshotPath + flowReportPayload per-page snapshots (#103)", () => {
+  it("builds an index-prefixed slug from the URL path; root → index", () => {
+    expect(flowSnapshotPath(0, "http://app/")).toBe("snapshots/0-index");
+    expect(flowSnapshotPath(1, "http://app/platform")).toBe("snapshots/1-platform");
+    expect(flowSnapshotPath(2, "http://app/items/42")).toBe("snapshots/2-items-42");
+  });
+
+  it("keeps dirs unique via the index prefix even when two URLs slugify the same", () => {
+    expect(flowSnapshotPath(0, "http://app/a/b")).not.toBe(flowSnapshotPath(1, "http://app/a/b"));
+  });
+
+  it("flowReportPayload exposes a per-page snapshot dir for every node (#103 ref in report.json)", () => {
+    const home = nodeFrom({ url: "http://app/", aria: aria(['- link "X"']), links: {} });
+    const plat = nodeFrom({ url: "http://app/platform", aria: aria(['- heading "P"']), links: {} });
+    const payload = flowReportPayload({ nodes: [home, plat], edges: [] });
+    expect(payload?.pages.map((p) => ({ url: p.url, snapshot: p.snapshot }))).toEqual([
+      { url: "http://app/", snapshot: "snapshots/0-index" },
+      { url: "http://app/platform", snapshot: "snapshots/1-platform" },
+    ]);
   });
 });

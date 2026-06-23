@@ -24,7 +24,7 @@ import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
 import { resolveRunDir, defaultRunsBaseDir } from "../fs/run-dir.js";
 import { runExploreGraph } from "./graph.js";
-import { flowReportPayload } from "../flow/crawl.js";
+import { flowReportPayload, flowSnapshotPath } from "../flow/crawl.js";
 import { finalizeFailure } from "./finalize.js";
 import { runRepairLoop } from "./repair-loop.js";
 import { buildTestCaseDocs } from "./testcase-docs.js";
@@ -394,6 +394,16 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         await runWriter.writeStudy(out.study);
         if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
         await runWriter.writeAria(out.study.ariaYaml);
+        // #103: persist a per-page aria/screenshot for every crawled flow node (not just the start page).
+        if (out.flowGraph) {
+          await runWriter.writeFlowSnapshots(
+            out.flowGraph.nodes.map((n, i) => ({
+              dir: flowSnapshotPath(i, n.url),
+              ariaYaml: n.study.ariaYaml,
+              screenshotB64: n.study.screenshotB64,
+            })),
+          );
+        }
         await runWriter.writeReport({
           runId,
           url: out.study.url,
@@ -677,6 +687,16 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         await runWriter.writeStudy(out.study);
         if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
         await runWriter.writeAria(out.study.ariaYaml);
+        // #103: persist a per-page aria/screenshot for every crawled flow node (not just the start page).
+        if (out.flowGraph) {
+          await runWriter.writeFlowSnapshots(
+            out.flowGraph.nodes.map((n, i) => ({
+              dir: flowSnapshotPath(i, n.url),
+              ariaYaml: n.study.ariaYaml,
+              screenshotB64: n.study.screenshotB64,
+            })),
+          );
+        }
         // #61: coverage view (always) + optional gap-case suggestions (--gaps).
         const coveragePages = out.flowGraph
           ? out.flowGraph.nodes.map((n) => ({ url: n.url, elements: n.verified }))
