@@ -43,7 +43,7 @@ export interface CritiqueDeps {
 }
 
 /** What the worker returns: which cases to drop + which new cases to add. */
-const CritiqueResultSchema = z.object({
+export const CritiqueResultSchema = z.object({
   drop: z.array(z.object({ id: z.string(), reason: z.string() })).default([]),
   add: z.array(DesignedCaseSchema).default([]),
 });
