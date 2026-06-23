@@ -3,6 +3,31 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { PageStudy } from "../observe/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
 
+/** Codes Windows throws when a just-exited process still holds a handle on a dir/file. */
+const LOCK_CODES = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
+
+/**
+ * Resilient recursive remove (#101). On Windows the Playwright runner from a just-finished validation
+ * can still hold a handle under `tests/`, so `rm` throws EBUSY/EPERM transiently; `force: true` only
+ * swallows ENOENT, not locks. Retry with exponential backoff to let the handle clear. On POSIX (no file
+ * locking) the first attempt always wins, so the path is unchanged there. If the locks never clear, give
+ * up cleanly (best-effort) instead of rejecting the whole run — the following mkdir + per-file writes
+ * still produce a usable tree. Non-lock errors propagate immediately. `rmFn` is injected for testing.
+ */
+export async function rmrf(path: string, rmFn: typeof rm = rm, retries = 4, baseMs = 100): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rmFn(path, { recursive: true, force: true });
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (!code || !LOCK_CODES.has(code)) throw e; // a real error → surface it
+      if (attempt >= retries) return; // locks never cleared → best-effort, don't sink the run
+      await new Promise((r) => setTimeout(r, baseMs * 2 ** attempt));
+    }
+  }
+}
+
 export interface RunWriter {
   runId: string;
   dir: string;
@@ -40,7 +65,7 @@ export class ArtifactStore {
       },
       writeSuite: async (suite) => {
         // Clean start: every generation (including repair) fully overwrites tests/.
-        await rm(testsDir, { recursive: true, force: true });
+        await rmrf(testsDir);
         await mkdir(testsDir, { recursive: true });
         const out: string[] = [];
         for (const f of suite.files) {
@@ -86,7 +111,7 @@ export class ArtifactStore {
       writeJourneySpecs: async (files) => {
         // Clean start (like writeSuite) but a SEPARATE tree — never touches tests/.
         const jDir = join(dir, "journeys");
-        await rm(jDir, { recursive: true, force: true });
+        await rmrf(jDir);
         await mkdir(jDir, { recursive: true });
         const out: string[] = [];
         for (const f of files) {

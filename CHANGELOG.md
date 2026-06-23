@@ -111,6 +111,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   followed multiple times. Link hrefs are captured from the ARIA `/url` property. Server-side navigation
   (click → new URL + full load) is unchanged.
 
+- **`explore` no longer crashes with EBUSY on Windows during repair (#101).** The artifact writer
+  fully overwrites `tests/` on every generation (`writeSuite`), but on Windows the Playwright runner
+  from the just-finished validation can still hold a handle there — so the recursive `rm` threw
+  `EBUSY`/`EPERM` and the whole run rejected on the first repair attempt. Cleanup now goes through a
+  resilient `rmrf` helper that retries the recursive remove with exponential backoff on transient lock
+  codes (`EBUSY`/`EPERM`/`ENOTEMPTY`) and, if the lock never clears, gives up cleanly (best-effort)
+  instead of sinking the run. POSIX behaviour is unchanged (the first attempt always wins) and non-lock
+  errors still propagate immediately. The same guard is applied to `writeJourneySpecs`.
+
 - **Provider-safe strict JSON schemas for all structured LLM invokes (#89).** Strict structured-output
   providers (Groq `fast`, OpenRouter `volume`, Anthropic tool-calling) require **every** property to be
   in `required`; an `.optional()` key is dropped from `required` and causes intermittent cross-provider
