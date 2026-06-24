@@ -37,6 +37,8 @@ Commands:
   unit                   Generate unit tests — coming soon (gated; see L-G2)
   docs                   Generate docs / doctest examples — coming soon (gated;
                          see L-G2)
+  mcp                    run an MCP server (stdio) exposing explore/design as
+                         tools for Claude Code / Cursor
   help [command]         display help for command
 "
 `;

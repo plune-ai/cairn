@@ -474,6 +474,15 @@ export function buildProgram(): Command {
     if (m.aliases?.length) c.aliases(m.aliases);
   }
 
+  program
+    .command("mcp")
+    .description("run an MCP server (stdio) exposing explore/design as tools for Claude Code / Cursor")
+    .action(async () => {
+      // Lazy: @modelcontextprotocol/sdk is an OPTIONAL dependency — keep it off every other code path.
+      const { startMcpServer } = await import("../mcp/server.js");
+      await startMcpServer();
+    });
+
   return program;
 }
 
