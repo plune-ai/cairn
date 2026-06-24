@@ -58,4 +58,38 @@ describe("ArtifactStore", () => {
       await rm(base, { recursive: true, force: true });
     }
   });
+
+  it("#103: writeFlowSnapshots persists per-page aria + screenshot under each page dir", async () => {
+    const base = await mkdtemp(join(tmpdir(), "qa-art-"));
+    try {
+      const run = await new ArtifactStore(base).openRun("rflow");
+      await run.writeFlowSnapshots([
+        { dir: "snapshots/0-index", ariaYaml: '- link "Home"', screenshotB64: "QUJD" },
+        { dir: "snapshots/1-platform", ariaYaml: '- heading "Platform"', screenshotB64: "QUJD" },
+      ]);
+      // N pages → N snapshot sets, not one
+      expect(await readFile(join(run.dir, "snapshots", "0-index", "aria.yaml"), "utf8")).toContain("Home");
+      expect(await readFile(join(run.dir, "snapshots", "1-platform", "aria.yaml"), "utf8")).toContain("Platform");
+      expect((await readFile(join(run.dir, "snapshots", "0-index", "screenshot.png"))).length).toBeGreaterThan(0);
+      expect((await readFile(join(run.dir, "snapshots", "1-platform", "screenshot.png"))).length).toBeGreaterThan(0);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("#103: writeFlowSnapshots skips an empty screenshot and blocks traversal", async () => {
+    const base = await mkdtemp(join(tmpdir(), "qa-art-"));
+    try {
+      const run = await new ArtifactStore(base).openRun("r2");
+      await run.writeFlowSnapshots([
+        { dir: "snapshots/0-x", ariaYaml: "- a", screenshotB64: "" }, // no screenshot
+        { dir: "../escape", ariaYaml: "- bad", screenshotB64: "QUJD" }, // traversal → skipped
+      ]);
+      expect(await readFile(join(run.dir, "snapshots", "0-x", "aria.yaml"), "utf8")).toContain("a");
+      await expect(readFile(join(run.dir, "snapshots", "0-x", "screenshot.png"))).rejects.toThrow();
+      await expect(readFile(join(base, "escape", "aria.yaml"), "utf8")).rejects.toThrow();
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
 });

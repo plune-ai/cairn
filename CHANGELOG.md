@@ -101,6 +101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Flow runs persist per-page crawl snapshots (#103).** A multi-page `--flow` run left only the start
+  page's `snapshots/aria.yaml` + `screenshot.png`, even though the crawl studied every page — each
+  `FlowNode.study` held a full aria/screenshot that was then discarded. Each crawled node now gets its
+  own `snapshots/<index>-<slug>/aria.yaml` + `screenshot.png` (index-prefixed → collision-safe), and
+  `report.json`'s `flow.pages[]` carries a per-page `snapshot` reference so the page graph is
+  inspectable. The start page's root `snapshots/` files are unchanged (single-page runs unaffected).
+
 - **Flow crawl now follows links on client-routed SPAs (#102).** `explore --flow` built a 1-node graph
   on SPA front-ends (e.g. Next.js): after a link click the router updates `location.href` asynchronously,
   but `observe` returned the cached `currentUrl` (only refreshed on an explicit navigation), so every
