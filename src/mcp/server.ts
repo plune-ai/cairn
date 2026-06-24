@@ -1,7 +1,15 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { BOT_VERSION } from "../index.js";
-import { TOOL_INPUT_SHAPE, ToolInputSchema, exploreTool, designTool } from "./tools.js";
+import {
+  TOOL_INPUT_SHAPE,
+  ToolInputSchema,
+  AUTOMATE_INPUT_SHAPE,
+  AutomateInputSchema,
+  exploreTool,
+  designTool,
+  automateTool,
+} from "./tools.js";
 
 /**
  * Build the Cairn MCP server (#49): exposes `explore` and `design` as tools over the shared core.
@@ -38,6 +46,22 @@ export function buildMcpServer(): McpServer {
     },
     async (args) => {
       const result = await designTool(ToolInputSchema.parse(args));
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
+
+  server.registerTool(
+    "automate",
+    {
+      title: "Generate @playwright/test from ready cases (automate)",
+      description:
+        "Generate @playwright/test code from the ready ATC cases of a previous run (the second half of " +
+        "the decoupled design → automate flow). Pass `run` = the run id/dir returned by `design`; " +
+        "optionally `validate` (needs a `session`). Returns the spec files, validation summary, and cost.",
+      inputSchema: AUTOMATE_INPUT_SHAPE,
+    },
+    async (args) => {
+      const result = await automateTool(AutomateInputSchema.parse(args));
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     },
   );

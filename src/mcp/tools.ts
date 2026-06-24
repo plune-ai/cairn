@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { resolveConfig } from "../core/config.js";
-import { runExploration, runDesign } from "../agent/index.js";
-import type { ExploreInput, ExploreResult, DesignResult } from "../agent/index.js";
+import { runExploration, runDesign, runAutomate } from "../agent/index.js";
+import type { ExploreInput, ExploreResult, DesignResult, AutomateResult } from "../agent/index.js";
 import type { TestCase } from "../design/index.js";
+import type { ValidationReport } from "../validate/index.js";
 import { readInputFile } from "../fs/run-dir.js";
 import { resolveStyleText } from "../design/style.js";
 
@@ -39,9 +40,21 @@ export interface ToolDeps {
   resolveConfig: typeof resolveConfig;
   runExploration: typeof runExploration;
   runDesign: typeof runDesign;
+  runAutomate: typeof runAutomate;
 }
 
-export const defaultDeps: ToolDeps = { resolveConfig, runExploration, runDesign };
+export const defaultDeps: ToolDeps = { resolveConfig, runExploration, runDesign, runAutomate };
+
+/** Compact a validation report into pass/fail/flaky counts (shared by explore + automate). */
+function compactValidation(v: ValidationReport | undefined) {
+  if (!v) return undefined;
+  return {
+    greenRatio: v.greenRatio,
+    passed: v.results.filter((x) => x.status === "passed").length,
+    failed: v.results.filter((x) => x.status === "failed").length,
+    flaky: v.flakyCount,
+  };
+}
 
 /** Map tool input → the shared `ExploreInput` exactly like `exploreModality` does (config reused). */
 async function buildExploreInput(input: ToolInput, deps: ToolDeps): Promise<ExploreInput> {
@@ -98,14 +111,7 @@ export async function exploreTool(input: ToolInput, deps: ToolDeps = defaultDeps
     runDir: r.runDir,
     pageSemantics: r.analysis.pageSemantics,
     testCases: compactCases(r.testCases),
-    validation: r.validation
-      ? {
-          greenRatio: r.validation.greenRatio,
-          passed: r.validation.results.filter((x) => x.status === "passed").length,
-          failed: r.validation.results.filter((x) => x.status === "failed").length,
-          flaky: r.validation.flakyCount,
-        }
-      : undefined,
+    validation: compactValidation(r.validation),
     scores: r.scores.map((s) => ({ name: s.name, value: s.value, comment: s.comment })),
     pilot: r.pilot ? { verdict: r.pilot.verdict, reason: r.pilot.reason, guidance: r.pilot.guidance } : undefined,
     cost: r.cost,
@@ -133,5 +139,43 @@ export async function designTool(input: ToolInput, deps: ToolDeps = defaultDeps)
     scores: r.scores.map((s) => ({ name: s.name, value: s.value, comment: s.comment })),
     cost: r.cost,
     testCaseFiles: r.testCaseFiles,
+  };
+}
+
+/**
+ * Input for the `automate` tool — the second half of the decoupled flow. Unlike explore/design (whose
+ * input is a `url`), automate's input is a previous run that already holds ready ATC cases.
+ */
+export const AUTOMATE_INPUT_SHAPE = {
+  run: z.string().describe("Run folder with ready ATC cases: runs/<id>, a bare <id>, or an absolute path"),
+  validate: z.boolean().optional().describe("Run the generated tests after codegen (requires a session)"),
+  session: z.string().optional().describe("Saved session name for validation"),
+  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker)"),
+  channel: z.string().optional().describe("System browser channel for validation, e.g. chrome"),
+};
+
+export const AutomateInputSchema = z.object(AUTOMATE_INPUT_SHAPE);
+export type AutomateInput = z.infer<typeof AutomateInputSchema>;
+
+export interface AutomateToolResult {
+  runDir: string;
+  specFiles: string[];
+  validation?: ReturnType<typeof compactValidation>;
+  cost: AutomateResult["cost"];
+}
+
+export async function automateTool(input: AutomateInput, deps: ToolDeps = defaultDeps): Promise<AutomateToolResult> {
+  const config = deps.resolveConfig({ routing: input.routing, channel: input.channel });
+  const r = await deps.runAutomate({
+    runDir: input.run,
+    config,
+    validate: input.validate,
+    sessionName: input.session,
+  });
+  return {
+    runDir: r.runDir,
+    specFiles: r.specFiles,
+    validation: compactValidation(r.validation),
+    cost: r.cost,
   };
 }

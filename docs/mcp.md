@@ -22,13 +22,18 @@ npm i @modelcontextprotocol/sdk
 
 | Tool | What it does | Returns |
 |------|--------------|---------|
-| `explore` | Explore a page → methodology-based cases → `@playwright/test` code → validate ⇄ repair | cases, validation summary, metrics, Pilot verdict, cost, run dir |
-| `design`  | Explore a page → cases in ATC/MTC format, **no code** | cases, metrics, cost, run dir |
+| `explore`  | Explore a page → methodology-based cases → `@playwright/test` code → validate ⇄ repair | cases, validation summary, metrics, Pilot verdict, cost, run dir |
+| `design`   | Explore a page → cases in ATC/MTC format, **no code** | cases, metrics, cost, run dir |
+| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir |
 
-Both take the same input: `url` (required) plus optional `session`, `flow`, `setup`, `gaps`,
-`critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages` — mirroring the
-matching `cairn explore` flags. Results come back as JSON (run id, the generated cases, validation /
-metrics / Pilot, cost, and the `runs/<id>/` directory).
+`explore` and `design` take the same input: `url` (required) plus optional `session`, `flow`, `setup`,
+`gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages` —
+mirroring the matching `cairn explore` flags. `automate` instead takes `run` (the run id/dir returned
+by `design` or `explore`) plus optional `validate` / `session` / `routing` / `channel`. Results come
+back as JSON (run id, the generated cases or spec files, validation / metrics / Pilot, cost, and the
+`runs/<id>/` directory).
+
+A typical agent flow: `design` a page → review the cases → `automate` the run dir it returned.
 
 ## Connect
 
