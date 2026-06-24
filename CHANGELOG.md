@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.5.0] - 2026-06-24
+
+### Added
+
 - **Provenance-checked Pilot verdicts + data-protection guardrails (#91).** Two cheap safety rules
   (borrowed from Explorbot) that land **before** any stateful / destructive automation. (1) The Pilot's
   holistic `pass` is now **provenance-checked**: the verdict carries the name of the entity the run
@@ -147,6 +155,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retry-exhausted error escalates to the expensive recovery (recreate the page on the same context; auth
   survives, grounding is rebuilt). Unknown errors default to `fatal`, so real bugs aren't masked by
   silent retries. lib backend (PRIMARY); the CLI backend is out of scope.
+
+- **Robust `--run` / `--from-run` path resolution on Windows / Git-Bash (#79).** In Git Bash an
+  unquoted backslash is a shell escape, so `--run runs\<id>` reached the process as the glued `runs<id>`
+  (the separator eaten before Node ran) → `ENOENT` on the testcases path. A new `src/fs/run-dir.ts`
+  resolves `runs/<id>`, an absolute path, a bare `<id>`, and recovers the glued case; otherwise it
+  throws an actionable error listing available runs plus a bare-id / Git-Bash tip. `readInputFile` gives
+  a friendly `ENOENT` (+ Git-Bash tip) for file flags (`--checklist` / `--dataset` / `--candidate`), and
+  `defaultRunsBaseDir()` becomes the single source for the runs base dir (was duplicated 5×).
+
+[0.5.0]: https://github.com/plune-ai/cairn/compare/v0.4.0...v0.5.0
 
 ## [0.4.0] - 2026-06-19
 

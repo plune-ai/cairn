@@ -1,6 +1,6 @@
 {
   "name": "@plune-ai/cairn",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Cairn — an AI that walks your system and leaves a trail of tests. Autonomous QA agent (UI today; API/unit/docs planned) powered by Claude/OpenRouter, with self-improvement via Langfuse.",
   "type": "module",
   "license": "Apache-2.0",
