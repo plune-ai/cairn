@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **MCP server — `cairn mcp` (#49).** Cairn's core is now exposed as an
+  [MCP](https://modelcontextprotocol.io) server, so other agents (Claude Code, Cursor) can call test
+  generation as a tool. `cairn mcp` starts a **stdio** server with two tools — **`explore`** (cases +
+  `@playwright/test` code + validate ⇄ repair) and **`design`** (cases only) — thin adapters over the
+  same `runExploration` / `runDesign` core the CLI uses (config / role routing / cost reused, no new
+  generation logic). Tool input mirrors the matching `explore` flags (`url` + optional
+  `session`/`flow`/`setup`/`gaps`/`critique`/`fresh`/`checklist`/`style`/`routing`/`backend`/`maxPages`);
+  results return as structured JSON (cases, validation, metrics, the Pilot verdict, cost, run dir).
+  `@modelcontextprotocol/sdk` is an **optional dependency** (lazy-loaded only on the `cairn mcp` path,
+  like Ink for the TUI). Connect snippet: [docs/mcp.md](docs/mcp.md).
+
 ### Changed
 
 ### Fixed
