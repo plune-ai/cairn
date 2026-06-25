@@ -64,4 +64,10 @@ export interface AppConfig {
   playwrightWorkers: number;
   /** Language of generated test cases (env QA_TESTCASE_LANG; default "English"). */
   testCaseLanguage: string;
+  /**
+   * Per-step LLM timeout in ms (#110; env STEP_TIMEOUT_MS, default 240000). Bounds each structured
+   * call so a pathologically slow provider (OpenRouter deepseek-r1/deepseek-chat) fails with an
+   * actionable error instead of hanging — important for the MCP server. `0` disables the timeout.
+   */
+  stepTimeoutMs: number;
 }

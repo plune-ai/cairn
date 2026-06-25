@@ -63,7 +63,8 @@ Options:
   --fresh                ignore prior runs for this URL — generate a full set,
                          don't dedupe against past cases
   --routing <preset>     role-routing preset: fast (Groq worker) | volume
-                         (OpenRouter worker) (sets LLM_ROUTING)
+                         (OpenRouter worker) | volume-fast (Anthropic codegen,
+                         cheap judge on OpenRouter) (sets LLM_ROUTING)
   --critique             self-critique pass after design: prune weak cases + top
                          up technique gaps (1 extra worker-tier LLM call)
   --flow                 follow in-app navigation across pages and design

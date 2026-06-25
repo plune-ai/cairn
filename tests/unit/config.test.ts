@@ -135,6 +135,17 @@ describe("loadConfig — browser and maxRepair", () => {
     expect(loadConfig({ ...baseEnv, QA_TESTCASE_LANG: "Ukrainian" }).testCaseLanguage).toBe("Ukrainian");
     expect(loadConfig({ ...baseEnv, QA_TESTCASE_LANG: "Deutsch" }).testCaseLanguage).toBe("Deutsch");
   });
+
+  it("stepTimeoutMs defaults to 240000 (4 min), overridable via STEP_TIMEOUT_MS; 0 disables (#110)", () => {
+    expect(loadConfig({ ...baseEnv }).stepTimeoutMs).toBe(240000);
+    expect(loadConfig({ ...baseEnv, STEP_TIMEOUT_MS: "60000" }).stepTimeoutMs).toBe(60000);
+    expect(loadConfig({ ...baseEnv, STEP_TIMEOUT_MS: "0" }).stepTimeoutMs).toBe(0);
+  });
+
+  it("invalid STEP_TIMEOUT_MS (negative or non-numeric) throws a clear error (#110)", () => {
+    expect(() => loadConfig({ ...baseEnv, STEP_TIMEOUT_MS: "-1" })).toThrow(/STEP_TIMEOUT_MS/);
+    expect(() => loadConfig({ ...baseEnv, STEP_TIMEOUT_MS: "abc" })).toThrow(/STEP_TIMEOUT_MS/);
+  });
 });
 
 describe("loadConfig — per-role routing is additive + backward-compatible (L1-01)", () => {
@@ -159,6 +170,22 @@ describe("loadConfig — per-role routing is additive + backward-compatible (L1-
     expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
     // routing does NOT touch the profile tiers (incl. the cheap judge scorer)
     expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+  });
+
+  it("LLM_ROUTING=volume-fast → worker=Anthropic Sonnet (fast codegen), reasoner=Anthropic; judge stays cheap (#110)", () => {
+    const cfg = loadConfig({ ...baseEnv, LLM_PROFILE: "openrouter", LLM_ROUTING: "volume-fast" });
+    expect(cfg.roles?.worker?.provider).toBe("anthropic");
+    expect(cfg.roles?.worker?.model).toBe("claude-sonnet-4-6");
+    expect(cfg.roles?.reasoner?.provider).toBe("anthropic");
+    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
+    // the cheap judge scorer is NOT a role → it keeps the OpenRouter profile tier (cheap bulk stays on OpenRouter).
+    expect(cfg.models.judge.provider).toBe("openrouter");
+  });
+
+  it("volume-fast without ANTHROPIC_API_KEY → error names ROLE 'worker' + Anthropic (#110)", () => {
+    expect(() => loadConfig({ OPENROUTER_API_KEY: "x", LLM_PROFILE: "openrouter", LLM_ROUTING: "volume-fast" })).toThrow(
+      /Role 'worker'.*Anthropic/i,
+    );
   });
 
   it("LLM_ROUTING=fast → worker=Groq (lowest latency/cost), reasoner=Anthropic (smart) (L1-02)", () => {

@@ -39,6 +39,12 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
  * `fast` (L1-02) = the one-flag low-latency preset: the worker on Groq (lowest latency/cost,
  * OpenAI-compatible tool-calling), the reasoner still on Claude Opus (keep judgment strong).
  * Both presets compose with `LLM_PROFILE` and stay overridable via `CAIRN_ROLE_<NAME>`.
+ *
+ * `volume-fast` (#110) = the latency-safe sibling of `volume`: codegen/analyze (worker) move to
+ * Anthropic Sonnet — `deepseek/deepseek-chat` is pathologically slow on large codegen (4.5–13 min)
+ * — while the cheap LLM-as-judge scorer stays on OpenRouter via `LLM_PROFILE`. Unlike `fast`, the
+ * worker is NOT Groq (Groq's OpenAI-compat endpoint 400s on large-codegen json_schema, see
+ * `groq-fast-json-schema-bug`), so this preset is the recommended escape for slow OpenRouter codegen.
  */
 export const ROUTING_PRESETS: Record<string, RolesConfig> = {
   volume: {
@@ -46,6 +52,13 @@ export const ROUTING_PRESETS: Record<string, RolesConfig> = {
     // supportsVision:false → identifyElements falls back to aria-only (ADR-0002, vision-optional).
     worker: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
     // reasoner = designTestCases + Pilot verdict → quality model.
+    reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
+  },
+  "volume-fast": {
+    // worker (codegen + analyze) → Anthropic Sonnet: fast, finishes in ~90s where deepseek-chat
+    // overruns interactive/MCP timeouts (#110). supportsVision:false → identifyElements aria-only.
+    worker: { provider: "anthropic", model: "claude-sonnet-4-6", supportsVision: false },
+    // reasoner = designTestCases + Pilot verdict → Anthropic Opus (also avoids the deepseek-r1 hang).
     reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
   },
   fast: {
