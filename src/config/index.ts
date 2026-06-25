@@ -8,6 +8,7 @@ import {
 import type { AppConfig, Provider, ModelTier, RolesConfig } from "./schema.js";
 import { PROFILES, ROUTING_PRESETS } from "./profiles.js";
 import { createEnvReader } from "./env.js";
+import { DEFAULT_STEP_TIMEOUT_MS } from "../llm/structured.js";
 
 export type { AppConfig, ModelsConfig, ModelTier, Provider, LlmProfile, BrowserBackend, Role, RoleModel, RolesConfig } from "./schema.js";
 
@@ -96,6 +97,14 @@ export function loadConfig(
     throw new Error(`Invalid PLAYWRIGHT_WORKERS='${workersRaw}'. Must be a positive integer (≥ 1).`);
   }
 
+  // #110: per-step LLM timeout (ms). Default 240000 (4 min); 0 disables. Guards against a slow
+  // provider hanging explore/design indefinitely (esp. via the MCP server).
+  const stepTimeoutRaw = read("STEP_TIMEOUT_MS");
+  const stepTimeoutMs = stepTimeoutRaw === undefined ? DEFAULT_STEP_TIMEOUT_MS : Number(stepTimeoutRaw);
+  if (!Number.isInteger(stepTimeoutMs) || stepTimeoutMs < 0) {
+    throw new Error(`Invalid STEP_TIMEOUT_MS='${stepTimeoutRaw}'. Must be a non-negative integer in ms (0 disables).`);
+  }
+
   // Test-case language: default English; env override accepts a name or a code (en/uk/ua).
   const langRaw = (read("QA_TESTCASE_LANG") ?? "English").trim();
   const LANG_ALIASES: Record<string, string> = {
@@ -127,6 +136,7 @@ export function loadConfig(
     maxRepair,
     playwrightWorkers,
     testCaseLanguage,
+    stepTimeoutMs,
   };
 }
 

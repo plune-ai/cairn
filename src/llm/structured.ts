@@ -81,6 +81,58 @@ export function retryInvoke(inner: StructuredInvoke, opts: RetryOptions = {}): S
   };
 }
 
+/**
+ * Default per-step LLM timeout (#110). Anthropic finishes a step in ~90s; OpenRouter `deepseek-r1`
+ * (reasoner) / `deepseek-chat` (codegen) can hang for minutes, overrunning interactive/MCP timeouts.
+ * 4 min lets a healthy Anthropic step through while cutting a pathological provider hang short with an
+ * actionable error. Overridable via `STEP_TIMEOUT_MS`; `0` disables the timeout entirely.
+ */
+export const DEFAULT_STEP_TIMEOUT_MS = 240_000;
+
+export interface TimeoutOptions {
+  /** Wall-clock cap per step (ms). `0`/negative/undefined → no timeout (wrapper returns `inner` as-is). */
+  timeoutMs?: number;
+  /** Context for the error message, e.g. `role 'reasoner', model 'deepseek/deepseek-r1'`. */
+  label?: string;
+}
+
+/**
+ * Per-step timeout (#110): bounds the wall-clock of one structured call (incl. its retries when wrapped
+ * OUTSIDE {@link retryInvoke}) and, on overrun, throws ONE actionable error instead of hanging forever —
+ * critical for the MCP server, where the caller can't see progress. The losing inner call is left to
+ * settle in the background (its rejection is swallowed); we don't cancel the HTTP request, we just stop
+ * waiting. The actionable message points at the latency-safe escapes (a faster `--routing`/Anthropic),
+ * deliberately NOT Groq `fast`, which 400s on large codegen (`groq-fast-json-schema-bug`).
+ */
+export function timeoutInvoke(inner: StructuredInvoke, opts: TimeoutOptions = {}): StructuredInvoke {
+  const timeoutMs = opts.timeoutMs ?? 0;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return inner; // disabled → no overhead, no behavior change
+  const where = opts.label ? ` (${opts.label})` : "";
+  return async <T>(schema: ZodType<T>, messages: BaseMessageLike[]): Promise<T> => {
+    const innerP = inner(schema, messages);
+    innerP.catch(() => undefined); // a losing race must not surface as an unhandledRejection
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeoutP = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `LLM step timed out after ${timeoutMs}ms${where} — the provider is too slow for this step. ` +
+              `Try a faster routing (e.g. --routing volume-fast) or the Anthropic profile ` +
+              `(LLM_PROFILE=anthropic), or raise STEP_TIMEOUT_MS.`,
+          ),
+        );
+      }, timeoutMs);
+      // Never let a pending timer keep the process alive (e.g. after the call settles late).
+      (timer as { unref?: () => void }).unref?.();
+    });
+    try {
+      return await Promise.race([innerP, timeoutP]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+}
+
 /** Cost-guardrail (Sprint 6): shared LLM-call counter per run — a safeguard against runaway cost. */
 export class CallBudget {
   private n = 0;

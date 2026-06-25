@@ -112,7 +112,7 @@ export function buildProgram(): Command {
     .option("--checklist <file>", "checklist file (md/text) — guides what to test")
     .option("--style <s>", "planning style: happy | negative | coverage | all")
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
-    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
+    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")
     .option("--critique", "self-critique pass after design: prune weak cases + top up technique gaps (1 extra worker-tier LLM call)")
     .option("--flow", "follow in-app navigation across pages and design multi-page journey cases (opt-in)")
     .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
@@ -226,7 +226,7 @@ export function buildProgram(): Command {
     .option("--checklist <file>", "checklist file — guides what to test")
     .option("--style <s>", "planning style: happy | negative | coverage | all")
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
-    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
+    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")
     .option("--critique", "self-critique pass after design: prune weak cases + top up technique gaps (1 extra worker-tier LLM call)")
     .option("--flow", "follow in-app navigation across pages and design multi-page journey cases (opt-in)")
     .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
@@ -306,7 +306,7 @@ export function buildProgram(): Command {
     .option("--session <name>", "session name for validation")
     .option("--session-file <path>", "path to storageState for validation")
     .option("--channel <channel>", "system browser channel, e.g. chrome — validate on your installed Chrome (no bundled-Chromium download)")
-    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) (sets LLM_ROUTING)")
+    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")
     .action(
       async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });

@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenRouter codegen/reasoning latency — `explore`/`design` no longer hang (#110).** On the
+  `openrouter` profile / `volume` routing, `deepseek-chat` (codegen) ran 4.5–13 min and `deepseek-r1`
+  (reasoner) overran interactive/MCP timeouts without finishing. Two fixes:
+  - **Per-step timeout** (`STEP_TIMEOUT_MS`, default **240000 ms** / 4 min; `0` disables). Each
+    structured LLM call is now bounded — a pathologically slow provider fails fast with an **actionable
+    error** (suggesting a faster `--routing`/Anthropic, or raising `STEP_TIMEOUT_MS`) instead of hanging
+    indefinitely, which the MCP server's caller cannot otherwise observe. Healthy Anthropic steps
+    (~90 s) are unaffected.
+  - **New `volume-fast` routing preset** (`--routing volume-fast` / `LLM_ROUTING=volume-fast`): codegen
+    + analyze (worker) on Anthropic Sonnet — fast where `deepseek-chat` is not — while the cheap
+    LLM-as-judge scorer stays on OpenRouter via `LLM_PROFILE`. Unlike `fast` (Groq), it avoids the
+    large-codegen `json_schema` 400 (`groq-fast-json-schema-bug`), so it is the recommended escape for
+    slow OpenRouter codegen.
+
 ## [0.5.0] - 2026-06-24
 
 ### Added
