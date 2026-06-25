@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Plug into existing Playwright projects — `--into-project` (#51).** Cairn can now write the
+  generated specs straight into a host project's Playwright setup instead of the greenfield
+  `runs/<id>/tests` folder. `cairn explore … --into-project [dir]` / `cairn automate … --into-project [dir]`
+  (and the `intoProject`/`projectDir` inputs on the public API + MCP `explore`/`automate` tools)
+  detect the nearest `playwright.config.{ts,js,mjs,cjs}` (walking up from the cwd, or from an explicit
+  `dir`), resolve its `testDir`, and emit specs there using the project's filename convention
+  (`.spec.ts` vs `.test.ts`, read best-effort from `testMatch`). Placement is **collision-safe** — a
+  pre-existing spec is never overwritten; Cairn disambiguates its own file (`login.cairn.spec.ts`)
+  instead. Validation/repair still run against an isolated `runs/<id>/tests` sandbox (same Playwright,
+  identical result — so the user's existing suite is never run or deleted); the validated best specs
+  are then ejected into the project's `testDir` (single deliverable, discoverable by the project's own
+  `npx playwright test`) and the sandbox is removed, while the `runs/<id>/` trail keeps
+  study/report/testcases. Without the flag, behavior is unchanged (greenfield `runs/`). When the flag
+  is set but no config is found, Cairn logs that and falls back to greenfield (no failure).
+
 - **MCP server — `cairn mcp` (#49).** Cairn's core is now exposed as an
   [MCP](https://modelcontextprotocol.io) server, so other agents (Claude Code, Cursor) can call test
   generation as a tool. `cairn mcp` starts a **stdio** server with three tools — **`explore`** (cases +

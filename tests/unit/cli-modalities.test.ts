@@ -117,10 +117,11 @@ describe("explore parity (C1-02)", () => {
       "--max-pages",
       "--setup",
       "--gaps",
+      "--into-project",
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(15); // + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61)
+    expect(longs).toHaveLength(16); // + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51)
   });
 
   it("maps flags to runExploration the same way as before the refactor", async () => {

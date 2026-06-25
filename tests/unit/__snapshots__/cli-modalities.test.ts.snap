@@ -74,6 +74,9 @@ Options:
                          (fixture / API seed; manual fallback)
   --gaps                 suggest cases for the top untested surface (the
                          coverage view is always emitted)
+  --into-project [dir]   write specs into an existing Playwright project's
+                         testDir (detect playwright.config.*; respects
+                         testDir/naming) instead of runs/<id>/tests
   -h, --help             display help for command
 "
 `;

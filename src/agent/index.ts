@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename, join } from "node:path";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, rm } from "node:fs/promises";
 import { makeGateway } from "../browser/index.js";
 import { ensureBrowsersInstalled } from "../browser/preflight.js";
 import { RoleRouter, type CostReport } from "../llm/index.js";
 import { CallBudget } from "../llm/structured.js";
 import { PromptRegistry } from "../prompts/index.js";
 import { initTelemetry } from "../telemetry/index.js";
-import { ArtifactStore } from "../artifacts/index.js";
+import { ArtifactStore, rmrf, type RunWriter } from "../artifacts/index.js";
+import { resolveProjectTarget, ejectSuiteToProject } from "../project/index.js";
 import { renderReportMd } from "../artifacts/report.js";
 import { parseTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases } from "../codegen/index.js";
@@ -75,6 +76,10 @@ export interface ExploreInput {
   setup?: boolean;
   /** #61: also suggest cases for the top untested surface (the coverage VIEW is always emitted). Default off. */
   gaps?: boolean;
+  /** #51: write the final specs into an existing Playwright project's testDir (conventions-respecting) instead of runs/<id>/tests. */
+  intoProject?: boolean;
+  /** #51: explicit project dir for --into-project; when omitted, detection searches from cwd upward. */
+  projectDir?: string;
 }
 
 export interface ExploreResult {
@@ -95,6 +100,50 @@ export interface ExploreResult {
   stoppedEarly: boolean;
   /** ATC/MTC case docs written to testcases/ (#39 — explore now emits them like design). */
   testCaseFiles: string[];
+  /** #51: when --into-project ejected specs into a host project, the absolute paths written there. */
+  projectSpecFiles?: string[];
+  /** #51: the host project's testDir the specs were ejected into (undefined in greenfield mode). */
+  projectTestDir?: string;
+}
+
+/**
+ * INT-03 (#51): if `--into-project` is set, eject the final best suite into a detected Playwright
+ * project's testDir (conventions-respecting, collision-safe) and remove the run-private `tests/`
+ * sandbox so the trail keeps NO duplicate of the deliverable. Validation/repair already ran against
+ * that sandbox (same Playwright, identical result) — this only relocates the validated specs to where
+ * the project's own runner discovers them. Returns {} (greenfield fallthrough) when not requested or
+ * when no `playwright.config.*` is found; the caller then restores the suite to runs/<id>/tests.
+ */
+async function ejectToProjectIfRequested(opts: {
+  intoProject?: boolean;
+  projectDir?: string;
+  suite?: GeneratedSuite;
+  runWriter: RunWriter;
+  onProgress: (event: string) => void;
+}): Promise<{ projectSpecFiles?: string[]; projectTestDir?: string }> {
+  if (!opts.intoProject || !opts.suite) return {};
+  const target = await resolveProjectTarget({ dir: opts.projectDir });
+  if (!target) {
+    opts.onProgress(
+      `into-project — no playwright.config.* found (searched from ${displayPath(process.cwd())} upward) — wrote to runs/<id>/tests instead.`,
+    );
+    return {};
+  }
+  const res = await ejectSuiteToProject(opts.suite.files, target);
+  // Single deliverable: drop the run-private sandbox (+ its generated config) so the trail holds no
+  // spec duplicate — study/report/testcases stay in runs/<id>/ (best-effort; never sinks the run).
+  try {
+    await rmrf(join(opts.runWriter.dir, "tests"));
+    await rm(join(opts.runWriter.dir, "playwright.config.cjs"), { force: true });
+  } catch {
+    // best-effort cleanup
+  }
+  const renameNote = res.renamed.length ? ` · ${res.renamed.length} renamed (name collisions avoided)` : "";
+  opts.onProgress(
+    `into-project — wrote ${res.written.length} spec(s) → ${displayPath(res.testDir)}` +
+      `${target.configPath ? ` (config: ${displayPath(target.configPath)})` : ""}${renameNote}`,
+  );
+  return { projectSpecFiles: res.written, projectTestDir: res.testDir };
 }
 
 /**
@@ -252,7 +301,15 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         // keep-best: final = the BEST suite/validation across all attempts (repair could not make it worse).
         const suite = out.bestSuite ?? out.suite;
         const validation = out.bestValidation ?? out.validation;
-        if (out.bestSuite) await runWriter.writeSuite(out.bestSuite); // restore the best code on disk
+        // #51: eject into an existing Playwright project when requested; else restore best to runs/<id>/tests.
+        const ejected = await ejectToProjectIfRequested({
+          intoProject: input.intoProject,
+          projectDir: input.projectDir,
+          suite,
+          runWriter,
+          onProgress,
+        });
+        if (!ejected.projectTestDir && out.bestSuite) await runWriter.writeSuite(out.bestSuite); // restore the best code on disk
 
         // Phase 4: study prior runs of this URL + collect the best (collect-best).
         const runsBase = resolve(input.runsBaseDir ?? defaultRunsBaseDir());
@@ -464,6 +521,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           budget: budgetReport,
           stoppedEarly,
           testCaseFiles,
+          projectSpecFiles: ejected.projectSpecFiles,
+          projectTestDir: ejected.projectTestDir,
         };
       },
     );
@@ -778,6 +837,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
 export interface AutomateResult {
   runDir: string;
   specFiles: string[];
+  /** #51: the host project's testDir specs were ejected into (undefined in greenfield mode). */
+  projectTestDir?: string;
   validation?: ValidationReport;
   /** Per-role cost + tokens for the codegen step(s) (L1-01). */
   cost: CostReport;
@@ -800,6 +861,10 @@ export async function runAutomate(input: {
   sessionFile?: string;
   sessionsDir?: string;
   validate?: boolean;
+  /** #51: eject specs into an existing Playwright project's testDir instead of runDir/tests. */
+  intoProject?: boolean;
+  /** #51: explicit project dir for --into-project (detection searches from cwd upward when omitted). */
+  projectDir?: string;
   onProgress?: (event: string) => void;
 }): Promise<AutomateResult> {
   const cfg = input.config;
@@ -878,10 +943,23 @@ export async function runAutomate(input: {
     suite = await buildSuite(); // single pass — repair needs validation to measure progress
   }
 
-  const specFiles = await runWriter.writeSuite(suite); // final/best suite on disk
-  onProgress(`automate — ${specFiles.length} spec file(s) → tests/`);
+  // #51: eject into an existing Playwright project when requested; else write to runDir/tests as before.
+  const ejected = await ejectToProjectIfRequested({
+    intoProject: input.intoProject,
+    projectDir: input.projectDir,
+    suite,
+    runWriter,
+    onProgress,
+  });
+  let specFiles: string[];
+  if (ejected.projectTestDir) {
+    specFiles = ejected.projectSpecFiles ?? [];
+  } else {
+    specFiles = await runWriter.writeSuite(suite); // final/best suite on disk
+    onProgress(`automate — ${specFiles.length} spec file(s) → tests/`);
+  }
 
   const cost = router.ledger.report(); // L1-01: per-role cost + tokens for the codegen step(s)
   const budgetReport: BudgetReport = { used: budget.spent, max: budget.max };
-  return { runDir: runWriter.dir, specFiles, validation, stoppedEarly, cost, budget: budgetReport };
+  return { runDir: runWriter.dir, specFiles, projectTestDir: ejected.projectTestDir, validation, stoppedEarly, cost, budget: budgetReport };
 }

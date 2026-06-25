@@ -32,3 +32,13 @@ cairn automate --run runs/<id> [--validate --session myapp]
 cairn explore --url ... --session ... [--checklist ...]
 ```
 observe→design→code→validation→repair (keep-best)→Pilot verdict — a validated suite + metrics right away.
+
+## 5. Plug into an existing Playwright project (`--into-project`, #51)
+```
+cairn explore  --url ... --into-project           # detect playwright.config.* from cwd
+cairn automate --run runs/<id> --into-project ./e2e   # or point at a project dir
+```
+- Detects the nearest `playwright.config.{ts,js,mjs,cjs}` (walking up from the cwd, or from the given `dir`), resolves its `testDir`, and writes the specs **there** using the project's filename convention (`.spec.ts` vs `.test.ts`, read from `testMatch`). Run them with the project's own `npx playwright test`.
+- **Collision-safe:** a pre-existing spec is never overwritten — Cairn writes a disambiguated file beside it (e.g. `login.cairn.spec.ts`).
+- Validation/repair run against an isolated `runs/<id>/tests` sandbox (same Playwright, identical result — your existing suite is never run or deleted); the validated best specs are then placed in the project's `testDir`, and the `runs/<id>/` trail keeps study/report/testcases.
+- Without the flag, nothing changes (greenfield `runs/<id>/tests/`). If no config is found, Cairn says so and falls back to greenfield.

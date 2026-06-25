@@ -30,6 +30,8 @@ export const TOOL_INPUT_SHAPE = {
   gaps: z.boolean().optional().describe("Suggest cases for the top untested surface"),
   critique: z.boolean().optional().describe("Design-time self-critique pass (prune weak cases + top up technique gaps)"),
   fresh: z.boolean().optional().describe("Ignore prior-run experience for this URL (full set, no delta)"),
+  intoProject: z.boolean().optional().describe("explore only: write specs into an existing Playwright project's testDir (detect playwright.config.*) instead of runs/<id>/tests"),
+  projectDir: z.string().optional().describe("Explicit project dir for intoProject (detection searches from cwd upward when omitted)"),
 };
 
 export const ToolInputSchema = z.object(TOOL_INPUT_SHAPE);
@@ -74,6 +76,8 @@ async function buildExploreInput(input: ToolInput, deps: ToolDeps): Promise<Expl
     maxPages: input.flow ? (input.maxPages ?? 3) : undefined,
     setup: input.setup,
     gaps: input.gaps,
+    intoProject: input.intoProject,
+    projectDir: input.projectDir,
   };
 }
 
@@ -152,6 +156,8 @@ export const AUTOMATE_INPUT_SHAPE = {
   session: z.string().optional().describe("Saved session name for validation"),
   routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen — faster, recommended when OpenRouter codegen overruns timeouts)"),
   channel: z.string().optional().describe("System browser channel for validation, e.g. chrome"),
+  intoProject: z.boolean().optional().describe("Write specs into an existing Playwright project's testDir (detect playwright.config.*) instead of the run's tests/"),
+  projectDir: z.string().optional().describe("Explicit project dir for intoProject (detection searches from cwd upward when omitted)"),
 };
 
 export const AutomateInputSchema = z.object(AUTOMATE_INPUT_SHAPE);
@@ -160,6 +166,8 @@ export type AutomateInput = z.infer<typeof AutomateInputSchema>;
 export interface AutomateToolResult {
   runDir: string;
   specFiles: string[];
+  /** #51: host project's testDir specs were ejected into (undefined in greenfield mode). */
+  projectTestDir?: string;
   validation?: ReturnType<typeof compactValidation>;
   cost: AutomateResult["cost"];
 }
@@ -171,10 +179,13 @@ export async function automateTool(input: AutomateInput, deps: ToolDeps = defaul
     config,
     validate: input.validate,
     sessionName: input.session,
+    intoProject: input.intoProject,
+    projectDir: input.projectDir,
   });
   return {
     runDir: r.runDir,
     specFiles: r.specFiles,
+    projectTestDir: r.projectTestDir,
     validation: compactValidation(r.validation),
     cost: r.cost,
   };
