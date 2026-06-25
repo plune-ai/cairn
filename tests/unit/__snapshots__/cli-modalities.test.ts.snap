@@ -39,6 +39,9 @@ Commands:
                          see L-G2)
   mcp                    run an MCP server (stdio) exposing explore/design as
                          tools for Claude Code / Cursor
+  ci                     CI / PR bot (#50): run cairn on a PR from GitHub Action
+                         inputs/env, post a summary comment, optionally open a
+                         follow-up PR
   help [command]         display help for command
 "
 `;
