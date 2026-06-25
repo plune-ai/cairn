@@ -1,7 +1,7 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { AppConfig, ModelTier, RolesConfig } from "../config/index.js";
 import { makeModel, structuredMethodFor, type ProviderKeys } from "./factory.js";
-import { meteredInvoker, cappedInvoke, retryInvoke } from "./structured.js";
+import { meteredInvoker, cappedInvoke, retryInvoke, timeoutInvoke } from "./structured.js";
 import type { CallBudget, StructuredInvoke } from "./structured.js";
 import { CostLedger, type ModelPrice } from "./cost.js";
 
@@ -60,6 +60,12 @@ export class RoleRouter {
     const method = structuredMethodFor(tier.provider);
     const config = this.callbacks ? { callbacks: this.callbacks } : undefined;
     const metered = meteredInvoker(model, (u, m) => this.ledger.record(role, m, u), tier.model, method, config);
-    return cappedInvoke(retryInvoke(metered), this.budget, this.onCharge);
+    // #110: bound the whole step (incl. retries) so a slow provider fails with an actionable error
+    // instead of hanging. Layered OUTSIDE retryInvoke → the timeout error is never itself retried.
+    const guarded = timeoutInvoke(retryInvoke(metered), {
+      timeoutMs: this.cfg.stepTimeoutMs,
+      label: `role '${role}', model '${tier.model}'`,
+    });
+    return cappedInvoke(guarded, this.budget, this.onCharge);
   }
 }

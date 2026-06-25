@@ -21,7 +21,7 @@ export const TOOL_INPUT_SHAPE = {
   session: z.string().optional().describe("Saved session name (.auth/<name>.storageState.json) for authenticated targets"),
   checklist: z.string().optional().describe("Path to a checklist file (md/text) that guides what to test"),
   style: z.string().optional().describe("Planning style or house-style pack (happy | negative | coverage | a pack name/path)"),
-  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker)"),
+  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen — faster, recommended when OpenRouter codegen overruns timeouts)"),
   backend: z.string().optional().describe("Browser backend: lib (in-process, default) | cli"),
   channel: z.string().optional().describe("System browser channel, e.g. chrome (drives installed Chrome; helps OAuth)"),
   flow: z.boolean().optional().describe("Follow in-app navigation across pages → multi-page journey cases"),
@@ -150,7 +150,7 @@ export const AUTOMATE_INPUT_SHAPE = {
   run: z.string().describe("Run folder with ready ATC cases: runs/<id>, a bare <id>, or an absolute path"),
   validate: z.boolean().optional().describe("Run the generated tests after codegen (requires a session)"),
   session: z.string().optional().describe("Saved session name for validation"),
-  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker)"),
+  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen — faster, recommended when OpenRouter codegen overruns timeouts)"),
   channel: z.string().optional().describe("System browser channel for validation, e.g. chrome"),
 };
 
