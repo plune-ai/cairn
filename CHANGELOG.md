@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CI / PR bot — GitHub Action (#50).** A reusable composite action (`action/`) that runs Cairn on a
+  pull request, posts (or updates) a **summary comment**, and **optionally opens a follow-up PR** with
+  the generated tests. `v1` is generation-on-PR; maintenance/self-heal stays in epic #46. The action is
+  a thin wrapper over the shared core via a new `cairn ci` command (same pattern as `cairn mcp`, #49):
+  inputs flow in as `INPUT_*` env, provider keys are read from repo secrets (never hardcoded), and
+  generated specs land in the host Playwright project through the `--into-project` writer (#51).
+  Behavior: the comment is **idempotent** (matched by a hidden marker — re-runs update, never
+  duplicate); a `paths` glob gates on the PR's **changed surface** (no match → a no-op comment, no run);
+  the follow-up PR is **opt-in** (`open-pr`, `explore` mode only); **fork PRs** (read-only token) skip
+  the write effects with a logged reason. Required secrets/permissions are documented in
+  [`action/README.md`](action/README.md) for a repo admin to set — the action never configures them.
+
 - **Plug into existing Playwright projects — `--into-project` (#51).** Cairn can now write the
   generated specs straight into a host project's Playwright setup instead of the greenfield
   `runs/<id>/tests` folder. `cairn explore … --into-project [dir]` / `cairn automate … --into-project [dir]`

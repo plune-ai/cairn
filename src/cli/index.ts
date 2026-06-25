@@ -488,6 +488,15 @@ export function buildProgram(): Command {
       await startMcpServer();
     });
 
+  program
+    .command("ci")
+    .description("CI / PR bot (#50): run cairn on a PR from GitHub Action inputs/env, post a summary comment, optionally open a follow-up PR")
+    .action(async () => {
+      // Thin wrapper: all config comes from the action's inputs (INPUT_* env) + the GitHub event.
+      const { startCi } = await import("../ci/index.js");
+      await startCi();
+    });
+
   return program;
 }
 

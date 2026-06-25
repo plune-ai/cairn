@@ -1,0 +1,117 @@
+name: "Cairn — CI / PR bot"
+description: >-
+  Run Cairn on a pull request: generate/update Playwright UI tests for the changed surface,
+  post a summary comment, and optionally open a follow-up PR with the tests (#50).
+author: "plune-ai"
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  url:
+    description: "Page URL to generate tests for (required)."
+    required: true
+  mode:
+    description: "explore (cases + @playwright/test code) or design (cases only). Code is needed for a follow-up PR."
+    required: false
+    default: "explore"
+  session:
+    description: "Saved session name (.auth/<name>.storageState.json) for authenticated targets."
+    required: false
+  checklist:
+    description: "Path to a checklist file (md/text) that steers what to test."
+    required: false
+  style:
+    description: "Planning style or house-style pack (happy | negative | coverage | a pack name/path)."
+    required: false
+  routing:
+    description: "Role-routing preset: fast | volume | volume-fast."
+    required: false
+  backend:
+    description: "Browser backend: lib (default) | cli."
+    required: false
+  channel:
+    description: "System browser channel, e.g. chrome."
+    required: false
+  into-project:
+    description: "Write specs into the host project's Playwright testDir (detect playwright.config.*) instead of greenfield runs/."
+    required: false
+    default: "true"
+  project-dir:
+    description: "Explicit project dir for into-project (detection searches from cwd upward when omitted)."
+    required: false
+  paths:
+    description: "Optional newline/comma globs — only run when the PR changed a matching file (changed-surface gate)."
+    required: false
+  comment:
+    description: "Post/update a summary comment on the PR."
+    required: false
+    default: "true"
+  open-pr:
+    description: "Open a follow-up PR carrying the generated tests (off by default)."
+    required: false
+    default: "false"
+  pr-branch:
+    description: "Branch prefix for the follow-up PR (the PR number is appended)."
+    required: false
+    default: "cairn/update-tests"
+  commit-message:
+    description: "Commit message for the follow-up PR."
+    required: false
+    default: "test: update generated Playwright tests (cairn)"
+  pr-title:
+    description: "Title for the follow-up PR (defaults to the commit message)."
+    required: false
+  github-token:
+    description: "Token for commenting / opening the follow-up PR. Needs pull-requests: write (and contents: write for open-pr)."
+    required: false
+    default: ${{ github.token }}
+  cairn-version:
+    description: "npm version/tag of @plune-ai/cairn to install."
+    required: false
+    default: "latest"
+  install-browsers:
+    description: "Install the Playwright Chromium browser before running (needed for observe/validate)."
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install Cairn
+      shell: bash
+      run: npm install -g @plune-ai/cairn@${{ inputs.cairn-version }}
+
+    - name: Install Playwright browser
+      if: ${{ inputs.install-browsers == 'true' }}
+      shell: bash
+      run: npx --yes playwright install --with-deps chromium
+
+    - name: Run Cairn CI
+      shell: bash
+      run: cairn ci
+      env:
+        # Provider keys (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, LANGFUSE_*) are NOT inputs:
+        # set them as job/step env from repo secrets in the calling workflow — Cairn reads them from env.
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_SESSION: ${{ inputs.session }}
+        INPUT_CHECKLIST: ${{ inputs.checklist }}
+        INPUT_STYLE: ${{ inputs.style }}
+        INPUT_ROUTING: ${{ inputs.routing }}
+        INPUT_BACKEND: ${{ inputs.backend }}
+        INPUT_CHANNEL: ${{ inputs.channel }}
+        INPUT_INTO-PROJECT: ${{ inputs.into-project }}
+        INPUT_PROJECT-DIR: ${{ inputs.project-dir }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_OPEN-PR: ${{ inputs.open-pr }}
+        INPUT_PR-BRANCH: ${{ inputs.pr-branch }}
+        INPUT_COMMIT-MESSAGE: ${{ inputs.commit-message }}
+        INPUT_PR-TITLE: ${{ inputs.pr-title }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
