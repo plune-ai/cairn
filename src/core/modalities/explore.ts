@@ -32,6 +32,7 @@ interface ExploreFlags {
   maxPages?: string;
   setup?: boolean;
   gaps?: boolean;
+  intoProject?: boolean | string;
 }
 
 export const exploreModality: Modality = {
@@ -67,6 +68,8 @@ export const exploreModality: Modality = {
       maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
       setup: opts.setup,
       gaps: opts.gaps,
+      intoProject: opts.intoProject !== undefined && opts.intoProject !== false,
+      projectDir: typeof opts.intoProject === "string" ? opts.intoProject : undefined,
       onProgress: progress.event,
     }).finally(() => progress.stop());
 
@@ -117,6 +120,12 @@ export const exploreModality: Modality = {
     // #39: explore now also writes ATC/MTC cases, and points at the review-first flow for next time.
     if (result.testCaseFiles.length > 0) {
       ctx.out(`  Cases (ATC/MTC .md): ${displayPath(result.runDir)}/testcases/\n`);
+    }
+    // #51: when ejected into an existing Playwright project, show WHERE the runnable specs landed.
+    if (result.projectTestDir && result.projectSpecFiles?.length) {
+      ctx.out(
+        `  Specs → project: ${result.projectSpecFiles.length} file(s) in ${displayPath(result.projectTestDir)} (run with your project's \`npx playwright test\`)\n`,
+      );
     }
     ctx.out(
       "\nTip: to review cases BEFORE generating code, run `cairn design` then `cairn automate`.\n",

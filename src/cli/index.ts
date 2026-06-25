@@ -118,6 +118,7 @@ export function buildProgram(): Command {
     .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
+    .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
     });
@@ -307,8 +308,9 @@ export function buildProgram(): Command {
     .option("--session-file <path>", "path to storageState for validation")
     .option("--channel <channel>", "system browser channel, e.g. chrome — validate on your installed Chrome (no bundled-Chromium download)")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")
+    .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .action(
-      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string }) => {
+      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
         const progress = makeCliProgress({
@@ -322,10 +324,13 @@ export function buildProgram(): Command {
           validate: opts.validate,
           sessionName: opts.session,
           sessionFile: opts.sessionFile,
+          intoProject: opts.intoProject !== undefined && opts.intoProject !== false,
+          projectDir: typeof opts.intoProject === "string" ? opts.intoProject : undefined,
           onProgress: progress.event,
         }).finally(() => progress.stop());
+        const dest = result.projectTestDir ? displayPath(result.projectTestDir) : `${displayPath(result.runDir)}/tests/`;
         process.stdout.write(
-          `\n=== ${result.specFiles.length} spec files → ${displayPath(result.runDir)}/tests/ ===\n`,
+          `\n=== ${result.specFiles.length} spec files → ${dest} ===\n`,
         );
         for (const f of result.specFiles) process.stdout.write(`  ${displayPath(f)}\n`);
         if (result.validation) {
