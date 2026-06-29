@@ -29,6 +29,7 @@ blob-report/
 *.log
 .DS_Store
 .cache/
+.cairn-cache/
 coverage/
 
 # IDE

@@ -21,6 +21,7 @@ import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
 import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
 import { ingestChecklist, formatChecklist, formatGoal, coverageScore, styleDirective } from "../checklist/index.js";
 import { loadKnowledge } from "../knowledge/index.js";
+import type { InteractionMap } from "../documentarian/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
 import { resolveRunDir, defaultRunsBaseDir } from "../fs/run-dir.js";
@@ -56,6 +57,8 @@ export interface ExploreInput {
   sessionsDir?: string;
   /** Directory of domain knowledge (.md, URL-matched; default ./knowledge). */
   knowledgeDir?: string;
+  /** #93: cross-run cache dir for the page-understanding artifact (default ./.cairn-cache/understanding). */
+  understandingCacheDir?: string;
   /** Planning style: happy | negative | coverage | all (default all). */
   style?: string;
   /** #80: pre-resolved text for the prompt's {{style}} slot (a house-style pack). Wins over `style`. */
@@ -221,6 +224,11 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const checklistFormatted = formatChecklist(checklistItems);
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
+  // #93: cross-run page-understanding cache (keyed by url + page fingerprint) — a re-run on the same
+  // page reuses it and skips the ground LLM call. Persist the artifact into the run dir too (durability).
+  const understandingCacheDir = resolve(input.understandingCacheDir ?? ".cairn-cache/understanding");
+  const onUnderstanding = (map: InteractionMap): void =>
+    void runWriter.writeUnderstanding(map).catch(() => undefined);
   // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
   // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
   const experienceText = await experienceForUrl({
@@ -253,6 +261,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     setupInvoke: input.setup ? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)) : undefined,
     useVision: analyzeTier.supportsVision,
     goalText: formatGoal(input.goal),
+    understandingCacheDir,
+    fresh: input.fresh,
+    onUnderstanding,
     checklistText: checklistFormatted,
     knowledgeText,
     experienceText,
@@ -624,6 +635,11 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
 
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
+  // #93: cross-run page-understanding cache (keyed by url + page fingerprint) — a re-run on the same
+  // page reuses it and skips the ground LLM call. Persist the artifact into the run dir too (durability).
+  const understandingCacheDir = resolve(input.understandingCacheDir ?? ".cairn-cache/understanding");
+  const onUnderstanding = (map: InteractionMap): void =>
+    void runWriter.writeUnderstanding(map).catch(() => undefined);
   // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
   // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
   const experienceText = await experienceForUrl({
@@ -655,6 +671,9 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     // #60: setup planning runs on the worker tier (CAIRN_ROLE_WORKER); built only when opted in.
     setupInvoke: input.setup ? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)) : undefined,
     useVision: analyzeTier.supportsVision,
+    understandingCacheDir,
+    fresh: input.fresh,
+    onUnderstanding,
     checklistText: formatChecklist(checklistItems),
     knowledgeText,
     experienceText,

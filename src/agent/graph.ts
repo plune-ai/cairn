@@ -11,6 +11,14 @@ import type { JourneyCase } from "../design/schema.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
+import {
+  fingerprintPage,
+  loadUnderstanding,
+  saveUnderstanding,
+  buildInteractionMap,
+  analysisFromMap,
+  type InteractionMap,
+} from "../documentarian/index.js";
 import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
 import { runRepairLoop } from "./repair-loop.js";
 import type { ValidationReport } from "../validate/index.js";
@@ -65,6 +73,20 @@ export interface ExploreDeps {
    * suite label the final write uses, so the early and final writes produce identical files.
    */
   onTestCases?: (testCases: TestCase[], verified: VerifiedElement[], studyUrl: string) => void | Promise<void>;
+  /**
+   * #93: cross-run cache dir for the page-understanding artifact. When set, a run on a page whose
+   * fingerprint matches a cached map REUSES it and skips the ground (analyzePage) LLM call. Undefined
+   * → caching off (behavior unchanged). The dir is keyed internally by url + page fingerprint.
+   */
+  understandingCacheDir?: string;
+  /** #93: ignore a cached understanding for this run (forces a fresh ground call). Mirrors `--fresh`. */
+  fresh?: boolean;
+  /**
+   * #93: called with the freshly built interaction map (mirrors onStudy/onTestCases) so the caller can
+   * persist it as the run's first-class artifact (page-understanding.json). Best-effort: a throw here
+   * must not break the run.
+   */
+  onUnderstanding?: (map: InteractionMap) => void | Promise<void>;
   /** Codeless mode: stop after designTestCases (cases only, no codegen/validate). */
   codeless?: boolean;
   /**
@@ -137,14 +159,29 @@ export async function runExploreGraph(
   }
   deps.onProgress?.(`observe — done: ${study.elements.length} elements, screenshot taken`);
 
+  // ── documentarian: reuse cached page-understanding when the page is unchanged (#93) ──────────
+  // The fingerprint is the ARIA hash → an identical page reuses its cached map and SKIPS the ground
+  // (analyzePage) LLM call; a changed page misses and re-grounds (deliberate invalidation).
+  const fingerprint = fingerprintPage(study);
+  const cached =
+    deps.understandingCacheDir && !deps.fresh
+      ? await loadUnderstanding(deps.understandingCacheDir, study.url, fingerprint)
+      : undefined;
+
   // ── identifyElements ──────────────────────────────────────────────────────
-  deps.onProgress?.("identifyElements — page analysis (LLM)…");
-  const analysis = await analyzePage(study, {
-    invoke: deps.analyzeInvoke,
-    prompts: deps.prompts,
-    vision: deps.useVision,
-    goalText: deps.goalText,
-  });
+  let analysis: PageAnalysis;
+  if (cached) {
+    analysis = analysisFromMap(cached, new Set(study.elements.map((e) => e.ref)));
+    deps.onProgress?.("documentarian — cache HIT: reusing page understanding (skipped ground LLM call)");
+  } else {
+    deps.onProgress?.("identifyElements — page analysis (LLM)…");
+    analysis = await analyzePage(study, {
+      invoke: deps.analyzeInvoke,
+      prompts: deps.prompts,
+      vision: deps.useVision,
+      goalText: deps.goalText,
+    });
+  }
   // L1-05: a session was supplied but the first page looks like a login screen → the session
   // is likely expired. Fail fast with re-capture guidance BEFORE the expensive design/codegen
   // steps, instead of silently exploring the sign-in page.
@@ -216,6 +253,20 @@ export async function runExploreGraph(
   deps.onProgress?.("probeInteractions — act→observe of safe elements…");
   const transitions = await probeTransitions(deps.gateway, verified.filter((v) => v.verified));
   deps.onProgress?.(`probeInteractions — transitions observed: ${transitions.length}`);
+
+  // ── documentarian: build + cache + persist the reusable interaction map (#93) ─────────────────
+  // Deterministic assembly from this run's observe/ground/verify/probe outputs — no extra LLM call.
+  // Always refreshed (even on a cache hit) so a re-run keeps the artifact current.
+  const interactionMap = buildInteractionMap(study, analysis, verified, transitions, fingerprint);
+  if (deps.understandingCacheDir) await saveUnderstanding(deps.understandingCacheDir, interactionMap);
+  try {
+    await deps.onUnderstanding?.(interactionMap);
+  } catch {
+    // persisting the artifact is best-effort — never let it break the run.
+  }
+  deps.onProgress?.(
+    `documentarian — interaction map: ${interactionMap.elements.length} elements (${cached ? "reused" : "fresh"} understanding)`,
+  );
 
   // ── designTestCases ───────────────────────────────────────────────────────
   deps.onProgress?.("designTestCases — designing cases (LLM reasoning, may take ~a minute)…");

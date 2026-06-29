@@ -41,6 +41,7 @@ export type { BudgetReport, RunSummaryInput } from "./agent/summary.js";
 // Domain types (output contracts).
 export type { TestCase, DesignedCase } from "./design/index.js";
 export type { PageStudy } from "./observe/index.js";
+export type { InteractionMap, InteractionElement } from "./documentarian/index.js";
 export type { GeneratedSuite } from "./codegen/index.js";
 export type { Score } from "./eval/scorers.js";
 export type { PilotVerdict } from "./eval/pilot.js";
