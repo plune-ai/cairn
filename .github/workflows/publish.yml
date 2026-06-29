@@ -37,7 +37,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: npm
@@ -81,7 +81,7 @@ jobs:
 
       # --- Phase 1: GitHub Packages (no provenance; package name @plune-ai/cairn does NOT change) ---
       - name: Setup Node for GitHub Packages
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           registry-url: "https://npm.pkg.github.com"
@@ -103,7 +103,7 @@ jobs:
       # scope MUST be set here too: otherwise @plune-ai:registry from Phase 1 (.npmrc) keeps
       # pointing at GitHub Packages, and `npm publish` for the scoped package will NOT go to npmjs.
       - name: Setup Node for npm
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
