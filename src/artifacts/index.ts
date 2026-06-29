@@ -48,6 +48,8 @@ export interface RunWriter {
   writeJourneySpecs(files: { path: string; content: string }[]): Promise<string[]>;
   /** #103: per-page crawl snapshots — each page's aria.yaml + screenshot.png under its own dir. */
   writeFlowSnapshots(pages: { dir: string; ariaYaml: string; screenshotB64: string }[]): Promise<void>;
+  /** #93: the run's reusable page-understanding artifact → page-understanding.json. */
+  writeUnderstanding(map: unknown): Promise<void>;
 }
 
 /** Local trail of each run: runs/<id>/ (study, tests, snapshots, report). */
@@ -138,6 +140,9 @@ export class ArtifactStore {
             await writeFile(join(pdir, "screenshot.png"), Buffer.from(p.screenshotB64, "base64"));
           }
         }
+      },
+      writeUnderstanding: async (map) => {
+        await writeFile(join(dir, "page-understanding.json"), JSON.stringify(map, null, 2), "utf8");
       },
     };
   }

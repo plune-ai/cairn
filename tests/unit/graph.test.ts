@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runExploreGraph } from "../../src/agent/graph.js";
+import { InteractionMapSchema } from "../../src/documentarian/index.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
 import type { BrowserGateway } from "../../src/browser/index.js";
 import type { StructuredInvoke } from "../../src/llm/structured.js";
@@ -148,6 +152,77 @@ describe("runExploreGraph (full pipeline + repair, fake deps)", () => {
     const out = await runExploreGraph({ ...baseDeps, validate, maxRepair: 1 }, { url: "http://x", runId: "r1" });
     expect(out.bestValidation?.greenRatio).toBe(0.5); // keeps 0.5, does not drop to 0
     expect(out.attempts).toBe(1); // repair ran, but the best result was preserved
+  });
+});
+
+describe("documentarian cache reuse (#93)", () => {
+  const countingAnalyze = (counter: { n: number }): StructuredInvoke => async (schema) => {
+    counter.n += 1;
+    return schema.parse({ pageSemantics: "Сторінка", primaryRefs: ["e1"] });
+  };
+
+  it("run 1 emits a valid-schema understanding artifact; run 2 on the same page reuses it (fewer ground calls)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "qa-graph-doc-"));
+    try {
+      const c = { n: 0 };
+      let emitted: unknown;
+      const deps = {
+        ...baseDeps,
+        analyzeInvoke: countingAnalyze(c),
+        understandingCacheDir: dir,
+        onUnderstanding: (m: unknown) => {
+          emitted = m;
+        },
+        validate: async () => green,
+        maxRepair: 0,
+      };
+      await runExploreGraph(deps, { url: "http://x", runId: "r1" });
+      expect(c.n).toBe(1); // cold cache → grounded once
+      expect(InteractionMapSchema.safeParse(emitted).success).toBe(true); // DoD (a): valid artifact emitted
+
+      await runExploreGraph(deps, { url: "http://x", runId: "r2" });
+      expect(c.n).toBe(1); // DoD (b): same page → cache HIT, NO extra ground LLM call
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a changed page (different ARIA) invalidates the cache → grounds again", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "qa-graph-doc2-"));
+    try {
+      const c = { n: 0 };
+      const gwChanged: BrowserGateway = {
+        ...fakeGateway,
+        observe: async () => ({ url: "http://x", screenshotB64: "", ariaSnapshot: '- button "Changed"', capturedBy: "lib" }),
+      };
+      const base = { ...baseDeps, analyzeInvoke: countingAnalyze(c), understandingCacheDir: dir, validate: async () => green, maxRepair: 0 };
+      await runExploreGraph(base, { url: "http://x", runId: "r1" });
+      await runExploreGraph({ ...base, gateway: gwChanged }, { url: "http://x", runId: "r2" });
+      expect(c.n).toBe(2); // DoD (c): page changed → re-grounded
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fresh:true bypasses a present cache → grounds anyway", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "qa-graph-doc3-"));
+    try {
+      const c = { n: 0 };
+      const base = { ...baseDeps, analyzeInvoke: countingAnalyze(c), understandingCacheDir: dir, validate: async () => green, maxRepair: 0 };
+      await runExploreGraph(base, { url: "http://x", runId: "r1" });
+      await runExploreGraph({ ...base, fresh: true }, { url: "http://x", runId: "r2" });
+      expect(c.n).toBe(2); // fresh ignored the hit
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("no cache dir → documentarian is off, behavior unchanged (grounds every run)", async () => {
+    const c = { n: 0 };
+    const base = { ...baseDeps, analyzeInvoke: countingAnalyze(c), validate: async () => green, maxRepair: 0 };
+    await runExploreGraph(base, { url: "http://x", runId: "r1" });
+    await runExploreGraph(base, { url: "http://x", runId: "r2" });
+    expect(c.n).toBe(2); // no caching → back-compat
   });
 });
 

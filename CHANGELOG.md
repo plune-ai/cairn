@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documentarian — cached, reusable page-understanding artifact (#93, BORROW-06).** A run now emits a
+  strict-schema **interaction map** (element → locator + container + candidate actions) as a first-class
+  artifact (`runs/<id>/page-understanding.json`) and caches it cross-run under `.cairn-cache/understanding`,
+  keyed by `url + page fingerprint` (a hash of the ARIA snapshot). A second run on the **same** page reuses
+  the cached understanding and **skips the ground (`analyzePage`) LLM call** → fewer observe/ground calls;
+  a changed page misses the cache and re-grounds (deliberate invalidation). The map is assembled
+  deterministically from existing observe/verify/probe outputs — no extra LLM call is introduced. `--fresh`
+  bypasses the cache. Cross-run/per-app semantic memory stays out of scope (that is MEM-02, #64).
+
 - **Scope-aware knowledge injection — `scope: web | api | all` (#92, BORROW-03).** `knowledge/*.md`
   files now declare a scope and are keyed by `url || path || endpoint`. Directory convention:
   `knowledge/` = web (keyed by `url:`), `knowledge/api/` = api (keyed by `path:`/`endpoint:`), and an
