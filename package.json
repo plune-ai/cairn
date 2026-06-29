@@ -84,7 +84,7 @@
     "@langfuse/otel": "^5.4.1",
     "@langfuse/tracing": "^5.4.1",
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/sdk-node": "^0.218.0",
+    "@opentelemetry/sdk-node": "^0.219.0",
     "@playwright/cli": "^0.1.13"
   },
   "peerDependenciesMeta": {
@@ -102,7 +102,7 @@
     "@langfuse/otel": "^5.4.1",
     "@langfuse/tracing": "^5.4.1",
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/sdk-node": "^0.218.0",
+    "@opentelemetry/sdk-node": "^0.219.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.31",
     "@vitest/coverage-v8": "^4.1.8",
