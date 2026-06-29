@@ -1,0 +1,38 @@
+# Dependabot — automated dependency-update PRs (https://docs.github.com/code-security/dependabot).
+# Tracks npm deps and the GitHub Actions used by CI + the composite action. Minor/patch bumps are
+# grouped into one PR per ecosystem to keep the noise down; majors come as their own PRs to review.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # CI / publish workflows (.github/workflows/*.yml).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # The reusable composite action (action/action.yml) and the actions it pins.
+  - package-ecosystem: github-actions
+    directory: "/action"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
