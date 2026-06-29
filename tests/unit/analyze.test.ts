@@ -29,6 +29,25 @@ describe("analyzePage (identifyElements)", () => {
     expect(captured).not.toContain("image_url");
   });
 
+  it("goalText biases the element-pick prompt; absent → no goal directive (#63)", async () => {
+    let captured = "";
+    const fakeInvoke: StructuredInvoke = async (schema, messages) => {
+      captured = JSON.stringify(messages);
+      return schema.parse({ pageSemantics: "x", primaryRefs: [] });
+    };
+    await analyzePage(study, {
+      invoke: fakeInvoke,
+      prompts: new PromptRegistry(),
+      vision: false,
+      goalText: 'GOAL FOR THIS RUN — bias toward this user goal: "checkout flow".',
+    });
+    expect(captured).toContain("checkout flow");
+
+    captured = "";
+    await analyzePage(study, { invoke: fakeInvoke, prompts: new PromptRegistry(), vision: false });
+    expect(captured).not.toContain("GOAL FOR THIS RUN"); // back-compat: no goal → no directive
+  });
+
   it("vision=true → the message contains an image_url with the screenshot", async () => {
     let captured = "";
     const fakeInvoke: StructuredInvoke = async (schema, messages) => {

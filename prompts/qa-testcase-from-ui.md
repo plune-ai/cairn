@@ -4,6 +4,8 @@ IMPORTANT: write all title, steps, expected in {{language}} — do not mix langu
 Page purpose:
 {{pageSemantics}}
 
+{{goal}}
+
 Interactive elements (ref · role · name; ×N = repeated, several identical on the page — e.g. list rows). All REALLY present. In elementRefs use ONLY these refs — do not invent or change them:
 {{elements}}
 

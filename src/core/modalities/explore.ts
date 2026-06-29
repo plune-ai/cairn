@@ -24,6 +24,7 @@ interface ExploreFlags {
   sessionFile?: string;
   headed?: boolean;
   checklist?: string;
+  goal?: string;
   style?: string;
   routing?: string;
   fresh?: boolean;
@@ -48,7 +49,7 @@ export const exploreModality: Modality = {
     // else the built-in inline hint. Methodology / assertion-safety are never touched.
     const styleText = await resolveStyleText(opts.style);
     ctx.err(
-      `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}…\n`,
+      `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}${opts.goal ? ` (goal: "${opts.goal}")` : ""}…\n`,
     );
     // Progress UX: animate the current step in a TTY (long LLM steps emit no events for ~a minute, so the
     // CLI looked frozen). In a pipe/CI this falls back to one plain `  ▸ <event>` line per event.
@@ -60,6 +61,7 @@ export const exploreModality: Modality = {
       sessionFile: opts.sessionFile,
       headed: opts.headed,
       checklistText,
+      goal: opts.goal,
       style: opts.style,
       styleText,
       fresh: opts.fresh,

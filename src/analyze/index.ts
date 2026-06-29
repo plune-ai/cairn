@@ -18,6 +18,8 @@ export interface AnalyzeDeps {
   prompts: PromptRegistry;
   /** Send the screenshot (vision). If false or the model has no vision — aria-only mode (ADR-0002). */
   vision?: boolean;
+  /** #63: pre-formatted goal directive ({@link formatGoal}) — biases element selection. "" → no bias. */
+  goalText?: string;
 }
 
 /**
@@ -31,6 +33,7 @@ export async function analyzePage(study: PageStudy, deps: AnalyzeDeps): Promise<
   const prompt = await deps.prompts.getPrompt("identify-elements", {
     ariaYaml: study.ariaYaml,
     elements,
+    goal: deps.goalText ?? "",
   });
 
   const useVision = Boolean(deps.vision && study.screenshotB64);

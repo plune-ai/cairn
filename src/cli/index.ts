@@ -110,6 +110,7 @@ export function buildProgram(): Command {
     .option("--session-file <path>", "direct path to a storageState file (any name)")
     .option("--headed", "visible browser (debug)")
     .option("--checklist <file>", "checklist file (md/text) — guides what to test")
+    .option("--goal <text>", "natural-language goal — bias observation + cases toward it (e.g. \"test the checkout flow\") instead of a blind crawl")
     .option("--style <s>", "planning style: happy | negative | coverage | all")
     .option("--fresh", "ignore prior runs for this URL — generate a full set, don't dedupe against past cases")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")

@@ -20,6 +20,8 @@ export interface DesignInput {
   pageSemantics: string;
   /** Checklist text (Sprint 4); currently empty. */
   checklistText?: string;
+  /** #63: pre-formatted goal directive ({@link formatGoal}) — leads with goal-relevant cases. "" → no bias. */
+  goalText?: string;
   /** Discovered elements (count≥1) from verify; fallback — study.elements. */
   elements?: VerifiedElement[];
   /** Observed state transitions (act→observe, Stage B). */
@@ -59,6 +61,7 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
     pageSemantics: input.pageSemantics,
     elements,
     methodology,
+    goal: input.goalText ?? "",
     checklist: input.checklistText ?? "",
     transitions: formatTransitions(input.transitions ?? []),
     language: input.language ?? "English",

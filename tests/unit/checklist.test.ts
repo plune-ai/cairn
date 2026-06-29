@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ingestChecklist,
   formatChecklist,
+  formatGoal,
   coverageScore,
   detectLanguage,
   styleDirective,
@@ -40,6 +41,15 @@ describe("checklist", () => {
   it("detectLanguage: Cyrillic → Ukrainian, Latin → English", () => {
     expect(detectLanguage("Перемикання вкладок")).toBe("Ukrainian");
     expect(detectLanguage("Switch between tabs")).toBe("English");
+  });
+
+  it("formatGoal: blank/undefined → '', otherwise a directive carrying the goal (#63)", () => {
+    expect(formatGoal()).toBe("");
+    expect(formatGoal("")).toBe("");
+    expect(formatGoal("   ")).toBe(""); // whitespace-only is no goal
+    const d = formatGoal("  test the checkout flow  ");
+    expect(d).toContain("test the checkout flow"); // trimmed, embedded
+    expect(d).toContain("GOAL FOR THIS RUN");
   });
 
   it("styleDirective: happy/negative/coverage → a directive; all/'' → ''", () => {

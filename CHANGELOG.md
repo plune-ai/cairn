@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Goal-directed exploration — `cairn explore --goal "..."` (#63, MEM-01).** Accept a natural-language
+  goal (e.g. `"test the checkout flow"`) and bias the run toward it instead of a blind crawl: the goal
+  threads into both observation (`identify-elements` prioritizes goal-relevant elements) and planning
+  (the case designer leads with goal-relevant cases). Passed per-run through the existing input path
+  (like `--checklist`, nothing hardcoded). Fully back-compatible — without `--goal` the prompts are
+  byte-identical and the crawl is unchanged.
+
 - **CI / PR bot — GitHub Action (#50).** A reusable composite action (`action/`) that runs Cairn on a
   pull request, posts (or updates) a **summary comment**, and **optionally opens a follow-up PR** with
   the generated tests. `v1` is generation-on-PR; maintenance/self-heal stays in epic #46. The action is
