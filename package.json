@@ -103,7 +103,7 @@
     "@langfuse/tracing": "^5.4.1",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/sdk-node": "^0.218.0",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.0.1",
     "@types/react": "^18.3.31",
     "@vitest/coverage-v8": "^4.1.8",
     "eslint": "^10.4.1",
