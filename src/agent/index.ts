@@ -19,7 +19,7 @@ import { designGapCases } from "../eval/gap-cases.js";
 import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
 import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
-import { ingestChecklist, formatChecklist, coverageScore, styleDirective } from "../checklist/index.js";
+import { ingestChecklist, formatChecklist, formatGoal, coverageScore, styleDirective } from "../checklist/index.js";
 import { loadKnowledge } from "../knowledge/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
 import { SessionStore } from "../session/index.js";
@@ -44,6 +44,8 @@ export interface ExploreInput {
   url: string;
   config: AppConfig;
   checklistText?: string;
+  /** #63 (MEM-01): natural-language goal — biases observation + planning toward it instead of a blind crawl. */
+  goal?: string;
   /** Base directory for runs/ (default ./runs in the project — needed to resolve @playwright/test). */
   runsBaseDir?: string;
   /** Name of the saved session (cookies+localStorage) → .auth/<name>.storageState.json. */
@@ -250,6 +252,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // #60: setup planning runs on the worker tier (CAIRN_ROLE_WORKER); built only when opted in.
     setupInvoke: input.setup ? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)) : undefined,
     useVision: analyzeTier.supportsVision,
+    goalText: formatGoal(input.goal),
     checklistText: checklistFormatted,
     knowledgeText,
     experienceText,

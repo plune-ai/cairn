@@ -50,6 +50,26 @@ describe("designTestCases", () => {
     expect(captured).toContain("Sign In");
   });
 
+  it("goalText reaches the prompt; absent → no goal directive (#63)", async () => {
+    let captured = "";
+    const fakeInvoke: StructuredInvoke = async (schema, messages) => {
+      captured = JSON.stringify(messages);
+      return schema.parse({ testCases: [] });
+    };
+    await designTestCases(
+      { study, pageSemantics: "x", goalText: 'GOAL FOR THIS RUN — bias toward this user goal: "checkout flow".' },
+      { invoke: fakeInvoke, prompts: new PromptRegistry() },
+    );
+    expect(captured).toContain("checkout flow");
+
+    captured = "";
+    await designTestCases(
+      { study, pageSemantics: "x" },
+      { invoke: fakeInvoke, prompts: new PromptRegistry() },
+    );
+    expect(captured).not.toContain("GOAL FOR THIS RUN"); // back-compat: no goal → no directive
+  });
+
   it("empty result → []", async () => {
     const fakeInvoke: StructuredInvoke = async (schema) => schema.parse({ testCases: [] });
     const cases = await designTestCases(

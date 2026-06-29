@@ -62,6 +62,9 @@ Options:
   --session-file <path>  direct path to a storageState file (any name)
   --headed               visible browser (debug)
   --checklist <file>     checklist file (md/text) — guides what to test
+  --goal <text>          natural-language goal — bias observation + cases toward
+                         it (e.g. "test the checkout flow") instead of a blind
+                         crawl
   --style <s>            planning style: happy | negative | coverage | all
   --fresh                ignore prior runs for this URL — generate a full set,
                          don't dedupe against past cases

@@ -39,6 +39,8 @@ export interface ExploreDeps {
   /** #60: worker-tier invoker for setup planning (precondition extraction). Absent → no setup. */
   setupInvoke?: StructuredInvoke;
   useVision: boolean;
+  /** #63: pre-formatted goal directive ({@link formatGoal}) — biases observe (element pick) + design. "" → no bias. */
+  goalText?: string;
   checklistText?: string;
   knowledgeText?: string;
   experienceText?: string;
@@ -141,6 +143,7 @@ export async function runExploreGraph(
     invoke: deps.analyzeInvoke,
     prompts: deps.prompts,
     vision: deps.useVision,
+    goalText: deps.goalText,
   });
   // L1-05: a session was supplied but the first page looks like a login screen → the session
   // is likely expired. Fail fast with re-capture guidance BEFORE the expensive design/codegen
@@ -221,6 +224,7 @@ export async function runExploreGraph(
       study,
       pageSemantics: analysis.pageSemantics,
       checklistText: deps.checklistText,
+      goalText: deps.goalText,
       elements: verified.filter((v) => v.count >= 1),
       transitions,
       knowledge: deps.knowledgeText,

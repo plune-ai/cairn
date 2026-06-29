@@ -109,6 +109,7 @@ describe("explore parity (C1-02)", () => {
       "--session-file",
       "--headed",
       "--checklist",
+      "--goal",
       "--style",
       "--fresh",
       "--routing",
@@ -121,7 +122,7 @@ describe("explore parity (C1-02)", () => {
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(16); // + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51)
+    expect(longs).toHaveLength(17); // + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51) + --goal (#63)
   });
 
   it("maps flags to runExploration the same way as before the refactor", async () => {
@@ -162,6 +163,17 @@ describe("explore parity (C1-02)", () => {
     runExploration.mockClear();
     await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test"]);
     expect(runExploration.mock.calls[0][0].fresh).toBeFalsy(); // default: dedupe against prior runs (unchanged)
+  });
+
+  it("--goal flows through to runExploration as goal (and is undefined when absent) (#63)", async () => {
+    await buildProgram().parseAsync([
+      "node", "cairn", "explore", "--url", "https://app.test", "--goal", "test the checkout flow",
+    ]);
+    expect(runExploration.mock.calls[0][0].goal).toBe("test the checkout flow");
+
+    runExploration.mockClear();
+    await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test"]);
+    expect(runExploration.mock.calls[0][0].goal).toBeUndefined(); // default: blind crawl (unchanged)
   });
 
   it("prints the same exploration / metrics / cost / summary structure", async () => {

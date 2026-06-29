@@ -40,6 +40,22 @@ export function formatChecklist(items: ChecklistItem[]): string {
   );
 }
 
+/**
+ * Goal directive (#63 MEM-01): a natural-language goal that biases observation + planning toward
+ * one area instead of a blind crawl. Empty/blank → "" (no bias — unchanged default behavior).
+ * Used by BOTH identify-elements (prioritize goal-relevant elements) and the case designer
+ * (lead with goal-relevant cases), so the wording covers elements AND scenarios.
+ */
+export function formatGoal(goal?: string): string {
+  const g = goal?.trim();
+  if (!g) return "";
+  return (
+    `GOAL FOR THIS RUN — bias toward this user goal: "${g}".\n` +
+    "Prioritize the elements and scenarios relevant to this goal and lead with them; " +
+    "de-emphasize unrelated areas (do NOT ignore a critical issue you notice elsewhere)."
+  );
+}
+
 /** Detect the text language (for language-consistent design): Cyrillic → "Ukrainian", otherwise → "English". */
 export function detectLanguage(text: string): string {
   return /[Ѐ-ӿ]/i.test(text) ? "Ukrainian" : "English";
