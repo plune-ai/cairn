@@ -84,6 +84,17 @@ export function SummaryScreen({ command, result }: { command: Command; result: A
           <Text dimColor> · flaky: {validation.flakyCount}</Text>
         </Box>
       ) : null}
+      {validation?.screencasts?.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="magenta">▶ Screencasts ({validation.screencasts.length}) — watch before approving:</Text>
+          {validation.screencasts.map((c) => (
+            <Text key={c.test} dimColor>
+              {"  "}
+              {c.test}: {c.video} ({c.chapters.length} chapters)
+            </Text>
+          ))}
+        </Box>
+      ) : null}
       {specs !== undefined ? (
         <Box marginTop={1}>
           <Text>{specs} spec file(s) generated</Text>

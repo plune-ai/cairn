@@ -45,6 +45,6 @@ export type { InteractionMap, InteractionElement } from "./documentarian/index.j
 export type { GeneratedSuite } from "./codegen/index.js";
 export type { Score } from "./eval/scorers.js";
 export type { PilotVerdict } from "./eval/pilot.js";
-export type { ValidationReport } from "./validate/index.js";
+export type { ValidationReport, ScreencastEntry, ScreencastChapter } from "./validate/index.js";
 export type { ChecklistItem } from "./checklist/index.js";
 export type { ElementRef, VerifiedElement, StorageState, BackendKind } from "./browser/index.js";

@@ -1,7 +1,9 @@
-import { runSpecs, type RawTestResult } from "./runner.js";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { runSpecs, type RawTestResult, type ScreencastEntry } from "./runner.js";
 
-export { runSpecs } from "./runner.js";
-export type { RawTestResult, TestStatus } from "./runner.js";
+export { runSpecs, screencastsFromJson, screencastsFromRunnerOutput } from "./runner.js";
+export type { RawTestResult, TestStatus, ScreencastEntry, ScreencastChapter } from "./runner.js";
 
 export interface TestResult {
   test: string;
@@ -15,6 +17,8 @@ export interface ValidationReport {
   /** Share of consistently green tests (flaky does NOT count as green). */
   greenRatio: number;
   flakyCount: number;
+  /** #94: per-scenario screencasts (.webm + step chapters), present only when recording was enabled. */
+  screencasts?: ScreencastEntry[];
 }
 
 /**
@@ -58,6 +62,8 @@ export interface ValidateOptions {
   channel?: string;
   /** Parallel Playwright workers (default 5; from cfg.playwrightWorkers / PLAYWRIGHT_WORKERS). */
   workers?: number;
+  /** #94 (BORROW-05): record a `.webm` per scenario for the review gate. Off by default. */
+  screencast?: boolean;
 }
 
 /**
@@ -69,9 +75,29 @@ export async function validateSuite(
   opts: ValidateOptions = {},
 ): Promise<ValidationReport> {
   const reruns = Math.max(1, opts.reruns ?? 2);
+  // #94: record under <runDir>/screencasts. Each rerun's run overwrites it (Playwright clears the output
+  // dir), so the surviving .webm files + sidecar match the LAST run — read back once after the loop.
+  const screencastDir = opts.screencast ? join(resolve(runDir), "screencasts") : undefined;
   const runs: RawTestResult[][] = [];
   for (let i = 0; i < reruns; i += 1) {
-    runs.push(await runSpecs(runDir, { storageStatePath: opts.storageStatePath, channel: opts.channel, workers: opts.workers }));
+    runs.push(
+      await runSpecs(runDir, {
+        storageStatePath: opts.storageStatePath,
+        channel: opts.channel,
+        workers: opts.workers,
+        screencastDir,
+      }),
+    );
   }
-  return classifyRuns(runs);
+  const report = classifyRuns(runs);
+  if (screencastDir) {
+    try {
+      report.screencasts = JSON.parse(
+        await readFile(join(screencastDir, "screencasts.json"), "utf8"),
+      ) as ScreencastEntry[];
+    } catch {
+      // no sidecar (recorder produced nothing) — leave screencasts undefined, don't fail validation
+    }
+  }
+  return report;
 }

@@ -83,6 +83,11 @@ cairn explore --url https://app.example.com/page --session myapp --checklist pla
 `--style <pack>` to restyle cases ([Prompts & styles](docs/prompts-and-styles.md)), or `--critique` to
 prune weak cases and top up technique gaps. (Git Bash: quote `--run 'runs/<id>'` or use the bare id.)
 
+Add `--screencast` (to `explore`, or `automate --validate`) to record a **`.webm` per scenario** during
+validation into `runs/<id>/screencasts/`, with a `screencasts.json` sidecar mapping each scenario's step
+chapters (step → timecode). It's a review-gate affordance — watch what the agent did before approving a
+case. Off by default; the recorded `.webm` paths are linked from the run summary and the TUI result screen.
+
 ## Interactive TUI
 
 Run `cairn` with **no arguments** in a terminal for a guided UI (launcher → form → live dashboard →
@@ -95,9 +100,9 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 | `cairn session capture --url <loginUrl> --name <s>` | Capture a login session → `.auth/` (`cairn login` is a shorthand; `session ls` / `rm`) |
 | `cairn observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
 | `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>] [--fresh] [--critique]` | Test cases only (ATC/MTC `.md` + selectors), no code |
-| `cairn automate --run <dir> [--validate --session <s>]` | `@playwright/test` from `ATC-*` cases |
+| `cairn automate --run <dir> [--validate --session <s>] [--screencast]` | `@playwright/test` from `ATC-*` cases |
 | `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
-| `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique]` | Full pipeline (cases → code → validate → repair → Pilot) |
+| `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique] [--screencast]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { ValidationReport } from "../validate/index.js";
 import type { CostReport } from "../llm/cost.js";
 
@@ -50,6 +51,11 @@ export function renderRunSummary(s: RunSummaryInput): string[] {
     const flaky = r.filter((x) => x.status === "flaky").length;
     const green = Math.round(s.validation.greenRatio * 100);
     lines.push(`  Tests:     ${passed} passed · ${failed} failed · ${flaky} flaky (${green}% green)`);
+    // #94 (BORROW-05): point the reviewer at the per-scenario screencasts (.webm + step chapters).
+    const casts = s.validation.screencasts;
+    if (casts && casts.length > 0) {
+      lines.push(`  Screencasts: ${casts.length} .webm recorded → ${displayPath(join(s.runDir, "screencasts"))}/`);
+    }
   }
   if (typeof s.testCaseCount === "number") lines.push(`  Test cases: ${s.testCaseCount}`);
 

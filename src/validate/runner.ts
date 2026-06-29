@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
 
 const execFileAsync = promisify(execFile);
@@ -20,22 +20,32 @@ export interface RawTestResult {
   error?: string;
 }
 
-export function configContent(runDir: string, storageStatePath?: string, channel?: string, workers = 5): string {
+export function configContent(
+  runDir: string,
+  storageStatePath?: string,
+  channel?: string,
+  workers = 5,
+  screencastDir?: string,
+): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
   if (storageStatePath) parts.push(`storageState: ${JSON.stringify(storageStatePath)}`);
   // FIX B (0.3.3): when a channel is set, the runner drives the SYSTEM browser (chrome/msedge) —
   // no bundled Chromium needed, so cairn works inside projects that already have their own Playwright.
   if (channel) parts.push(`channel: ${JSON.stringify(channel)}`);
+  // #94 (BORROW-05): opt-in per-scenario screencast — Playwright's built-in video. One .webm per test,
+  // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
+  if (screencastDir) parts.push(`video: 'on'`);
   parts.push(launchOpts);
   const use = `{ ${parts.join(", ")} }`;
+  const outputDir = screencastDir ? `\n  outputDir: ${JSON.stringify(screencastDir)},` : "";
   return `const { defineConfig } = require(${JSON.stringify(PW_TEST)});
 module.exports = defineConfig({
   testDir: ${JSON.stringify(join(runDir, "tests"))},
   fullyParallel: true,
   workers: ${workers},
   retries: 0,
-  reporter: 'json',
+  reporter: 'json',${outputDir}
   use: ${use},
 });
 `;
@@ -48,12 +58,41 @@ export interface RunSpecsOptions {
   channel?: string;
   /** Parallel Playwright workers (default 5; from cfg.playwrightWorkers / PLAYWRIGHT_WORKERS). */
   workers?: number;
+  /**
+   * #94 (BORROW-05): when set, record a `.webm` per test into this dir (Playwright video) and write a
+   * step-chapter sidecar (`<dir>/screencasts.json`) for the review gate. Opt-in; off when undefined.
+   */
+  screencastDir?: string;
 }
 
+/** #94: one chapter marker — a scenario step title at its offset (ms) from the start of the `.webm`. */
+export interface ScreencastChapter {
+  title: string;
+  atMs: number;
+}
+/** #94: a recorded scenario screencast — the `.webm` (relative to runDir) + its step chapters. */
+export interface ScreencastEntry {
+  test: string;
+  /** Path to the `.webm`, relative to runDir (the artifact travels with the run dir). */
+  video: string;
+  chapters: ScreencastChapter[];
+}
+
+interface PwAttachment {
+  name?: string;
+  path?: string;
+  contentType?: string;
+}
+interface PwStep {
+  title?: string;
+  duration?: number;
+}
 interface PwResult {
   status?: string;
   error?: { message?: string };
   errors?: { message?: string }[];
+  steps?: PwStep[];
+  attachments?: PwAttachment[];
 }
 interface PwSpec {
   title: string;
@@ -65,6 +104,49 @@ interface PwSuite {
 }
 interface PwJson {
   suites?: PwSuite[];
+}
+
+/** Playwright's two fixed top-level hook step titles — kept out of the reviewer's chapter list. */
+const HOOK_STEP_TITLES = new Set(["Before Hooks", "After Hooks"]);
+
+/**
+ * #94: build the screencast index from the JSON reporter output. For each spec's first result, pair its
+ * `video` attachment with chapter markers from `steps`. The JSON reporter omits per-step startTime, so the
+ * offset is the cumulative duration of preceding top-level steps — hook steps advance the clock but are
+ * dropped from the visible chapters (they aren't scenario steps). Pure (no IO) so it unit-tests cleanly.
+ */
+export function screencastsFromJson(json: PwJson, runDir: string): ScreencastEntry[] {
+  const out: ScreencastEntry[] = [];
+  const walk = (s: PwSuite): void => {
+    for (const spec of s.specs ?? []) {
+      const result = spec.tests?.[0]?.results?.[0];
+      const videoPath = result?.attachments?.find((a) => a.name === "video" && a.path)?.path;
+      if (!videoPath) continue; // no recording for this test → nothing to link
+      const chapters: ScreencastChapter[] = [];
+      let atMs = 0;
+      for (const step of result?.steps ?? []) {
+        if (!HOOK_STEP_TITLES.has(step.title ?? "")) {
+          chapters.push({ title: step.title ?? "(step)", atMs });
+        }
+        atMs += step.duration ?? 0; // hooks still advance the clock so offsets stay aligned to the video
+      }
+      out.push({ test: spec.title, video: relative(runDir, videoPath), chapters });
+    }
+    for (const child of s.suites ?? []) walk(child);
+  };
+  for (const s of json.suites ?? []) walk(s);
+  return out;
+}
+
+/** #94: parse the reporter stdout into screencast entries (empty on no/garbled JSON). Pure. */
+export function screencastsFromRunnerOutput(stdout: string, runDir: string): ScreencastEntry[] {
+  const start = stdout.indexOf("{");
+  if (start < 0) return [];
+  try {
+    return screencastsFromJson(JSON.parse(stdout.slice(start)) as PwJson, runDir);
+  } catch {
+    return [];
+  }
 }
 
 function extract(json: PwJson): RawTestResult[] {
@@ -89,7 +171,12 @@ function extract(json: PwJson): RawTestResult[] {
 export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Promise<RawTestResult[]> {
   const absRunDir = resolve(runDir); // testDir in the config must be absolute
   const configPath = join(absRunDir, "playwright.config.cjs");
-  await writeFile(configPath, configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers), "utf8");
+  const screencastDir = opts.screencastDir ? resolve(opts.screencastDir) : undefined;
+  await writeFile(
+    configPath,
+    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir),
+    "utf8",
+  );
 
   // Do not inherit the parent runner's NODE_OPTIONS (vitest/tsx loader) — otherwise the child
   // playwright process tries to apply a foreign loader and crashes.
@@ -112,6 +199,18 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
     const err = e as { stdout?: string; stderr?: string };
     stdout = err.stdout ?? "";
     stderr = err.stderr ?? "";
+  }
+
+  // #94: when recording, drop the step-chapter sidecar next to the .webm files. The reporter writes the
+  // video paths into stdout AFTER the run, so this runs post-parse. Best-effort: a recorder/IO failure
+  // logs nothing-fatal and never sinks the run (the tests still ran — only the review affordance is lost).
+  if (screencastDir) {
+    try {
+      const entries = screencastsFromRunnerOutput(stdout, absRunDir);
+      await writeFile(join(screencastDir, "screencasts.json"), JSON.stringify(entries, null, 2), "utf8");
+    } catch {
+      // screencast is an optional review affordance — never fail the run over it
+    }
   }
 
   return resultsFromRunnerOutput(stdout, stderr);

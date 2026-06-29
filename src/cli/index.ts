@@ -120,6 +120,7 @@ export function buildProgram(): Command {
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
+    .option("--screencast", "record a .webm per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
     });
@@ -310,8 +311,9 @@ export function buildProgram(): Command {
     .option("--channel <channel>", "system browser channel, e.g. chrome — validate on your installed Chrome (no bundled-Chromium download)")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
+    .option("--screencast", "with --validate: record a .webm per scenario (with step chapters) → runs/<id>/screencasts/ for the review gate")
     .action(
-      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string }) => {
+      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel });
         process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
         const progress = makeCliProgress({
@@ -327,6 +329,7 @@ export function buildProgram(): Command {
           sessionFile: opts.sessionFile,
           intoProject: opts.intoProject !== undefined && opts.intoProject !== false,
           projectDir: typeof opts.intoProject === "string" ? opts.intoProject : undefined,
+          screencast: opts.screencast,
           onProgress: progress.event,
         }).finally(() => progress.stop());
         const dest = result.projectTestDir ? displayPath(result.projectTestDir) : `${displayPath(result.runDir)}/tests/`;

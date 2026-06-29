@@ -38,6 +38,19 @@ describe("renderRunSummary (L1-04, Box 4 — first-run UX)", () => {
     expect(text).toMatch(/8\s*\/\s*80/); // budget used / max
   });
 
+  it("#94: links the screencasts dir when scenarios were recorded, and omits it otherwise", () => {
+    const recorded = renderRunSummary({
+      runDir: "/tmp/runs/abc123",
+      validation: { ...validation, screencasts: [{ test: "loads", video: "screencasts/loads/video.webm", chapters: [] }] },
+    }).join("\n");
+    expect(recorded).toMatch(/Screencasts:\s*1 \.webm recorded/);
+    expect(recorded).toContain("/tmp/runs/abc123/screencasts/");
+
+    // default run (no screencasts) — no Screencasts line, no regression
+    const plain = renderRunSummary({ runDir: "/tmp/runs/abc123", validation }).join("\n");
+    expect(plain).not.toMatch(/Screencasts:/);
+  });
+
   it("renders unknown cost gracefully (some prices missing)", () => {
     const text = renderRunSummary({
       runDir: "/x",

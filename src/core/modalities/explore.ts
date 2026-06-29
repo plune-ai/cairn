@@ -34,6 +34,7 @@ interface ExploreFlags {
   setup?: boolean;
   gaps?: boolean;
   intoProject?: boolean | string;
+  screencast?: boolean;
 }
 
 export const exploreModality: Modality = {
@@ -72,6 +73,7 @@ export const exploreModality: Modality = {
       gaps: opts.gaps,
       intoProject: opts.intoProject !== undefined && opts.intoProject !== false,
       projectDir: typeof opts.intoProject === "string" ? opts.intoProject : undefined,
+      screencast: opts.screencast,
       onProgress: progress.event,
     }).finally(() => progress.stop());
 
