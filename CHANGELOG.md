@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scope-aware knowledge injection — `scope: web | api | all` (#92, BORROW-03).** `knowledge/*.md`
+  files now declare a scope and are keyed by `url || path || endpoint`. Directory convention:
+  `knowledge/` = web (keyed by `url:`), `knowledge/api/` = api (keyed by `path:`/`endpoint:`), and an
+  explicit `scope:` front-matter overrides the directory default. A web run injects web+all, an api run
+  injects api+all, and a shared `scope: all` file (e.g. credentials) is available to both. Plumbing
+  ahead of the API surface (#22) — improves web runs today. Back-compatible: an existing base-dir
+  `url:` file with no `scope:` stays web-scoped and behaves exactly as before.
+
 - **Goal-directed exploration — `cairn explore --goal "..."` (#63, MEM-01).** Accept a natural-language
   goal (e.g. `"test the checkout flow"`) and bias the run toward it instead of a blind crawl: the goal
   threads into both observation (`identify-elements` prioritizes goal-relevant elements) and planning

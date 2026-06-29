@@ -220,7 +220,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   // Checklist (Sprint 4): a human narrows down WHAT to test → steers the design + measures coverage.
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const checklistFormatted = formatChecklist(checklistItems);
-  const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
+  const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
   // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
   // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
   const experienceText = await experienceForUrl({
@@ -623,7 +623,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   persistLog = () => void runWriter.writeLog(logLines.join("\n")).catch(() => undefined);
 
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
-  const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), input.url);
+  const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
   // `--fresh` skips this disk read entirely → no "previously STABLE cases" dedup block, so the run
   // generates a full set (clean A/B comparison) instead of only the delta vs. past runs of this URL.
   const experienceText = await experienceForUrl({
