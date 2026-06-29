@@ -1,7 +1,7 @@
 # Dependabot — automated dependency-update PRs (https://docs.github.com/code-security/dependabot).
-# Tracks npm deps and the GitHub Actions used by CI + the composite action. Minor/patch bumps are
-# grouped into one PR per ecosystem to keep the noise down; MAJOR bumps come as their own PRs so the
-# bot still surfaces them for a deliberate, reviewed upgrade (per-ecosystem open-PR limit bounds noise).
+# Tracks npm deps and the GitHub Actions used by CI + the composite action. MAJOR-version bumps ONLY:
+# minor/patch updates are ignored (too noisy), so the bot surfaces just the deliberate, breaking
+# upgrades that warrant a reviewed PR. Each ecosystem's open-PR limit bounds the noise.
 version: 2
 updates:
   - package-ecosystem: npm
@@ -11,11 +11,11 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
-    groups:
-      npm-minor-patch:
+    ignore:
+      - dependency-name: "*"
         update-types:
-          - minor
-          - patch
+          - version-update:semver-minor
+          - version-update:semver-patch
 
   # CI / publish workflows (.github/workflows/*.yml).
   - package-ecosystem: github-actions
@@ -25,11 +25,11 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
-    groups:
-      actions-minor-patch:
+    ignore:
+      - dependency-name: "*"
         update-types:
-          - minor
-          - patch
+          - version-update:semver-minor
+          - version-update:semver-patch
 
   # The reusable composite action (action/action.yml) and the actions it pins.
   - package-ecosystem: github-actions
@@ -39,3 +39,8 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
