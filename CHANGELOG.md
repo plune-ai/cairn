@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-scenario screencast recording — `--screencast` (#94, BORROW-05).** Validation can now record a
+  `.webm` per scenario (Playwright's built-in video) into `runs/<id>/screencasts/`, with a
+  `screencasts.json` sidecar mapping each scenario's **step chapters** (step title → timecode) — a
+  review-gate affordance so a human can *watch* what the agent did before approving. Opt-in
+  (`cairn explore --screencast` · `cairn automate --validate --screencast`); off by default, so existing
+  runs are unchanged. The `.webm` paths + chapter counts are linked from the run summary and the TUI result
+  screen. Recording is best-effort: a recorder/IO failure logs nothing fatal and never sinks the run.
+
 - **Documentarian — cached, reusable page-understanding artifact (#93, BORROW-06).** A run now emits a
   strict-schema **interaction map** (element → locator + container + candidate actions) as a first-class
   artifact (`runs/<id>/page-understanding.json`) and caches it cross-run under `.cairn-cache/understanding`,

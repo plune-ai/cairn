@@ -85,6 +85,8 @@ export interface ExploreInput {
   intoProject?: boolean;
   /** #51: explicit project dir for --into-project; when omitted, detection searches from cwd upward. */
   projectDir?: string;
+  /** #94 (BORROW-05): record a `.webm` per scenario during validation (review-gate affordance). Default off. */
+  screencast?: boolean;
 }
 
 export interface ExploreResult {
@@ -270,7 +272,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     styleText,
     languageText,
     runWriter,
-    validate: (runDir: string) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
+    validate: (runDir: string) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
     maxRepair: cfg.maxRepair,
     onProgress,
     // #38: persist study + snapshots the moment observe succeeds, so a mid-run kill still leaves
@@ -887,6 +889,8 @@ export async function runAutomate(input: {
   intoProject?: boolean;
   /** #51: explicit project dir for --into-project (detection searches from cwd upward when omitted). */
   projectDir?: string;
+  /** #94 (BORROW-05): record a `.webm` per scenario during --validate (review-gate affordance). Default off. */
+  screencast?: boolean;
   onProgress?: (event: string) => void;
 }): Promise<AutomateResult> {
   const cfg = input.config;
@@ -950,7 +954,7 @@ export async function runAutomate(input: {
         await runWriter.writeSuite(s);
         return s;
       },
-      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers }),
+      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
       maxRepair: cfg.maxRepair,
       onProgress,
       lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair

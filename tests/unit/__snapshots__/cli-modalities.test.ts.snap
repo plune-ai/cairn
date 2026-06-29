@@ -83,6 +83,8 @@ Options:
   --into-project [dir]   write specs into an existing Playwright project's
                          testDir (detect playwright.config.*; respects
                          testDir/naming) instead of runs/<id>/tests
+  --screencast           record a .webm per scenario (with step chapters) during
+                         validation → runs/<id>/screencasts/ for the review gate
   -h, --help             display help for command
 "
 `;
