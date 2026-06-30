@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadKnowledge } from "../../src/knowledge/index.js";
+import { loadKnowledge, loadApiCreds } from "../../src/knowledge/index.js";
 
 describe("loadKnowledge", () => {
   it("includes global (no url) + those whose url pattern is in the URL; skips the rest", async () => {
@@ -82,6 +82,39 @@ describe("loadKnowledge", () => {
         // unknown scope → directory default (base = web)
         expect(await loadKnowledge(dir, { scope: "web" })).toContain("WEIRD");
         expect(await loadKnowledge(dir, { scope: "api" })).not.toContain("WEIRD");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // API-3 (#133): auth/headers for an api run, from api/all-scope `header.*` front-matter.
+  describe("loadApiCreds (#133)", () => {
+    it("collects header.* from api+all scope, resolves ${ENV}, skips web-scoped files", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "qa-creds-"));
+      process.env.API_TOKEN = "tok-123";
+      try {
+        await mkdir(join(dir, "api"), { recursive: true });
+        await writeFile(join(dir, "creds.md"), "---\nscope: all\nheader.Authorization: Bearer ${API_TOKEN}\n---\nshared creds");
+        await writeFile(join(dir, "api", "users.md"), "---\nendpoint: /users\nheader.X-Api-Key: abc\n---\napi note");
+        await writeFile(join(dir, "web.md"), "---\nheader.X-Web: nope\n---\nweb file");
+
+        const creds = await loadApiCreds(dir, { endpoint: "https://api.test/users" });
+        expect(creds["Authorization"]).toBe("Bearer tok-123"); // all-scope + env-resolved
+        expect(creds["X-Api-Key"]).toBe("abc"); // api-scope, endpoint matched
+        expect(creds["X-Web"]).toBeUndefined(); // web-scoped file ignored on an api run
+      } finally {
+        delete process.env.API_TOKEN;
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("an endpoint-keyed creds file only applies when its key is in the target", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "qa-creds2-"));
+      try {
+        await mkdir(join(dir, "api"), { recursive: true });
+        await writeFile(join(dir, "api", "admin.md"), "---\nendpoint: /admin\nheader.X-Admin: 1\n---\nadmin");
+        expect(await loadApiCreds(dir, { endpoint: "https://api.test/users" })).toEqual({});
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

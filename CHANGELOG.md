@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — runner + response assertions (#133, C1-04 / API-3).** With `--base-url <url>`,
+  `cairn api` now **executes** the generated happy-path cases (API-2) and, per case, asserts the HTTP
+  **status** matches the declared success code and the response **body conforms** to the declared
+  success schema (a minimal structural check: type/required/properties/items/enum/nullable +
+  `allOf`/`oneOf`/`anyOf`). Auth/headers come from **config** (`--header "Name: Value"`, repeatable)
+  layered over **api-scope knowledge** (#92 — `header.*` front-matter in `all`/`api` files, with
+  `${ENV}` resolved so the secret stays in the environment, not the file); config wins. Transient
+  faults (connection reset / timeout / `429` / `5xx`) **retry with backoff** before failing, reusing
+  the tiered-recovery pattern from #90; DNS/refused and `4xx` fail fast. Per-case request/response
+  **evidence** (sensitive headers redacted) is written to `runs/api-<id>/api-evidence.json`, and any
+  failed assertion exits non-zero. Network is fully injectable (mocked in tests). **The rich report /
+  Plune-record write are API-4.**
+
 - **`cairn api` — baseline happy-path cases (#132, C1-04 / API-2).** From the ingested endpoint model,
   `cairn api` now generates **one nominal happy-path case per operation**: required params and a
   request body are synthesised straight from the (dereferenced) JSON schema — respecting

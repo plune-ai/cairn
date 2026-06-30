@@ -17,16 +17,18 @@ export interface KnowledgeQuery {
   endpoint?: string;
 }
 
-/** Parsed front-matter we care about: an explicit scope + the match key (`url || path || endpoint`). */
+/** Parsed front-matter we care about: an explicit scope, the match key, and api auth headers. */
 interface Frontmatter {
   scope?: KnowledgeScope;
   /** First present of `url:` / `path:` / `endpoint:` — the pattern matched against the run target. */
   pattern?: string;
+  /** `header.<Name>:` keys — request headers the API runner (#133) applies. `${ENV}` is resolved. */
+  headers: Record<string, string>;
 }
 
 function parseFrontmatter(raw: string): Frontmatter {
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!fm?.[1]) return {};
+  if (!fm?.[1]) return { headers: {} };
   const lines = fm[1].split(/\r?\n/).map((l) => l.trim());
   const value = (key: string): string | undefined => {
     const line = lines.find((l) => new RegExp(`^${key}:`).test(l));
@@ -37,7 +39,19 @@ function parseFrontmatter(raw: string): Frontmatter {
   const scope = rawScope === "web" || rawScope === "api" || rawScope === "all" ? rawScope : undefined;
   // Key precedence: url || path || endpoint (a single file declares one of them).
   const pattern = value("url") ?? value("path") ?? value("endpoint");
-  return { scope, pattern };
+
+  // `header.<Name>: <value>` — collect auth/headers; resolve `${ENV}` so secrets stay out of the file.
+  const headers: Record<string, string> = {};
+  for (const l of lines) {
+    const m = l.match(/^header\.([^:]+):\s*(.*)$/);
+    if (m) headers[m[1]!.trim()] = expandEnv(m[2]!.trim());
+  }
+  return { scope, pattern, headers };
+}
+
+/** Replace `${VAR}` with `process.env.VAR` (empty if unset) so credentials live in env, not files. */
+function expandEnv(v: string): string {
+  return v.replace(/\$\{([^}]+)\}/g, (_, name) => process.env[name] ?? "");
 }
 
 function stripFrontmatter(raw: string): string {
@@ -66,6 +80,32 @@ async function mdFiles(dir: string): Promise<string[]> {
  * as before. Injected into the design prompt → the bot knows facts not visible in the snapshot.
  */
 export async function loadKnowledge(dir: string, query: KnowledgeQuery = {}): Promise<string> {
+  const parts: string[] = [];
+  for (const { raw } of await matchingFiles(dir, query)) {
+    const body = stripFrontmatter(raw);
+    if (body.length > 0) parts.push(body);
+  }
+  return parts.join("\n\n");
+}
+
+/**
+ * Auth/headers for an API run, gathered from matching api/all-scope knowledge (#92) — the runner (#133)
+ * merges these under the user's config headers (config wins). `${ENV}` placeholders in a file resolve
+ * from `process.env`, so the credential itself lives in the environment, never in the committed file.
+ */
+export async function loadApiCreds(dir: string, query: KnowledgeQuery = {}): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  for (const { fm } of await matchingFiles(dir, { ...query, scope: "api" })) {
+    Object.assign(headers, fm.headers); // later files override earlier — deterministic dir order
+  }
+  return headers;
+}
+
+/** Scan base (web) + api subdir, return the files whose scope + key match this run, with parsed front-matter. */
+async function matchingFiles(
+  dir: string,
+  query: KnowledgeQuery,
+): Promise<{ raw: string; fm: Frontmatter }[]> {
   const runScope: RunScope = query.scope ?? "web";
   const target = (runScope === "api" ? query.endpoint : query.url) ?? "";
 
@@ -75,15 +115,14 @@ export async function loadKnowledge(dir: string, query: KnowledgeQuery = {}): Pr
     ...(await mdFiles(join(dir, "api"))).map((file) => ({ dir: join(dir, "api"), file, dirDefault: "api" as const })),
   ];
 
-  const parts: string[] = [];
+  const out: { raw: string; fm: Frontmatter }[] = [];
   for (const c of candidates) {
     const raw = await readFile(join(c.dir, c.file), "utf8");
-    const { scope, pattern } = parseFrontmatter(raw);
-    const fileScope = scope ?? c.dirDefault;
+    const fm = parseFrontmatter(raw);
+    const fileScope = fm.scope ?? c.dirDefault;
     if (fileScope !== "all" && fileScope !== runScope) continue; // wrong scope for this run
-    if (pattern && !target.includes(pattern)) continue; // keyed file: target must contain the pattern
-    const body = stripFrontmatter(raw);
-    if (body.length > 0) parts.push(body);
+    if (fm.pattern && !target.includes(fm.pattern)) continue; // keyed file: target must contain the pattern
+    out.push({ raw, fm });
   }
-  return parts.join("\n\n");
+  return out;
 }
