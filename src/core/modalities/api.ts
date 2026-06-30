@@ -1,12 +1,13 @@
 /**
- * C1-04 / API-1 (#22) — the `api` modality, first slice.
+ * C1-04 — the `api` modality.
  *
- * Scope of THIS slice: register the command and ingest an OpenAPI v3 spec into the internal model,
- * then print a verifiable summary of what was parsed ("N endpoints across M tags"). It does NOT
- * generate cases, run anything, or write to Plune — those are API-2 (#137) and API-3 (#138).
+ * API-1 (#22): register the command and ingest an OpenAPI v3 spec into the internal model.
+ * API-2 (#132): from that model, generate one nominal happy-path case per operation and print them.
+ * Still NO runner / no Plune write — that is API-3 (#138).
  */
 import { resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
+import { generateApiCases, type ApiCase } from "../../api/cases.js";
 import type { Modality, ModalityContext } from "../modality.js";
 
 /** Parsed flags for `cairn api` (mirrors the command's option definitions). */
@@ -33,8 +34,27 @@ export function renderApiSummary(model: ApiModel, source: string): string[] {
     const tag = e.tags.length ? ` [${e.tags.join(", ")}]` : "";
     lines.push(`  ${e.method.padEnd(6)} ${e.path}${op}${tag}`);
   }
+  return lines;
+}
+
+/** Render the generated baseline cases — the verifiable artifact of API-2. */
+export function renderApiCases(cases: ApiCase[]): string[] {
+  const lines = [
+    "",
+    "=== Baseline cases (happy-path · 1 per operation) ===",
+    `${cases.length} case(s) generated`,
+  ];
+  for (const c of cases) {
+    lines.push(`  ▸ ${c.name} → ${c.expectedStatus}`);
+    const sent: Record<string, unknown> = {};
+    for (const [where, vals] of Object.entries(c.params)) {
+      if (Object.keys(vals as object).length) sent[where] = vals;
+    }
+    if (c.body !== undefined) sent.body = c.body;
+    if (Object.keys(sent).length) lines.push(`      ${JSON.stringify(sent)}`);
+  }
   lines.push("");
-  lines.push("Note: ingest only (API-1). Case generation + runner land in API-2 (#137).");
+  lines.push("Note: cases only (API-2). The runner + assertions land in API-3 (#138).");
   return lines;
 }
 
@@ -61,5 +81,6 @@ export const apiModality: Modality = {
       return;
     }
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
+    for (const line of renderApiCases(generateApiCases(model))) ctx.out(`${line}\n`);
   },
 };

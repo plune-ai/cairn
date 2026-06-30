@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — baseline happy-path cases (#132, C1-04 / API-2).** From the ingested endpoint model,
+  `cairn api` now generates **one nominal happy-path case per operation**: required params and a
+  request body are synthesised straight from the (dereferenced) JSON schema — respecting
+  `example` → `default` → `enum` → type, `required`, `format`, `allOf`/`oneOf`, and circular `$ref`s —
+  paired with the operation's declared success response (lowest `2xx`, else `default`). Synthesis is
+  **pure and deterministic** (no LLM, so the same spec yields byte-identical cases); the command prints
+  the generated cases beneath the model summary. **Still no runner** — execution + assertions are
+  API-3 (#138).
+
 - **`cairn api` — OpenAPI ingest (#22, C1-04 / API-1).** The `api` modality leaves the gate one slice
   at a time. This first slice registers `cairn api --spec <path|url>` (parity with `cairn explore`) and
   ingests an **OpenAPI 3.x** spec — JSON or YAML, local file or `http(s)` URL — into an internal
