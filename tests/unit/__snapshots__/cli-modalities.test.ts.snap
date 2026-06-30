@@ -14,8 +14,8 @@ Commands:
                          screenshot
   explore [options]      Explore a page and generate methodology-based test
                          cases (Sprint 2: no code)
-  api [options]          Ingest an OpenAPI 3.x spec into the endpoint model
-                         (API-1: parse + summary, no code yet)
+  api [options]          Generate API tests from an OpenAPI 3.x spec; with
+                         --base-url, run them and assert responses
   dataset-add [options]  Add a run (study.json) to an experiment dataset
   experiment [options]   Compare prompt versions on a dataset (B2
                          self-improvement)

@@ -3,16 +3,56 @@
  *
  * API-1 (#22): register the command and ingest an OpenAPI v3 spec into the internal model.
  * API-2 (#132): from that model, generate one nominal happy-path case per operation and print them.
- * Still NO runner / no Plune write — that is API-3 (#138).
+ * API-3 (#133): with `--base-url`, execute those cases (auth from config + api-scope knowledge),
+ *   assert status + response-schema per case, and capture request/response evidence to disk.
  */
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, type ApiCase } from "../../api/cases.js";
+import { runApiCases, type ApiCaseResult } from "../../api/runner.js";
+import { loadApiCreds } from "../../knowledge/index.js";
+import { defaultRunsBaseDir } from "../../fs/run-dir.js";
 import type { Modality, ModalityContext } from "../modality.js";
 
 /** Parsed flags for `cairn api` (mirrors the command's option definitions). */
 interface ApiFlags {
   spec?: string;
+  /** API-3: configured base URL to run cases against. Absent → ingest + generate only (API-1/2). */
+  baseUrl?: string;
+  /** API-3: extra request headers `Name: Value` (repeatable); override knowledge-supplied headers. */
+  header?: string[];
+  /** API-3: where to write run evidence (default runs/api-<id>/). */
+  out?: string;
+  /** API-3: knowledge dir for api-scope auth/headers (#92). Default `knowledge`. */
+  knowledgeDir?: string;
+}
+
+/** Parse repeated `--header "Name: Value"` flags into a header map (config auth). */
+function parseHeaderFlags(flags: string[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const h of flags ?? []) {
+    const i = h.indexOf(":");
+    if (i > 0) out[h.slice(0, i).trim()] = h.slice(i + 1).trim();
+  }
+  return out;
+}
+
+/** Render the runner's per-case verdicts — the verifiable artifact of API-3. */
+export function renderApiRun(results: ApiCaseResult[], evidencePath: string): string[] {
+  const passed = results.filter((r) => r.passed).length;
+  const lines = ["", "=== Run results (status + schema asserts) ===", `${passed}/${results.length} case(s) passed`];
+  for (const r of results) {
+    const mark = r.passed ? "✓" : "✗";
+    const got = r.error ? `error: ${r.error}` : `${r.response?.status ?? "—"} (want ${r.expectedStatus})`;
+    const retries = r.attempts > 1 ? ` ·${r.attempts} attempts` : "";
+    lines.push(`  ${mark} ${r.name} → ${got}${retries}`);
+    if (!r.statusOk && !r.error) lines.push(`      status mismatch`);
+    for (const e of r.schemaErrors) lines.push(`      schema: ${e}`);
+  }
+  lines.push("", `Evidence: ${evidencePath}`);
+  return lines;
 }
 
 /** Is this a remote spec we hand to swagger-parser as-is, vs a local file path we resolve? */
@@ -54,7 +94,6 @@ export function renderApiCases(cases: ApiCase[]): string[] {
     if (Object.keys(sent).length) lines.push(`      ${JSON.stringify(sent)}`);
   }
   lines.push("");
-  lines.push("Note: cases only (API-2). The runner + assertions land in API-3 (#138).");
   return lines;
 }
 
@@ -81,6 +120,29 @@ export const apiModality: Modality = {
       return;
     }
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
-    for (const line of renderApiCases(generateApiCases(model))) ctx.out(`${line}\n`);
+    const cases = generateApiCases(model);
+    for (const line of renderApiCases(cases)) ctx.out(`${line}\n`);
+
+    // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
+    if (!opts.baseUrl) {
+      ctx.out("Note: cases only. Pass --base-url <url> to execute them and assert responses (API-3).\n");
+      return;
+    }
+
+    // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
+    const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
+    const fromKnowledge = await loadApiCreds(knowledgeDir, { scope: "api", endpoint: opts.baseUrl });
+    const headers = { ...fromKnowledge, ...parseHeaderFlags(opts.header) };
+
+    ctx.err(`▸ Running ${cases.length} case(s) against ${opts.baseUrl}…\n`);
+    const results = await runApiCases(cases, { baseUrl: opts.baseUrl, auth: { headers } });
+
+    const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
+    await mkdir(outDir, { recursive: true });
+    const evidencePath = join(outDir, "api-evidence.json");
+    await writeFile(evidencePath, JSON.stringify(results, null, 2), "utf8");
+
+    for (const line of renderApiRun(results, evidencePath)) ctx.out(`${line}\n`);
+    if (results.some((r) => !r.passed)) process.exitCode = 1; // any failed assertion → non-zero exit
   },
 };

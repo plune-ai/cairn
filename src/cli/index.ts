@@ -129,8 +129,16 @@ export function buildProgram(): Command {
   // OpenAPI 3.x spec into the internal endpoint model and prints a summary — no generation yet.
   program
     .command("api")
-    .description("Ingest an OpenAPI 3.x spec into the endpoint model (API-1: parse + summary, no code yet)")
+    .description("Generate API tests from an OpenAPI 3.x spec; with --base-url, run them and assert responses")
     .requiredOption("--spec <path|url>", "OpenAPI 3.x spec — JSON or YAML, a local file path or an http(s) URL")
+    .option("--base-url <url>", "API-3: base URL to execute the generated cases against (assert status + schema)")
+    .option(
+      "--header <header>",
+      "API-3: extra request header 'Name: Value' (repeatable); overrides knowledge-supplied headers",
+      (val: string, prev: string[] = []) => [...prev, val],
+    )
+    .option("--out <dir>", "API-3: where to write run evidence (default runs/api-<id>/)")
+    .option("--knowledge-dir <dir>", "API-3: dir holding api-scope auth/headers knowledge (default knowledge/)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
     });
