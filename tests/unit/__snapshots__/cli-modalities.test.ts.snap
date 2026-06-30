@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`CLI surface lock (C1-02) > cairn --help lists the four gated stubs, marked coming-soon 1`] = `
+exports[`CLI surface lock (C1-02) > cairn --help lists the gated stubs (coming-soon) plus the real api command 1`] = `
 "Usage: cairn [options] [command]
 
 @plune-ai/cairn — autonomous UI test generator
@@ -14,6 +14,8 @@ Commands:
                          screenshot
   explore [options]      Explore a page and generate methodology-based test
                          cases (Sprint 2: no code)
+  api [options]          Ingest an OpenAPI 3.x spec into the endpoint model
+                         (API-1: parse + summary, no code yet)
   dataset-add [options]  Add a run (study.json) to an experiment dataset
   experiment [options]   Compare prompt versions on a dataset (B2
                          self-improvement)
@@ -32,8 +34,6 @@ Commands:
                          session interactively
   ui|e2e                 Generate UI / end-to-end tests — coming soon (gated;
                          see L-G2)
-  api                    Generate API / contract tests — coming soon (gated; see
-                         L-G2)
   unit                   Generate unit tests — coming soon (gated; see L-G2)
   docs                   Generate docs / doctest examples — coming soon (gated;
                          see L-G2)

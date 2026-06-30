@@ -200,7 +200,8 @@ describe("explore parity (C1-02)", () => {
 });
 
 describe("gated modality stubs (C1-02)", () => {
-  for (const name of ["ui", "e2e", "api", "unit", "docs"]) {
+  // `api` is no longer gated — it ships OpenAPI ingest in API-1 (#22); see api-modality.test.ts.
+  for (const name of ["ui", "e2e", "unit", "docs"]) {
     it(`cairn ${name} prints coming-soon, exits 0, and calls NO runner`, async () => {
       await buildProgram().parseAsync(["node", "cairn", name]);
       expect(outChunks.join("")).toContain("coming soon — gated (see L-G2). Build by demand, one at a time.");
@@ -218,12 +219,12 @@ describe("gated modality stubs (C1-02)", () => {
 });
 
 describe("CLI surface lock (C1-02)", () => {
-  it("cairn --help lists the four gated stubs, marked coming-soon", () => {
+  it("cairn --help lists the gated stubs (coming-soon) plus the real api command", () => {
     const program = buildProgram();
     program.configureHelp({ helpWidth: 80 });
     const help = program.helpInformation();
     expect(help).toContain("ui|e2e");
-    expect(help).toContain("api");
+    expect(help).toContain("api"); // now a real command (API-1, #22), not a gated stub
     expect(help).toContain("unit");
     expect(help).toContain("docs");
     expect(help).toMatch(/coming soon|gated/i);
