@@ -8,6 +8,7 @@
 import { defaultIO, gatedNotice } from "./modality.js";
 import type { IO, Modality } from "./modality.js";
 import { exploreModality } from "./modalities/explore.js";
+import { apiModality } from "./modalities/api.js";
 
 export const MODALITIES: Modality[] = [
   exploreModality,
@@ -18,7 +19,9 @@ export const MODALITIES: Modality[] = [
     summary: "Generate UI / end-to-end tests",
     hint: "For UI test generation today, use: cairn explore --url <url>",
   },
-  { name: "api", gated: true, summary: "Generate API / contract tests" },
+  // `api` is being built one slice at a time (#22): API-1 ships OpenAPI ingest + summary (no
+  // generation yet). It is a REAL modality now — registered with its own `--spec` command below.
+  apiModality,
   { name: "unit", gated: true, summary: "Generate unit tests" },
   { name: "docs", gated: true, summary: "Generate docs / doctest examples" },
 ];

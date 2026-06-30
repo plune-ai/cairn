@@ -1,0 +1,11 @@
+openapi: 3.0.0
+info:
+  title: Broken
+  version: 1.0.0
+paths:
+  /x:
+    get:
+      parameters: [unclosed
+      responses:
+        '200':
+          description: ok

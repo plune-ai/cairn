@@ -61,6 +61,7 @@
     "spike:s6-parity": "tsx scripts/spike-s6-parity.ts"
   },
   "dependencies": {
+    "@apidevtools/swagger-parser": "^10.1.1",
     "@langchain/anthropic": "^1.4.0",
     "@langchain/core": "^1.1.48",
     "@langchain/openai": "^1.4.7",
@@ -88,13 +89,27 @@
     "@playwright/cli": "^0.1.13"
   },
   "peerDependenciesMeta": {
-    "@langfuse/client": { "optional": true },
-    "@langfuse/langchain": { "optional": true },
-    "@langfuse/otel": { "optional": true },
-    "@langfuse/tracing": { "optional": true },
-    "@opentelemetry/api": { "optional": true },
-    "@opentelemetry/sdk-node": { "optional": true },
-    "@playwright/cli": { "optional": true }
+    "@langfuse/client": {
+      "optional": true
+    },
+    "@langfuse/langchain": {
+      "optional": true
+    },
+    "@langfuse/otel": {
+      "optional": true
+    },
+    "@langfuse/tracing": {
+      "optional": true
+    },
+    "@opentelemetry/api": {
+      "optional": true
+    },
+    "@opentelemetry/sdk-node": {
+      "optional": true
+    },
+    "@playwright/cli": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@langfuse/client": "^5.4.1",

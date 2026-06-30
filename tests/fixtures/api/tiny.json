@@ -1,0 +1,13 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Tiny API", "version": "0.1.0" },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "tags": ["ops"],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

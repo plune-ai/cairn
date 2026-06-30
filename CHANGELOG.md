@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — OpenAPI ingest (#22, C1-04 / API-1).** The `api` modality leaves the gate one slice
+  at a time. This first slice registers `cairn api --spec <path|url>` (parity with `cairn explore`) and
+  ingests an **OpenAPI 3.x** spec — JSON or YAML, local file or `http(s)` URL — into an internal
+  endpoint model (method, path, params, request/response schemas, `operationId`, security), then prints
+  a verifiable summary (*"N endpoints across M tags"* + the endpoint list). `$ref`s (incl. circular)
+  and 3.0/3.1 are handled via `@apidevtools/swagger-parser`; a malformed/unsupported spec fails with a
+  clear message and a non-zero exit, never a crash. **No case generation yet** — that, the runner and
+  the report are API-2 (#137); the Plune-record write + methodological rigor are API-3 (#138).
+
 - **Per-scenario screencast recording — `--screencast` (#94, BORROW-05).** Validation can now record a
   `.webm` per scenario (Playwright's built-in video) into `runs/<id>/screencasts/`, with a
   `screencasts.json` sidecar mapping each scenario's **step chapters** (step title → timecode) — a

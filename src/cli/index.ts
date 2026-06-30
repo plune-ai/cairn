@@ -125,6 +125,16 @@ export function buildProgram(): Command {
       await runModality("explore", opts);
     });
 
+  // api = the second REAL modality (C1-04 / #22), shipped one slice at a time. API-1 ingests an
+  // OpenAPI 3.x spec into the internal endpoint model and prints a summary — no generation yet.
+  program
+    .command("api")
+    .description("Ingest an OpenAPI 3.x spec into the endpoint model (API-1: parse + summary, no code yet)")
+    .requiredOption("--spec <path|url>", "OpenAPI 3.x spec — JSON or YAML, a local file path or an http(s) URL")
+    .action(async (opts: Record<string, unknown>) => {
+      await runModality("api", opts);
+    });
+
   program
     .command("dataset-add")
     .description("Add a run (study.json) to an experiment dataset")
