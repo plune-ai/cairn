@@ -95,10 +95,14 @@ describe("response-schema conformance (b)", () => {
     expect(r!.schemaErrors[0]).toMatch(/not valid JSON/);
   });
 
-  it("validateAgainstSchema handles enums, arrays, nullable and composition", () => {
+  it("validateAgainstSchema handles enums, arrays, integers, nullable and composition", () => {
     expect(validateAgainstSchema(["a", "b"], { type: "array", items: { type: "string" } })).toEqual([]);
+    expect(validateAgainstSchema([1, "x"], { type: "array", items: { type: "integer" } })).toEqual([expect.stringContaining("[1]: expected number")]);
     expect(validateAgainstSchema("z", { enum: ["a", "b"] })).toEqual([expect.stringContaining("not in enum")]);
+    expect(validateAgainstSchema(7, { type: "integer" })).toEqual([]); // integer satisfied by a JSON number
     expect(validateAgainstSchema(null, { type: "string", nullable: true })).toEqual([]);
+    expect(validateAgainstSchema(null, { type: "string" })).toEqual([expect.stringContaining("null is not")]);
+    expect(validateAgainstSchema({ a: { b: 1 } }, { type: "object", properties: { a: { type: "object", properties: { b: { type: "string" } } } } })).toEqual([expect.stringContaining("$.a.b: expected string")]);
     expect(validateAgainstSchema(5, { oneOf: [{ type: "string" }, { type: "number" }] })).toEqual([]);
     expect(validateAgainstSchema(true, { oneOf: [{ type: "string" }, { type: "number" }] })).toEqual([expect.stringContaining("matches none")]);
   });

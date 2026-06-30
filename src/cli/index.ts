@@ -138,6 +138,7 @@ export function buildProgram(): Command {
       (val: string, prev: string[] = []) => [...prev, val],
     )
     .option("--out <dir>", "API-3: where to write run evidence (default runs/api-<id>/)")
+    .option("--knowledge-dir <dir>", "API-3: dir holding api-scope auth/headers knowledge (default knowledge/)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
     });
