@@ -103,7 +103,7 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 | `cairn automate --run <dir> [--validate --session <s>] [--screencast]` | `@playwright/test` from `ATC-*` cases |
 | `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
 | `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique] [--screencast]` | Full pipeline (cases → code → validate → repair → Pilot) |
-| `cairn api --spec <path\|url>` | Ingest an OpenAPI 3.x spec (JSON/YAML, file or URL) into the endpoint model and print a summary — _API-1: parse only, no generation yet (#22)_ |
+| `cairn api --spec <path\|url>` | Ingest an OpenAPI 3.x spec (JSON/YAML, file or URL) and generate one happy-path case per operation (params + body synthesised from the schema, paired with the success response) — _API-2: cases, no runner yet (#132)_ |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).
