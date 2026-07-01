@@ -6,7 +6,7 @@ import type { TestCase } from "../design/index.js";
 import type { VerifiedElement } from "../browser/types.js";
 import { formatTransitions, type Transition } from "../probe/index.js";
 import { detectLanguage } from "../checklist/index.js";
-import type { ParsedTestCase } from "../artifacts/testcase-md.js";
+import type { ParsedTestCase, ParsedApiCase } from "../artifacts/testcase-md.js";
 import { GeneratedSuiteSchema, type GeneratedSuite } from "./schema.js";
 
 export type { GeneratedSuite, FileBlob } from "./schema.js";
@@ -106,4 +106,79 @@ export async function automateCases(
     : prompt.text;
   const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(text)]);
   return { files: suite.files.map((f) => ({ path: sanitizePath(f.path), content: f.content })) };
+}
+
+/** Substitute `{name}` path params with their synthesised value (mirrors `api/runner.ts`'s buildUrl). */
+function substitutePathParams(path: string, params: Record<string, unknown>): string {
+  let out = path;
+  for (const [k, v] of Object.entries(params)) out = out.replace(`{${k}}`, encodeURIComponent(String(v)));
+  return out;
+}
+
+/** Literal query string from synthesised query params (values are known at generation time). */
+function buildQueryString(params: Record<string, unknown>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) qs.append(k, String(v));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+/** Header params + a Cookie header from cookie params (mirrors `api/runner.ts`'s buildHeaders). */
+function buildApiHeaders(c: ParsedApiCase): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(c.params.header)) headers[k] = String(v);
+  const cookies = Object.entries(c.params.cookie);
+  if (cookies.length) headers["Cookie"] = cookies.map(([k, v]) => `${k}=${v}`).join("; ");
+  if (c.body !== undefined) headers["Content-Type"] = "application/json";
+  return headers;
+}
+
+/**
+ * A `response.status()` assertion for the case's declared success status — same vocabulary as
+ * `api/runner.ts`'s `statusMatches`: an exact code, `default` (any non-error status), or an `NXX` range.
+ */
+function statusAssertion(expected: string): string {
+  if (expected === "default") return "expect(response.status(), 'expected a non-error (< 400) status').toBeLessThan(400);";
+  const range = /^(\d)XX$/i.exec(expected);
+  if (range) {
+    const base = Number(range[1]) * 100;
+    return `expect(response.status()).toBeGreaterThanOrEqual(${base});\n  expect(response.status()).toBeLessThan(${base + 100});`;
+  }
+  return `expect(response.status()).toBe(${Number(expected)});`;
+}
+
+function renderApiTest(c: ParsedApiCase): string {
+  const path = substitutePathParams(c.path, c.params.path);
+  const query = buildQueryString(c.params.query);
+  const headers = buildApiHeaders(c);
+  const dataLine = c.body !== undefined ? `\n    data: ${JSON.stringify(c.body)},` : "";
+  return `test(${JSON.stringify(c.title)}, async ({ request }) => {
+  const response = await request.fetch(\`\${baseURL}${path}${query}\`, {
+    method: ${JSON.stringify(c.method)},
+    headers: ${JSON.stringify(headers)},${dataLine}
+  });
+  ${statusAssertion(c.expectedStatus)}
+});`;
+}
+
+/**
+ * `automate` command for API runs (API-7, #144): generate a runnable `@playwright/test` suite
+ * straight from PARSED ATC cases — no LLM. Unlike the web flow, every field a request needs
+ * (method/path/params/body/expected status) is already fully structured in the case, so codegen here
+ * is deterministic templating (the same "no LLM" reasoning as API-2's case generation), using the
+ * `request` fixture so the suite runs standalone in CI with no browser. `baseURL` is overridable via
+ * `API_BASE_URL` so the same generated suite targets a different environment than the one it was
+ * recorded against.
+ */
+export function automateApiCases(cases: ParsedApiCase[], ctx: { baseUrl: string }): GeneratedSuite {
+  const tests = cases.map(renderApiTest).join("\n\n");
+  const content = `import { test, expect } from '@playwright/test';
+
+// Trailing slash stripped (mirrors api/runner.ts's buildUrl) — a trailing-slash override never
+// doubles up with the case path, which always starts with "/".
+const baseURL = (process.env.API_BASE_URL ?? ${JSON.stringify(ctx.baseUrl)}).replace(/\\/+$/, "");
+
+${tests}
+`;
+  return { files: [{ path: "api.spec.ts", content }] };
 }

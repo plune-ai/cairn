@@ -10,8 +10,8 @@ import { initTelemetry } from "../telemetry/index.js";
 import { ArtifactStore, rmrf, type RunWriter } from "../artifacts/index.js";
 import { resolveProjectTarget, ejectSuiteToProject } from "../project/index.js";
 import { renderReportMd } from "../artifacts/report.js";
-import { parseTestCaseMd } from "../artifacts/testcase-md.js";
-import { automateCases } from "../codegen/index.js";
+import { parseTestCaseMd, parseApiTestCaseMd } from "../artifacts/testcase-md.js";
+import { automateCases, automateApiCases } from "../codegen/index.js";
 import { lintSuite, lintHint } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { computeCoverage } from "../eval/coverage.js";
@@ -911,62 +911,77 @@ export async function runAutomate(input: {
   const rep = JSON.parse(await readFile(join(runDir, "report.json"), "utf8")) as {
     url?: string;
     pageSemantics?: string;
+    mode?: string;
   };
   const baseUrl = rep.url ?? "";
   const pageSemantics = rep.pageSemantics ?? "";
+  const isApi = rep.mode === "api"; // API-7 (#144): report.json's mode (API-4) picks the codegen path.
 
   const tcDir = join(runDir, "testcases");
   const mdFiles = (await readdir(tcDir)).filter((f) => f.endsWith(".md"));
-  const allCases: ReturnType<typeof parseTestCaseMd>[] = [];
-  for (const f of mdFiles) allCases.push(parseTestCaseMd(await readFile(join(tcDir, f), "utf8")));
-  // Only auto/ATC — manual/MTC cases are NOT automated (they are manual).
-  const cases = allCases.filter((c) => c.execution !== "manual" && !c.id.startsWith("MTC"));
-  const skipped = allCases.length - cases.length;
-  onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${displayPath(tcDir)}`);
-
-  const invoke = router.invoke("worker", router.tierFor("worker", cfg.models.bulk));
-  const prompts = new PromptRegistry();
-  const buildSuite = (repairHint?: string): Promise<GeneratedSuite> =>
-    automateCases(cases, { baseUrl, pageSemantics }, { invoke, prompts }, repairHint);
 
   const artifacts = new ArtifactStore(dirname(runDir));
   const runWriter = await artifacts.openRun(basename(runDir));
 
-  let sessionPath: string | undefined;
-  if (input.sessionFile) sessionPath = resolve(input.sessionFile);
-  else if (input.sessionName) {
-    sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
-  }
-
   let suite: GeneratedSuite;
   let validation: ValidationReport | undefined;
   let stoppedEarly = false;
-  if (input.validate) {
-    // Onboarding guardrail: validation runs the generated suite → fail fast with a copy-paste fix
-    // before spending LLM calls on codegen. FIX B (0.3.3): pass the channel — skipped when a system
-    // browser is configured (the bug: `automate --validate` fired this even with BROWSER_CHANNEL=chrome).
-    ensureBrowsersInstalled({ channel: cfg.browser.channel });
-    // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
-    // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
-    const result = await runRepairLoop({
-      generate: async (hint) => {
-        const s = await buildSuite(hint);
-        await runWriter.writeSuite(s);
-        return s;
-      },
-      validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
-      maxRepair: cfg.maxRepair,
-      onProgress,
-      lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
-    });
-    suite = result.bestSuite;
-    validation = result.bestValidation;
-    stoppedEarly = result.stoppedEarly;
-    onProgress(
-      `automate — validation: ${Math.round(validation.greenRatio * 100)}% green${stoppedEarly ? " · stopped early (no progress)" : ""}`,
-    );
+
+  if (isApi) {
+    // Every field a request needs (method/path/params/body/expected status) is already fully
+    // structured in the ATC case — deterministic templating, no LLM (same reasoning as API-2's case
+    // generation). No browser either, so --validate (web's repair/session loop) doesn't apply here.
+    const apiCases: ReturnType<typeof parseApiTestCaseMd>[] = [];
+    for (const f of mdFiles) apiCases.push(parseApiTestCaseMd(await readFile(join(tcDir, f), "utf8")));
+    onProgress(`automate — ${apiCases.length} API case(s) from ${displayPath(tcDir)}`);
+    if (input.validate) onProgress("automate — --validate needs a browser/session (web-only); skipping for an API run.");
+    suite = automateApiCases(apiCases, { baseUrl });
   } else {
-    suite = await buildSuite(); // single pass — repair needs validation to measure progress
+    const allCases: ReturnType<typeof parseTestCaseMd>[] = [];
+    for (const f of mdFiles) allCases.push(parseTestCaseMd(await readFile(join(tcDir, f), "utf8")));
+    // Only auto/ATC — manual/MTC cases are NOT automated (they are manual).
+    const cases = allCases.filter((c) => c.execution !== "manual" && !c.id.startsWith("MTC"));
+    const skipped = allCases.length - cases.length;
+    onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${displayPath(tcDir)}`);
+
+    const invoke = router.invoke("worker", router.tierFor("worker", cfg.models.bulk));
+    const prompts = new PromptRegistry();
+    const buildSuite = (repairHint?: string): Promise<GeneratedSuite> =>
+      automateCases(cases, { baseUrl, pageSemantics }, { invoke, prompts }, repairHint);
+
+    let sessionPath: string | undefined;
+    if (input.sessionFile) sessionPath = resolve(input.sessionFile);
+    else if (input.sessionName) {
+      sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
+    }
+
+    if (input.validate) {
+      // Onboarding guardrail: validation runs the generated suite → fail fast with a copy-paste fix
+      // before spending LLM calls on codegen. FIX B (0.3.3): pass the channel — skipped when a system
+      // browser is configured (the bug: `automate --validate` fired this even with BROWSER_CHANNEL=chrome).
+      ensureBrowsersInstalled({ channel: cfg.browser.channel });
+      // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
+      // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
+      const result = await runRepairLoop({
+        generate: async (hint) => {
+          const s = await buildSuite(hint);
+          await runWriter.writeSuite(s);
+          return s;
+        },
+        validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
+        maxRepair: cfg.maxRepair,
+        onProgress,
+        lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
+      });
+      suite = result.bestSuite;
+      validation = result.bestValidation;
+      stoppedEarly = result.stoppedEarly;
+      onProgress(
+        `automate — validation: ${Math.round(validation.greenRatio * 100)}% green${stoppedEarly ? " · stopped early (no progress)" : ""}`,
+      );
+    } else {
+      suite = await buildSuite(); // single pass — repair needs validation to measure progress
+    }
   }
 
   // #51: eject into an existing Playwright project when requested; else write to runDir/tests as before.

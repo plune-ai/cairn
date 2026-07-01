@@ -4,6 +4,7 @@ import {
   renderApiTestCaseMd,
   mapPriority,
   parseTestCaseMd,
+  parseApiTestCaseMd,
   type TestCaseDoc,
   type ApiTestCaseDoc,
 } from "../../src/artifacts/testcase-md.js";
@@ -125,5 +126,43 @@ describe("renderApiTestCaseMd (ATC format, API-5 #135)", () => {
     const md = renderApiTestCaseMd({ ...apiCase, expectedSchema: undefined }, apiDoc);
     expect(md).toContain("- HTTP 201");
     expect(md).not.toContain("conforming to");
+  });
+});
+
+describe("parseApiTestCaseMd (API-7, #144: ATC .md → codegen input)", () => {
+  it("round-trips from the renderer (id/title/method/path/body/expectedStatus)", () => {
+    const parsed = parseApiTestCaseMd(renderApiTestCaseMd(apiCase, apiDoc));
+    expect(parsed.id).toBe("ATC-PETSTORE-API-001");
+    expect(parsed.title).toBe("createPet");
+    expect(parsed.method).toBe("POST");
+    expect(parsed.path).toBe("/pets");
+    expect(parsed.body).toEqual({ name: "string" });
+    expect(parsed.expectedStatus).toBe("201");
+    expect(parsed.params).toEqual({ path: {}, query: {}, header: {}, cookie: {} });
+  });
+
+  it("recovers non-body params (path/query/header/cookie) grouped by location", () => {
+    const withParams: ApiCase = {
+      ...apiCase,
+      body: undefined,
+      params: { path: { id: "1" }, query: { limit: "10" }, header: {}, cookie: {} },
+    };
+    const parsed = parseApiTestCaseMd(renderApiTestCaseMd(withParams, apiDoc));
+    expect(parsed.params).toEqual({ path: { id: "1" }, query: { limit: "10" }, header: {}, cookie: {} });
+    expect(parsed.body).toBeUndefined();
+  });
+
+  it("no params/body sent (bare GET) → empty params, no body", () => {
+    const bare: ApiCase = { ...apiCase, method: "GET", path: "/pets", body: undefined };
+    const parsed = parseApiTestCaseMd(renderApiTestCaseMd(bare, apiDoc));
+    expect(parsed.params).toEqual({ path: {}, query: {}, header: {}, cookie: {} });
+    expect(parsed.body).toBeUndefined();
+  });
+
+  it("'default' expected status (no HTTP-status line matched) falls back to 'default'", () => {
+    // Defensive default — every rendered doc actually has a "HTTP <status>" line (this covers a
+    // malformed/hand-edited doc without one).
+    const parsed = parseApiTestCaseMd("---\nid: X\ntitle: \"x\"\n---\n\n## Request\n- GET /x\n");
+    expect(parsed.expectedStatus).toBe("default");
   });
 });

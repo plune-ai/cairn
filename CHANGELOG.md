@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — Playwright codegen from ATC cases (#144, C1-04 / API-7).** `cairn automate --run
+  <runDir>` — the same decoupled design→automate contract web runs use — now also works on an API
+  run (`report.json`'s `mode: "api"`, API-4): it reads the ATC `.md` cases (API-5) and generates a
+  runnable `tests/api.spec.ts` using `@playwright/test`'s `request` fixture, one `test()` per case,
+  asserting the declared success status (exact/`default`/`NXX`, same vocabulary as the runner). No
+  LLM call — every field a request needs (method/path/params/body/expected status) is already fully
+  structured in the case, so codegen is deterministic templating (the same reasoning as API-2's case
+  generation). The generated suite imports nothing from `cairn`, so it runs standalone in CI; `baseURL`
+  defaults to the recorded value but is overridable per-environment via `API_BASE_URL`. `--validate`
+  is a web-only concept (needs a browser/session) and is a no-op (with a progress note) on an API run.
+
 - **`cairn api` — spec-vs-tested coverage report (#136, C1-04 / API-6, `playswag`-style).** Given the
   ingested spec (API-1) and the generated/executed cases (API-2/API-3), `cairn api` now reports which
   operations are untested and which are only **partially** exercised: an operation is `covered` only
