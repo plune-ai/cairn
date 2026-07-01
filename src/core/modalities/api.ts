@@ -9,12 +9,15 @@
  *   per operation, alongside the happy-path case — same pipeline, distinct `type: "Negative"`.
  * API-9 (#146): with `--scenarios`, also generate/run multi-endpoint chains on the same resource
  *   (e.g. create → read → delete), threading a captured response value through each step.
+ * BORROW-07 (#95): with `--adversarial`, also generate/run cases in one or more named styles —
+ *   normal/curious/psycho/hacker (`src/api/adversarial.ts`) — alongside the existing cases.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
+import { generateAdversarialCases, ADVERSARIAL_STYLES, type AdversarialStyle } from "../../api/adversarial.js";
 import { runApiCases, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
 import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
 import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
@@ -41,6 +44,23 @@ interface ApiFlags {
   negative?: boolean;
   /** API-9: also generate/run multi-endpoint scenario chains (e.g. create → read → delete). */
   scenarios?: boolean;
+  /** BORROW-07 (#95): also generate/run adversarial-style cases. `true` (bare flag) = all four
+   * styles; a comma-separated string picks specific ones. */
+  adversarial?: boolean | string;
+}
+
+/**
+ * Parse `--adversarial` into the requested style list. A bare flag means all four; a comma-separated
+ * value picks specific styles. Unrecognised names are dropped, NOT a signal to fall back to "all" —
+ * a typo should generate fewer cases than intended, never silently more.
+ */
+function parseAdversarialFlag(flag: boolean | string | undefined): AdversarialStyle[] {
+  if (!flag) return [];
+  if (flag === true) return [...ADVERSARIAL_STYLES];
+  return flag
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is AdversarialStyle => (ADVERSARIAL_STYLES as readonly string[]).includes(s));
 }
 
 /** Parse repeated `--header "Name: Value"` flags into a header map (config auth). */
@@ -123,13 +143,17 @@ export function renderApiSummary(model: ApiModel, source: string): string[] {
 /** Render the generated cases — the verifiable artifact of API-2 (+ API-8 negative cases, if requested). */
 export function renderApiCases(cases: ApiCase[]): string[] {
   const negative = cases.filter((c) => c.type === "Negative").length;
+  // "normal"-tagged cases ARE the baseline happy path (tagged in place, not additional) — only
+  // curious/psycho/hacker are genuinely extra cases worth calling out in the summary count.
+  const adversarial = cases.filter((c) => c.adversarialStyle && c.adversarialStyle !== "normal").length;
   const lines = [
     "",
     "=== Baseline cases (happy-path · 1 per operation) ===",
-    `${cases.length} case(s) generated${negative ? ` (${negative} negative-schema)` : ""}`,
+    `${cases.length} case(s) generated${negative ? ` (${negative} negative-schema)` : ""}${adversarial ? ` (${adversarial} adversarial)` : ""}`,
   ];
   for (const c of cases) {
-    lines.push(`  ▸ ${c.name} [${c.type}] → ${c.expectedStatus}`);
+    const style = c.adversarialStyle ? `[${c.adversarialStyle}${c.wstgId ? ` ${c.wstgId}` : ""}] ` : "";
+    lines.push(`  ▸ ${c.name} ${style}[${c.type}] → ${c.expectedStatus}`);
     lines.push(`      [${c.technique}] ${c.rationale}`);
     const sent: Record<string, unknown> = {};
     for (const [where, vals] of Object.entries(c.params)) {
@@ -218,7 +242,18 @@ export const apiModality: Modality = {
       return;
     }
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
-    const cases = [...generateApiCases(model), ...(opts.negative ? generateNegativeCases(model) : [])];
+    // BORROW-07 (#95): "normal" style is the always-generated happy path itself — tag in place rather
+    // than re-emitting duplicate cases when both are on (e.g. bare `--adversarial`).
+    const adversarialStyles = parseAdversarialFlag(opts.adversarial);
+    const baseCases = generateApiCases(model);
+    const taggedBaseCases = adversarialStyles.includes("normal")
+      ? baseCases.map((c): ApiCase => ({ ...c, adversarialStyle: "normal" }))
+      : baseCases;
+    const cases = [
+      ...taggedBaseCases,
+      ...(opts.negative ? generateNegativeCases(model) : []),
+      ...generateAdversarialCases(model, adversarialStyles),
+    ];
     for (const line of renderApiCases(cases)) ctx.out(`${line}\n`);
     const scenarios = opts.scenarios ? generateApiScenarios(model) : [];
     for (const line of renderApiScenarios(scenarios)) ctx.out(`${line}\n`);

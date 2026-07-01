@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — adversarial testing styles (#95, BORROW-07).** New `--adversarial [styles]` flag —
+  generates/runs cases in one or more of four named styles (bare flag = all; comma-separated to pick
+  specific ones), taxonomy borrowed from testomatio/explorbot's Chief+Curler (explorbot's own styles
+  are LLM-driven; only the taxonomy is ported, translated into cairn's existing schema-driven, no-LLM
+  case generation): `normal` (the always-generated happy path, just tagged — no new cases), `curious`
+  (exhaustive valid-data coverage: every parameter including optional ones, one case per additional
+  declared enum value), `psycho` (invalid/malformed/extreme input: SQL-injection and XSS payloads in
+  the first string body property, an extreme boundary value in the first numeric one, plus API-8's
+  existing negative case re-tagged rather than reimplemented — payloads and OWASP WSTG test IDs
+  harvested from AZANIR/qa-skills via BORROW-08/#96), and `hacker` (a deliberate subset: strips
+  configured auth headers from an otherwise-valid request and expects rejection — `ApiCase.stripAuth`,
+  honoured by the runner). Every generated case carries `adversarialStyle` + (where applicable)
+  `wstgId`, flowing through the existing run/report/coverage/ATC pipeline unmodified — a distinct case
+  category, not a parallel one. The coverage half of this issue's DoD needed no new code: API-6's
+  `computeApiCoverage` is endpoint/status-driven, already covers however many cases target an
+  operation. **Deliberately out of scope** (follow-up): `hacker`'s IDOR and privilege-escalation
+  checks are genuinely stateful/multi-request in explorbot's own implementation (≥2 identities,
+  resource creation + adjacent-ID probing, response-field replay) — closer to API-9's scenario-chain
+  machinery than a single independent case, so only the deterministic auth-strip check ships here.
+
 - **`cairn api` — `multipart/form-data` request encoding (#150, C1-04 / API-10).** The runner
   (`runner.ts`) now encodes a case's body as real `multipart/form-data` (boundary, per-part
   `Content-Disposition`, correct `Content-Type`) when the operation declares it, instead of always

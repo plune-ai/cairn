@@ -68,6 +68,13 @@ export interface ApiCase {
    * `requestBody.mediaTypes` entry. The runner encodes as `multipart/form-data` when this says so,
    * JSON otherwise (including when the operation declares no body at all). */
   bodyMediaType?: string;
+  /** Which adversarial style (BORROW-07, #95) generated this case, if any. */
+  adversarialStyle?: "normal" | "curious" | "psycho" | "hacker";
+  /** OWASP WSTG test ID this case exercises (BORROW-07, #95), when one specifically applies. */
+  wstgId?: string;
+  /** Send this request with auth headers stripped (BORROW-07, #95 `hacker` style) — the runner skips
+   * merging `RunnerOptions.auth.headers` when true, instead of the normal always-applied behaviour. */
+  stripAuth?: boolean;
 }
 
 /** Generate one baseline happy-path case per operation, in the model's (deterministic) order. */
@@ -96,6 +103,27 @@ function synthRequiredParams(e: ApiEndpoint, omit?: ApiParam): ApiCaseParams {
   return params;
 }
 
+/** ALL params (required AND optional) with schema-synthesised values — the "curious" adversarial
+ * style's full-coverage variant of `synthRequiredParams` (BORROW-07, #95): optional params get
+ * exercised too, instead of the happy path's omit-if-optional convention. */
+export function synthAllParams(e: ApiEndpoint): ApiCaseParams {
+  const params: ApiCaseParams = { path: {}, query: {}, header: {}, cookie: {} };
+  for (const p of e.parameters) params[p.in][p.name] = synth(p.schema);
+  return params;
+}
+
+/** Body-schema properties that declare an `enum` with more than one value — the "curious" style's
+ * one-case-per-additional-value expansion needs the full list (the happy path's `synth()` only ever
+ * sends the first). */
+export function enumProps(schema: unknown): [string, unknown[]][] {
+  if (!schema || typeof schema !== "object") return [];
+  const out: [string, unknown[]][] = [];
+  for (const [name, sub] of Object.entries((schema as Schema).properties ?? {})) {
+    if (sub.enum && sub.enum.length > 1) out.push([name, sub.enum]);
+  }
+  return out;
+}
+
 /** Build the happy-path case for one operation (API-9, #146: also reused by `scenarios.ts` per step —
  * a scenario step is a normal case whose path params get overwritten with captured values at run time). */
 export function toCase(e: ApiEndpoint): ApiCase {
@@ -122,10 +150,12 @@ export function toCase(e: ApiEndpoint): ApiCase {
   };
 }
 
-/** Body-schema properties whose declared (primitive) type we can flip to something invalid. */
-function corruptibleProps(schema: Schema): [string, string][] {
+/** Body-schema properties whose declared (primitive) type we can flip to something invalid — reused
+ * by the "psycho"/"hacker" adversarial styles (BORROW-07, #95) to target a string/numeric property. */
+export function corruptibleProps(schema: unknown): [string, string][] {
+  if (!schema || typeof schema !== "object") return [];
   const out: [string, string][] = [];
-  for (const [name, sub] of Object.entries(schema.properties ?? {})) {
+  for (const [name, sub] of Object.entries((schema as Schema).properties ?? {})) {
     const type = Array.isArray(sub.type) ? sub.type.find((t) => t !== "null") : sub.type;
     if (typeof type === "string") out.push([name, type]);
   }
@@ -147,14 +177,16 @@ function wrongTypeValue(type: string): unknown {
   }
 }
 
-/** The lowest declared 4xx status, else the generic "4XX" range (matched by the runner's `statusMatches`). */
-function pickErrorStatus(e: ApiEndpoint): string {
+/** The lowest declared 4xx status, else the generic "4XX" range (matched by the runner's `statusMatches`).
+ * Reused by the "psycho"/"hacker" adversarial styles (BORROW-07, #95) — same "expect rejection"
+ * convention as a negative case. */
+export function pickErrorStatus(e: ApiEndpoint): string {
   const fourXX = e.responses.filter((r) => /^4\d\d$/.test(r.status)).sort((a, b) => a.status.localeCompare(b.status));
   return fourXX[0]?.status ?? "4XX";
 }
 
 /** The declared response schema for an EXACT status match, if the case picked one (not the "4XX" fallback). */
-function pickErrorSchema(e: ApiEndpoint, expectedStatus: string): unknown {
+export function pickErrorSchema(e: ApiEndpoint, expectedStatus: string): unknown {
   return e.responses.find((r) => r.status === expectedStatus)?.schema;
 }
 

@@ -217,9 +217,11 @@ function buildUrl(baseUrl: string, c: ApiCase): string {
  * content-type for a body case — UNLESS the operation declares `multipart/form-data` (API-10,
  * #150), where `fetch`/undici must generate its own `Content-Type: multipart/form-data; boundary=…`
  * from the `FormData` body; a manually-set header here would just fight (and lose to) that.
+ * `stripAuth` (BORROW-07, #95 `hacker` style) skips the configured auth headers entirely — the case
+ * is deliberately testing whether the operation actually rejects an unauthenticated request.
  */
 function buildHeaders(c: ApiCase, auth?: ApiAuth): Record<string, string> {
-  const headers: Record<string, string> = { ...(auth?.headers ?? {}) };
+  const headers: Record<string, string> = c.stripAuth ? {} : { ...(auth?.headers ?? {}) };
   for (const [k, v] of Object.entries(c.params.header)) headers[k] = String(v);
   const cookies = Object.entries(c.params.cookie);
   if (cookies.length) headers["Cookie"] = cookies.map(([k, v]) => `${k}=${v}`).join("; ");
