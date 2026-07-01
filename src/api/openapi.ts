@@ -19,12 +19,25 @@ export interface ApiParam {
   schema?: unknown;
 }
 
+/**
+ * An OpenAPI `links` entry (API-9, #146): declares which other operation a response can seed, and
+ * how — `parameters` maps a *target*-operation parameter name to a runtime expression (e.g.
+ * `"$response.body#/id"`) evaluated against this response. The spec-native alternative to guessing
+ * "which field feeds the next request" by name.
+ */
+export interface ApiLink {
+  operationId?: string;
+  parameters: Record<string, string>;
+}
+
 /** One response of an endpoint, keyed by status code (or "default"). */
 export interface ApiResponse {
   status: string;
   description?: string;
   /** Schema of the first response media type, if the response carries a body. */
   schema?: unknown;
+  /** Declared `links` (API-9, #146) — empty when the spec doesn't declare any. */
+  links?: Record<string, ApiLink>;
 }
 
 /** The request body of an endpoint (absent for GET/DELETE-style ops without a body). */
@@ -86,7 +99,10 @@ interface RawOperation {
   tags?: string[];
   parameters?: RawParam[];
   requestBody?: { required?: boolean; content?: Record<string, { schema?: unknown }> };
-  responses?: Record<string, { description?: string; content?: Record<string, { schema?: unknown }> }>;
+  responses?: Record<
+    string,
+    { description?: string; content?: Record<string, { schema?: unknown }>; links?: Record<string, RawLink> }
+  >;
   security?: RawSecurityRequirement[];
   deprecated?: boolean;
 }
@@ -97,6 +113,10 @@ interface RawParam {
   schema?: unknown;
 }
 type RawSecurityRequirement = Record<string, string[]>;
+interface RawLink {
+  operationId?: string;
+  parameters?: Record<string, string>;
+}
 
 const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"] as const;
 
@@ -190,12 +210,22 @@ function toRequestBody(rb: RawOperation["requestBody"]): ApiRequestBody | undefi
 function toResponses(responses: RawOperation["responses"]): ApiResponse[] {
   return Object.entries(responses ?? {}).map(([status, r]) => {
     const first = Object.keys(r.content ?? {})[0];
+    const links = toLinks(r.links);
     return {
       status,
       description: r.description,
       schema: first ? r.content?.[first]?.schema : undefined,
+      ...(links ? { links } : {}),
     };
   });
+}
+
+/** API-9 (#146): declared `links`, if any — `undefined` (not `{}`) when the spec declares none. */
+function toLinks(raw: Record<string, RawLink> | undefined): Record<string, ApiLink> | undefined {
+  if (!raw || Object.keys(raw).length === 0) return undefined;
+  const out: Record<string, ApiLink> = {};
+  for (const [name, l] of Object.entries(raw)) out[name] = { operationId: l.operationId, parameters: l.parameters ?? {} };
+  return out;
 }
 
 /** Flatten security requirement objects to the distinct set of scheme names they reference. */

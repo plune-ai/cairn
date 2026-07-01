@@ -8,6 +8,7 @@ import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
 import type { CostReport } from "../llm/cost.js";
 import type { ApiCaseResult } from "../api/runner.js";
 import type { ApiCoverageReport } from "../api/coverage.js";
+import type { ApiScenarioResult } from "../api/scenario-runner.js";
 import { displayPath } from "../agent/summary.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
@@ -185,6 +186,8 @@ export interface ApiReportInput {
   evidencePath: string;
   /** API-6 (#136): spec-vs-tested coverage (playswag-style) — rendered as a gaps section when present. */
   coverage?: ApiCoverageReport;
+  /** API-9 (#146): multi-endpoint scenario chains — rendered as a section only when non-empty. */
+  scenarios?: ApiScenarioResult[];
 }
 
 /** Human-readable Markdown run report for `cairn api`: per-operation pass/fail + evidence link. */
@@ -205,6 +208,21 @@ export function renderApiReportMd(r: ApiReportInput): string {
     lines.push(`| ${x.passed ? "✓" : "✗"} | ${x.method} | ${x.url} | ${x.expectedStatus} | ${got} |`);
   }
   lines.push("");
+
+  // API-9 (#146): per-scenario pass/fail, each step's own row (mirrors the Operations table above).
+  if (r.scenarios && r.scenarios.length > 0) {
+    const scenariosPassed = r.scenarios.filter((s) => s.passed).length;
+    lines.push(`## Scenarios (${scenariosPassed}/${r.scenarios.length} passed)`, "");
+    for (const s of r.scenarios) {
+      lines.push(`### ${s.passed ? "✓" : "✗"} ${s.name}`, "");
+      lines.push("| status | method | url | expected | got |", "|---|---|---|---|---|");
+      for (const step of s.steps) {
+        const got = step.error ? step.error : String(step.response?.status ?? "—");
+        lines.push(`| ${step.passed ? "✓" : "✗"} | ${step.method} | ${step.url || "—"} | ${step.expectedStatus} | ${got} |`);
+      }
+      lines.push("");
+    }
+  }
 
   // API-6 (#136): spec-vs-tested coverage (playswag-style) — gaps only; covered ops need no row.
   if (r.coverage) {
