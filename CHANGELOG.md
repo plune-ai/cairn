@@ -220,6 +220,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cairn api --adversarial hacker` expected the wrong status code on some specs (#154).** The
+  auth-header-stripped case (added in #95) reused `pickErrorStatus`'s generic "lowest declared 4xx" —
+  right for a schema-violation case, wrong here: an operation can legitimately declare an unrelated
+  4xx (e.g. `404 Not found`, or a lexically-lower `400 Bad request`) that has nothing to do with
+  authentication. `toHackerCase` now prefers a declared `401`, then `403` — the specific "auth
+  rejection" codes — over the generic fallback, which only still applies when neither is declared.
+  Found live: a real mock server correctly rejecting an unauthenticated request with `401` was
+  failing the case, which expected `404` instead.
+
 - **OpenRouter codegen/reasoning latency — `explore`/`design` no longer hang (#110).** On the
   `openrouter` profile / `volume` routing, `deepseek-chat` (codegen) ran 4.5–13 min and `deepseek-r1`
   (reasoner) overran interactive/MCP timeouts without finishing. Two fixes:
