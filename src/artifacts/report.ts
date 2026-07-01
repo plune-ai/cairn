@@ -7,6 +7,7 @@ import type { Score } from "../eval/scorers.js";
 import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
 import type { CostReport } from "../llm/cost.js";
 import type { ApiCaseResult } from "../api/runner.js";
+import type { ApiCoverageReport } from "../api/coverage.js";
 import { displayPath } from "../agent/summary.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
@@ -182,6 +183,8 @@ export interface ApiReportInput {
   /** Endpoints in the ingested spec covered by the run. */
   endpointCount: number;
   evidencePath: string;
+  /** API-6 (#136): spec-vs-tested coverage (playswag-style) — rendered as a gaps section when present. */
+  coverage?: ApiCoverageReport;
 }
 
 /** Human-readable Markdown run report for `cairn api`: per-operation pass/fail + evidence link. */
@@ -202,5 +205,23 @@ export function renderApiReportMd(r: ApiReportInput): string {
     lines.push(`| ${x.passed ? "✓" : "✗"} | ${x.method} | ${x.url} | ${x.expectedStatus} | ${got} |`);
   }
   lines.push("");
+
+  // API-6 (#136): spec-vs-tested coverage (playswag-style) — gaps only; covered ops need no row.
+  if (r.coverage) {
+    const c = r.coverage;
+    lines.push(`## Coverage (${c.coveredCount}/${c.endpointCount} endpoint(s) — ${Math.round(c.ratio * 100)}%)`, "");
+    const gaps = c.endpoints.filter((e) => e.status !== "covered");
+    if (gaps.length > 0) {
+      lines.push("| status | method | path | operationId | tested | missing |", "|---|---|---|---|---|---|");
+      for (const e of gaps) {
+        const missing = e.declaredStatuses.filter((s) => !e.testedStatuses.includes(s)).join(", ");
+        const dep = e.deprecated ? " (deprecated)" : "";
+        lines.push(
+          `| ${e.status === "partial" ? "⚠ partial" : "✗ uncovered"} | ${e.method} | ${e.path}${dep} | ${e.operationId ?? ""} | ${e.testedStatuses.join(", ") || "—"} | ${missing} |`,
+        );
+      }
+      lines.push("");
+    }
+  }
   return lines.join("\n");
 }

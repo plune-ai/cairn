@@ -21,6 +21,14 @@ import type { ApiEndpoint, ApiModel } from "./openapi.js";
 /** ISO/IEC/IEEE 29119-4 technique — shared enum with web cases (`design/schema.ts`). */
 export type ApiCaseTechnique = z.infer<typeof TestTechniqueSchema>;
 
+/**
+ * The stable key an operation is identified by across the model/cases/results/coverage — same rule
+ * everywhere (API-6, #136): `operationId` if declared, else `METHOD path`.
+ */
+export function apiEndpointKey(e: { method: string; path: string; operationId?: string }): string {
+  return e.operationId ?? `${e.method} ${e.path}`;
+}
+
 /** Values synthesised for an operation's parameters, grouped by location. */
 export interface ApiCaseParams {
   path: Record<string, unknown>;
@@ -66,7 +74,7 @@ function toCase(e: ApiEndpoint): ApiCase {
   const success = pickSuccess(e);
   const expectedStatus = success?.status ?? "200";
   return {
-    name: e.operationId ?? `${e.method} ${e.path}`,
+    name: apiEndpointKey(e),
     method: e.method,
     path: e.path,
     operationId: e.operationId,

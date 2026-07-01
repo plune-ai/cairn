@@ -49,6 +49,8 @@ export interface ApiEndpoint {
   responses: ApiResponse[];
   /** Names of the security schemes this op requires (operation-level, else the spec default). */
   security: string[];
+  /** The spec's own `deprecated:` flag (API-6, #136) — surfaced, not filtered: still worth a coverage row. */
+  deprecated: boolean;
 }
 
 /** The flattened spec: everything a later slice (API-2) needs to design + run cases. */
@@ -86,6 +88,7 @@ interface RawOperation {
   requestBody?: { required?: boolean; content?: Record<string, { schema?: unknown }> };
   responses?: Record<string, { description?: string; content?: Record<string, { schema?: unknown }> }>;
   security?: RawSecurityRequirement[];
+  deprecated?: boolean;
 }
 interface RawParam {
   name: string;
@@ -144,6 +147,7 @@ export async function ingestOpenApi(spec: string): Promise<ApiModel> {
         responses: toResponses(op.responses),
         // Operation security overrides the spec default; [] means "explicitly public".
         security: securityNames(op.security ?? doc.security ?? []),
+        deprecated: op.deprecated ?? false,
       });
     }
   }

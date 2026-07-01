@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — spec-vs-tested coverage report (#136, C1-04 / API-6, `playswag`-style).** Given the
+  ingested spec (API-1) and the generated/executed cases (API-2/API-3), `cairn api` now reports which
+  operations are untested and which are only **partially** exercised: an operation is `covered` only
+  when every response status it declares (e.g. `200` **and** `404`) has a matching case, `partial`
+  when some (but not all) are, and `uncovered` when none are. Since every API-2 case is still a single
+  happy-path call, any operation declaring more than one response is `partial` by construction — a
+  concrete, honest signal (endpoint coverage ≠ test-pass rate) rather than a percentage that looks
+  better than it is. Shown as a summary + gaps-only listing on stdout, in `report.md` (new `## Coverage`
+  section), and as `coverage` in `report.json`; works without `--base-url` too (spec-vs-generated-cases).
+  Matching is by `operationId`/`METHOD path` (shared with case generation, `apiEndpointKey`), and the
+  spec's own `deprecated` flag is surfaced per row rather than filtered out. Feeds BORROW-07 (#95,
+  adversarial styles) and L2-05 coverage gap-analysis.
+
 - **`cairn api` — Plune-record write + methodology rigor (#135, C1-04 / API-5).** A `--base-url` run now
   emits every generated case as an **ATC artifact** (`runs/api-<id>/testcases/<id>.md`) — the same
   `testcases/<id>.md` boundary web runs already write, so Plune ingests API cases identically. Each
