@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — multi-endpoint scenario chains / journeys (#146, C1-04 / API-9).** New `--scenarios`
+  flag: given the ingested spec, chains related operations on the same resource (a *collection* path
+  like `/pets` plus an *item* path templated one level deeper, `/pets/{id}`) into an ordered
+  create→read→update→delete scenario, using whichever of those the spec actually declares (a resource
+  with no downstream op — nothing to read/update/delete a created resource with — gets no scenario).
+  Each step is a normal API-2 happy-path case; the runner (`scenario-runner.ts`) threads a value
+  captured from an earlier step's response into a later step's matching param — preferring a declared
+  OpenAPI `links` expression (`$response.body#/...`) when the spec has one, falling back to a
+  same-named response-body field otherwise. A failing step aborts the rest of the scenario (its
+  remaining steps are recorded, not silently dropped, with a `skipped —` reason) rather than
+  cascading one real failure into several meaningless ones. Per-scenario (and per-step) pass/fail is
+  reported alongside the existing per-operation results: a new stdout section, `report.json`'s
+  `scenarios` field, and a `## Scenarios` section in `report.md`. Opt-in, so the existing default
+  (1 case per operation) is unchanged for everyone not passing the flag. Follow-ups (out of scope
+  here): scenario steps aren't folded into the spec-vs-tested coverage report or ATC `.md` docs, both
+  of which are shaped around single operations today.
+
 - **`cairn api` — stricter contract validation + negative-schema cases (#145, C1-04 / API-8).**
   Response-schema conformance now goes through `ajv` (+ `ajv-formats`) instead of the hand-rolled
   structural checker: `format`/`pattern`/`minimum`/`maximum`/`additionalProperties` are now enforced,

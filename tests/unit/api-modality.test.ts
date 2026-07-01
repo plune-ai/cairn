@@ -230,6 +230,93 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       await rm(out, { recursive: true, force: true });
     }
   });
+
+  it("(API-9, #146) --scenarios chains create → read → update → delete, threading the captured id", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-out4-"));
+    try {
+      // Echoes whatever id is in the URL back in the body — the scenario's downstream URLs only ever
+      // carry "abc123" (createItem's response id) if the runner actually threaded it through; the
+      // base per-operation cases (independent, unthreaded synthetic ids) get a valid response either way.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit) => {
+          const path = new URL(url).pathname;
+          if (path === "/items" && init.method === "POST") {
+            const body = JSON.parse(init.body as string) as { name: string };
+            return { status: 201, headers: { get: () => null }, text: async () => JSON.stringify({ id: "abc123", name: body.name }) } as unknown as Response;
+          }
+          const item = path.match(/^\/items\/([^/]+)$/);
+          if (item && (init.method === "GET" || init.method === "PUT")) {
+            return { status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ id: item[1], name: "string" }) } as unknown as Response;
+          }
+          if (item && init.method === "DELETE") {
+            return { status: 204, headers: { get: () => null }, text: async () => "" } as unknown as Response;
+          }
+          if (path === "/widgets" && init.method === "POST") {
+            return { status: 201, headers: { get: () => null }, text: async () => JSON.stringify({ id: "w1", label: "string" }) } as unknown as Response;
+          }
+          const widget = path.match(/^\/widgets\/([^/]+)$/);
+          if (widget && init.method === "GET") {
+            return { status: 200, headers: { get: () => null }, text: async () => JSON.stringify({ id: widget[1], label: "string" }) } as unknown as Response;
+          }
+          if (widget && init.method === "DELETE") {
+            return { status: 204, headers: { get: () => null }, text: async () => "" } as unknown as Response;
+          }
+          return { status: 201, headers: { get: () => null }, text: async () => "" } as unknown as Response; // recordEvent — no response schema
+        }),
+      );
+
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync([
+        "node", "cairn", "api", "--spec", join(fixtures, "crud-store.yaml"),
+        "--base-url", "https://api.test", "--out", out, "--scenarios",
+      ]);
+
+      const out0 = outChunks.join("");
+      expect(out0).toContain("Scenarios (2 chain(s) generated)");
+      expect(out0).toContain("2/2 scenario(s) passed");
+      expect(process.exitCode ?? 0).toBe(0);
+
+      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        scenarios: { name: string; passed: boolean; steps: { name: string; url: string; passed: boolean }[] }[];
+      };
+      const items = report.scenarios.find((s) => s.name === "items lifecycle")!;
+      expect(items.passed).toBe(true);
+      expect(items.steps.map((s) => s.name)).toEqual(["createItem", "getItem", "updateItem", "deleteItem"]);
+      // Every downstream step's URL carries the id captured from createItem's response — proof the
+      // declared `links` (crud-store.yaml) actually drove the threading, not a coincidence.
+      for (const s of items.steps.slice(1)) expect(s.url).toBe("https://api.test/items/abc123");
+
+      const reportMd = await readFile(join(out, "report.md"), "utf8");
+      expect(reportMd).toContain("## Scenarios (2/2 passed)");
+      expect(reportMd).toContain("### ✓ items lifecycle");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("(API-9, #146) a failing create step aborts the scenario — later steps recorded as skipped, non-zero exit", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-out5-"));
+    try {
+      // 200 instead of the declared 201 — a non-transient status mismatch, so it fails fast (no retry).
+      vi.stubGlobal("fetch", vi.fn(async () => ({ status: 200, headers: { get: () => null }, text: async () => "{}" }) as unknown as Response));
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync([
+        "node", "cairn", "api", "--spec", join(fixtures, "crud-store.yaml"),
+        "--base-url", "https://api.test", "--out", out, "--scenarios",
+      ]);
+
+      expect(process.exitCode).toBe(1);
+      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        scenarios: { name: string; passed: boolean; steps: { error?: string }[] }[];
+      };
+      const items = report.scenarios.find((s) => s.name === "items lifecycle")!;
+      expect(items.passed).toBe(false);
+      expect(items.steps[1]!.error).toMatch(/^skipped/);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("cairn api source resolution (mocked ingest)", () => {

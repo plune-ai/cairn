@@ -16,7 +16,7 @@
  */
 import type { z } from "zod";
 import type { TestTechniqueSchema, TestTypeSchema } from "../design/schema.js";
-import type { ApiEndpoint, ApiModel, ApiParam } from "./openapi.js";
+import type { ApiEndpoint, ApiLink, ApiModel, ApiParam } from "./openapi.js";
 
 /** ISO/IEC/IEEE 29119-4 technique — shared enum with web cases (`design/schema.ts`). */
 export type ApiCaseTechnique = z.infer<typeof TestTechniqueSchema>;
@@ -61,6 +61,9 @@ export interface ApiCase {
   technique: ApiCaseTechnique;
   /** Why this case exists / what it covers — the coverage rationale (API-5). */
   rationale: string;
+  /** Declared `links` on this case's success response (API-9, #146), if the spec has any. A scenario
+   * runner (`scenario-runner.ts`) prefers these over its same-name-field capture heuristic. */
+  responseLinks?: Record<string, ApiLink>;
 }
 
 /** Generate one baseline happy-path case per operation, in the model's (deterministic) order. */
@@ -89,7 +92,9 @@ function synthRequiredParams(e: ApiEndpoint, omit?: ApiParam): ApiCaseParams {
   return params;
 }
 
-function toCase(e: ApiEndpoint): ApiCase {
+/** Build the happy-path case for one operation (API-9, #146: also reused by `scenarios.ts` per step —
+ * a scenario step is a normal case whose path params get overwritten with captured values at run time). */
+export function toCase(e: ApiEndpoint): ApiCase {
   const success = pickSuccess(e);
   const expectedStatus = success?.status ?? "200";
   return {
@@ -101,6 +106,7 @@ function toCase(e: ApiEndpoint): ApiCase {
     body: e.requestBody?.schema !== undefined ? synth(e.requestBody.schema) : undefined,
     expectedStatus,
     expectedSchema: success?.schema,
+    ...(success?.links ? { responseLinks: success.links } : {}),
     type: "Positive",
     // Nominal happy-path = the valid equivalence class for this operation's inputs (ISO 29119-4).
     technique: "equivalence-partitioning",

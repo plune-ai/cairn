@@ -7,13 +7,17 @@
  *   assert status + response-schema per case, and capture request/response evidence to disk.
  * API-8 (#145): with `--negative`, also generate/run one negative-schema (contract-violation) case
  *   per operation, alongside the happy-path case — same pipeline, distinct `type: "Negative"`.
+ * API-9 (#146): with `--scenarios`, also generate/run multi-endpoint chains on the same resource
+ *   (e.g. create → read → delete), threading a captured response value through each step.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
-import { runApiCases, type ApiCaseResult } from "../../api/runner.js";
+import { runApiCases, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
+import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
+import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
 import { computeApiCoverage, type ApiCoverageReport } from "../../api/coverage.js";
 import { loadApiCreds } from "../../knowledge/index.js";
@@ -35,6 +39,8 @@ interface ApiFlags {
   knowledgeDir?: string;
   /** API-8: also generate/run one negative-schema (contract-violation) case per operation. */
   negative?: boolean;
+  /** API-9: also generate/run multi-endpoint scenario chains (e.g. create → read → delete). */
+  scenarios?: boolean;
 }
 
 /** Parse repeated `--header "Name: Value"` flags into a header map (config auth). */
@@ -122,6 +128,34 @@ export function renderApiCases(cases: ApiCase[]): string[] {
   return lines;
 }
 
+/** Render the generated scenario chains (API-9, #146) — a cases-only preview when there's no run yet. */
+export function renderApiScenarios(scenarios: ApiScenario[]): string[] {
+  if (scenarios.length === 0) return [];
+  const lines = ["", `=== Scenarios (${scenarios.length} chain(s) generated) ===`];
+  for (const s of scenarios) {
+    lines.push(`  ▸ ${s.name} (${s.steps.map((c) => c.name).join(" → ")})`);
+    lines.push(`      [${s.technique}] ${s.rationale}`);
+  }
+  lines.push("");
+  return lines;
+}
+
+/** Render scenario run results — per-scenario pass/fail + per-step breakdown (API-9 DoD). */
+export function renderApiScenarioRun(results: ApiScenarioResult[]): string[] {
+  if (results.length === 0) return [];
+  const passed = results.filter((r) => r.passed).length;
+  const lines = ["", "=== Scenario results ===", `${passed}/${results.length} scenario(s) passed`];
+  for (const r of results) {
+    lines.push(`  ${r.passed ? "✓" : "✗"} ${r.name}`);
+    for (const step of r.steps) {
+      const mark = step.passed ? "✓" : step.error?.startsWith("skipped") ? "⊘" : "✗";
+      const got = step.error ? `${step.error}` : `${step.response?.status ?? "—"} (want ${step.expectedStatus})`;
+      lines.push(`      ${mark} ${step.name} → ${got}`);
+    }
+  }
+  return lines;
+}
+
 /**
  * Render the spec-vs-tested coverage report (API-6, #136, `playswag`-style) — a summary line plus
  * gaps only (uncovered/partial); fully-covered operations need no per-row listing.
@@ -172,6 +206,8 @@ export const apiModality: Modality = {
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
     const cases = [...generateApiCases(model), ...(opts.negative ? generateNegativeCases(model) : [])];
     for (const line of renderApiCases(cases)) ctx.out(`${line}\n`);
+    const scenarios = opts.scenarios ? generateApiScenarios(model) : [];
+    for (const line of renderApiScenarios(scenarios)) ctx.out(`${line}\n`);
 
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
     if (!opts.baseUrl) {
@@ -186,10 +222,14 @@ export const apiModality: Modality = {
     const fromKnowledge = await loadApiCreds(knowledgeDir, { scope: "api", endpoint: opts.baseUrl });
     const headers = { ...fromKnowledge, ...parseHeaderFlags(opts.header) };
 
+    const runnerOpts: RunnerOptions = { baseUrl: opts.baseUrl, auth: { headers } };
     ctx.err(`▸ Running ${cases.length} case(s) against ${opts.baseUrl}…\n`);
-    const results = await runApiCases(cases, { baseUrl: opts.baseUrl, auth: { headers } });
+    const results = await runApiCases(cases, runnerOpts);
     // API-6 (#136): spec-vs-tested coverage, overlaid with this run's pass/fail per operation.
     const coverage = computeApiCoverage(model, cases, results);
+
+    // API-9 (#146): scenario chains run after the per-operation cases — independent of them.
+    const scenarioResults = scenarios.length ? await runApiScenarios(scenarios, runnerOpts) : [];
 
     const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     await mkdir(outDir, { recursive: true });
@@ -214,6 +254,9 @@ export const apiModality: Modality = {
           cases: cases.map((c) => omitExpectedSchema(c)),
           // API-6 (#136): spec-vs-tested coverage (playswag-style) — which operations/statuses are gaps.
           coverage,
+          // API-9 (#146): per-scenario pass/fail alongside the per-operation results — opt-in, so the
+          // key is only present when --scenarios generated something to report.
+          ...(scenarioResults.length ? { scenarios: scenarioResults } : {}),
         },
         null,
         2,
@@ -230,6 +273,7 @@ export const apiModality: Modality = {
         endpointCount: model.endpoints.length,
         evidencePath,
         coverage,
+        scenarios: scenarioResults,
       }),
       "utf8",
     );
@@ -244,6 +288,7 @@ export const apiModality: Modality = {
     for (const d of caseDocs.docs) await writeFile(join(testCasesDir, `${d.id}.md`), d.md, "utf8");
 
     for (const line of renderApiRun(results)) ctx.out(`${line}\n`);
+    for (const line of renderApiScenarioRun(scenarioResults)) ctx.out(`${line}\n`);
     for (const line of renderApiCoverage(coverage)) ctx.out(`${line}\n`);
     for (const line of renderRunSummary({
       runDir: outDir,
@@ -252,6 +297,7 @@ export const apiModality: Modality = {
       ctx.out(`${line}\n`);
     }
     ctx.out(`  Cases (ATC .md): ${displayPath(testCasesDir)}/\n`);
-    if (results.some((r) => !r.passed)) process.exitCode = 1; // any failed assertion → non-zero exit
+    // Any failed assertion (per-operation case or scenario step) → non-zero exit.
+    if (results.some((r) => !r.passed) || scenarioResults.some((r) => !r.passed)) process.exitCode = 1;
   },
 };
