@@ -15,6 +15,8 @@ interface ReportShape {
   validation?: { greenRatio?: number };
   pilot?: { verdict?: "pass" | "needs-work" | "fail" };
   testCases?: unknown[];
+  /** C1-04 / API-4 (#134): present when `mode === "api"`. */
+  api?: { passed?: number; total?: number; endpointCount?: number };
 }
 
 /**
@@ -43,11 +45,14 @@ export function useRuns(baseDir = "runs"): RunsState & { reload: () => void } {
               runId: e.name,
               dir,
               url: rep.url ?? "(unknown url)",
-              mode: rep.mode === "design" ? "design" : "explore",
+              mode: rep.mode === "design" ? "design" : rep.mode === "api" ? "api" : "explore",
               greenRatio: rep.validation?.greenRatio,
               pilot: rep.pilot?.verdict,
               testCaseCount: rep.testCases?.length ?? 0,
               date: st.mtime,
+              ...(rep.mode === "api"
+                ? { api: { passed: rep.api?.passed ?? 0, total: rep.api?.total ?? 0, endpointCount: rep.api?.endpointCount ?? 0 } }
+                : {}),
             });
           } catch {
             // no readable report.json → not a finished run, skip

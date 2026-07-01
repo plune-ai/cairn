@@ -105,11 +105,29 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
 
       const out0 = outChunks.join("");
       expect(out0).toContain("4/4 case(s) passed");
+      // C1-04 / API-4 (#134): the shared run-summary footer (same renderer as web runs).
+      expect(out0).toMatch(/Operations: 4\/4 passed · 4 endpoint\(s\) covered/);
+      expect(out0).toContain("Artifacts:");
       expect(process.exitCode ?? 0).toBe(0);
 
       const evidence = JSON.parse(await readFile(join(out, "api-evidence.json"), "utf8")) as { request: { headers: Record<string, string> } }[];
       expect(evidence).toHaveLength(4);
       expect(evidence[0]!.request.headers["Authorization"]).toBe("***"); // secret redacted on disk
+
+      // API-4: report.json/report.md — the TUI's past-run browser reads these for any mode.
+      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        mode: string;
+        url: string;
+        api: { passed: number; total: number; endpointCount: number };
+      };
+      expect(report.mode).toBe("api");
+      expect(report.url).toBe("https://api.test");
+      expect(report.api).toEqual({ passed: 4, total: 4, endpointCount: 4 });
+
+      const reportMd = await readFile(join(out, "report.md"), "utf8");
+      expect(reportMd).toContain("4/4 passed");
+      expect(reportMd).toContain("4 endpoint(s) covered");
+      expect(reportMd).toContain("api-evidence.json");
     } finally {
       await rm(kdir, { recursive: true, force: true });
       await rm(out, { recursive: true, force: true });

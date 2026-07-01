@@ -22,6 +22,15 @@ vi.mock("../../../src/tui/hooks/use-runs.js", () => ({
         testCaseCount: 8,
         date: new Date("2026-06-02T10:00:00Z"),
       },
+      {
+        runId: "c",
+        dir: "runs/c",
+        url: "https://api.example.com",
+        mode: "api",
+        testCaseCount: 0,
+        api: { passed: 3, total: 4, endpointCount: 4 },
+        date: new Date("2026-06-03T10:00:00Z"),
+      },
     ],
     loading: false,
     reload: () => {},
@@ -50,10 +59,24 @@ describe("RunsListScreen", () => {
       </RouterProvider>,
     );
     const f = lastFrame() ?? "";
-    expect(f).toContain("Past runs (2)");
+    expect(f).toContain("Past runs (3)");
     expect(f).toContain("login");
     expect(f).toContain("90%");
     expect(f).toContain("design");
+    unmount();
+  });
+
+  it("C1-04/API-4 (#134): shows an api run's pass/fail + endpoint coverage instead of green%/pilot", () => {
+    const { lastFrame, unmount } = render(
+      <RouterProvider value={routerApi()}>
+        <RunsListScreen />
+      </RouterProvider>,
+    );
+    const f = lastFrame() ?? "";
+    expect(f).toContain("api");
+    expect(f).toContain("3/4 passed");
+    expect(f).toContain("4 endpoint(s)");
+    expect(f).toContain("api.example.com");
     unmount();
   });
 });

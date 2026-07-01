@@ -37,11 +37,13 @@ export interface RunSummary {
   runId: string;
   dir: string;
   url: string;
-  mode: "explore" | "design";
+  mode: "explore" | "design" | "api";
   greenRatio?: number;
   pilot?: "pass" | "needs-work" | "fail";
   testCaseCount: number;
   date: Date;
+  /** C1-04 / API-4 (#134): `cairn api` run counters — present only when `mode === "api"`. */
+  api?: { passed: number; total: number; endpointCount: number };
 }
 
 /** Live status of one graph node on the dashboard checklist. */

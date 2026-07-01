@@ -6,6 +6,8 @@ import type { ValidationReport } from "../validate/index.js";
 import type { Score } from "../eval/scorers.js";
 import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
 import type { CostReport } from "../llm/cost.js";
+import type { ApiCaseResult } from "../api/runner.js";
+import { displayPath } from "../agent/summary.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
 export function locatorFor(el: ElementRef): string {
@@ -166,5 +168,39 @@ export function renderReportMd(r: ReportInput): string {
       lines.push(`- ⇒ ${j.expected}`, "");
     }
   }
+  return lines.join("\n");
+}
+
+/** C1-04 / API-4 (#134): `cairn api` run report — sibling of {@link renderReportMd} for the api modality. */
+export interface ApiReportInput {
+  runId: string;
+  /** The base URL the cases were run against. */
+  baseUrl: string;
+  /** The OpenAPI spec source (path or URL). */
+  source: string;
+  results: ApiCaseResult[];
+  /** Endpoints in the ingested spec covered by the run. */
+  endpointCount: number;
+  evidencePath: string;
+}
+
+/** Human-readable Markdown run report for `cairn api`: per-operation pass/fail + evidence link. */
+export function renderApiReportMd(r: ApiReportInput): string {
+  const passed = r.results.filter((x) => x.passed).length;
+  const lines: string[] = ["# QA Explorer — API run report", ""];
+  lines.push(`- **Base URL:** ${r.baseUrl}`);
+  lines.push(`- **Spec:** ${r.source}`);
+  lines.push(`- **Run ID:** ${r.runId}`);
+  lines.push(`- **Operations:** ${passed}/${r.results.length} passed · ${r.endpointCount} endpoint(s) covered`);
+  lines.push(`- **Evidence:** ${displayPath(r.evidencePath)}`);
+  lines.push("");
+
+  lines.push(`## Operations (${r.results.length})`, "");
+  lines.push("| status | method | url | expected | got |", "|---|---|---|---|---|");
+  for (const x of r.results) {
+    const got = x.error ? `error: ${x.error}` : String(x.response?.status ?? "—");
+    lines.push(`| ${x.passed ? "✓" : "✗"} | ${x.method} | ${x.url} | ${x.expectedStatus} | ${got} |`);
+  }
+  lines.push("");
   return lines.join("\n");
 }

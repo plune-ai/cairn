@@ -26,7 +26,9 @@ export function RunsListScreen() {
     const date = r.date.toISOString().slice(0, 16).replace("T", " ");
     const green = r.greenRatio !== undefined ? `${String(Math.round(r.greenRatio * 100))}% ` : "";
     const pilot = r.pilot ? `${r.pilot} ` : "";
-    return { label: `${date}  ${r.mode}  ${green}${pilot} ${r.url}`, value: r.dir };
+    // C1-04 / API-4 (#134): api runs report pass/fail + endpoint coverage instead of green%/pilot.
+    const api = r.api ? `${r.api.passed}/${r.api.total} passed · ${r.api.endpointCount} endpoint(s) ` : "";
+    return { label: `${date}  ${r.mode}  ${api}${green}${pilot} ${r.url}`, value: r.dir };
   });
 
   return (

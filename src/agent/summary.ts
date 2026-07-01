@@ -18,6 +18,16 @@ export interface BudgetReport {
   max: number;
 }
 
+/** C1-04 / API-4 (#134): `cairn api` run counters, rendered alongside web-run validation. */
+export interface ApiRunSummary {
+  passed: number;
+  total: number;
+  /** Endpoints in the ingested spec covered by the run (API-1's endpoint count). */
+  endpointCount: number;
+  /** Where the per-case request/response evidence was written. */
+  evidencePath: string;
+}
+
 export interface RunSummaryInput {
   /** Where the artifacts landed (runs/<id>). */
   runDir: string;
@@ -31,6 +41,8 @@ export interface RunSummaryInput {
   partial?: boolean;
   /** A free-form note (e.g. the degrade reason) appended to the summary. */
   note?: string;
+  /** `cairn api` run counters (API-4) — mutually exclusive with `validation` (web runs). */
+  api?: ApiRunSummary;
 }
 
 /** 80% of the budget → warn the user the run is close to the cost guardrail. */
@@ -56,6 +68,10 @@ export function renderRunSummary(s: RunSummaryInput): string[] {
     if (casts && casts.length > 0) {
       lines.push(`  Screencasts: ${casts.length} .webm recorded → ${displayPath(join(s.runDir, "screencasts"))}/`);
     }
+  }
+  if (s.api) {
+    lines.push(`  Operations: ${s.api.passed}/${s.api.total} passed · ${s.api.endpointCount} endpoint(s) covered`);
+    lines.push(`  Evidence:  ${displayPath(s.api.evidencePath)}`);
   }
   if (typeof s.testCaseCount === "number") lines.push(`  Test cases: ${s.testCaseCount}`);
 
