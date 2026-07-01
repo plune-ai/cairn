@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   renderTestCaseMd,
+  renderApiTestCaseMd,
   mapPriority,
   parseTestCaseMd,
   type TestCaseDoc,
+  type ApiTestCaseDoc,
 } from "../../src/artifacts/testcase-md.js";
 import type { TestCase } from "../../src/design/index.js";
+import type { ApiCase } from "../../src/api/cases.js";
 
 const tc: TestCase = {
   id: "tc-1",
@@ -81,5 +84,46 @@ describe("renderTestCaseMd (ATC format)", () => {
     const parsed = parseTestCaseMd(md);
     expect(parsed.id).toBe("MTC-GENERATE-UI-001");
     expect(parsed.execution).toBe("manual");
+  });
+});
+
+const apiCase: ApiCase = {
+  name: "createPet",
+  method: "POST",
+  path: "/pets",
+  operationId: "createPet",
+  params: { path: {}, query: {}, header: {}, cookie: {} },
+  body: { name: "string" },
+  expectedStatus: "201",
+  expectedSchema: { type: "object" },
+  technique: "equivalence-partitioning",
+  rationale: "Happy-path case in the valid equivalence class for POST /pets: asserts 201.",
+};
+
+const apiDoc: ApiTestCaseDoc = { id: "ATC-PETSTORE-API-001", suite: "PETSTORE-API", status: "✅ Passed" };
+
+describe("renderApiTestCaseMd (ATC format, API-5 #135)", () => {
+  it("renders frontmatter + methodology tag + request/expected sections", () => {
+    const md = renderApiTestCaseMd(apiCase, apiDoc);
+    expect(md).toContain("id: ATC-PETSTORE-API-001");
+    expect(md).toContain('title: "createPet"');
+    expect(md).toContain("suite: PETSTORE-API");
+    expect(md).toContain("technique: equivalence-partitioning");
+    expect(md).toContain("execution: auto");
+    expect(md).toContain("status: ✅ Passed");
+    expect(md).toContain("## Methodology");
+    expect(md).toContain("- Technique: equivalence-partitioning");
+    expect(md).toContain("- Rationale: Happy-path case in the valid equivalence class for POST /pets: asserts 201.");
+    expect(md).toContain("## Request");
+    expect(md).toContain("- POST /pets");
+    expect(md).toContain('"body":{"name":"string"}');
+    expect(md).toContain("## Expected Result");
+    expect(md).toContain("- HTTP 201 conforming to the declared success schema");
+  });
+
+  it("omits the schema-conformance note when no success schema is declared", () => {
+    const md = renderApiTestCaseMd({ ...apiCase, expectedSchema: undefined }, apiDoc);
+    expect(md).toContain("- HTTP 201");
+    expect(md).not.toContain("conforming to");
   });
 });

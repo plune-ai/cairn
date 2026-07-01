@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — Plune-record write + methodology rigor (#135, C1-04 / API-5).** A `--base-url` run now
+  emits every generated case as an **ATC artifact** (`runs/api-<id>/testcases/<id>.md`) — the same
+  `testcases/<id>.md` boundary web runs already write, so Plune ingests API cases identically. Each
+  case is **methodology-tagged**: an ISO/IEC/IEEE 29119-4 `technique` (currently `equivalence-partitioning`
+  — the valid class API-2's happy-path synthesis embodies) plus a per-case coverage **rationale**
+  explaining what it exercises and why, both in the case's own frontmatter/fields and surfaced in
+  `report.json` (`cases[]`) and the case listing on stdout. Each ATC's `status` is **provenance-checked**
+  (aligned with BORROW-04, #91): it only reads "Passed" when a same-named, positively-asserted result
+  exists — never inferred from the mere absence of a failure. Cases-only invocations (no `--base-url`)
+  are unchanged (print-only, matching API-1..4 precedent) — no run directory exists yet to write into.
+
 - **`cairn api` — reporting + run summary/TUI integration (#134, C1-04 / API-4).** A `--base-url` run
   now writes `report.json` + `report.md` alongside the existing `api-evidence.json`, in the same
   shape/location web runs already use — so the TUI's past-run browser (`Past runs`) lists api runs
