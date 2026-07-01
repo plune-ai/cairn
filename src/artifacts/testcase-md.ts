@@ -1,5 +1,5 @@
 import type { TestCase } from "../design/index.js";
-import type { ApiCase } from "../api/cases.js";
+import type { ApiCase, ApiCaseParams } from "../api/cases.js";
 
 /** Context for rendering a single case into the user's ATC format. */
 export interface TestCaseDoc {
@@ -163,4 +163,43 @@ export function parseTestCaseMd(md: string): ParsedTestCase {
     })
     .filter((s) => s.locator.length > 0);
   return { id, execution, title, steps, expected, selectors };
+}
+
+/** A parsed API test case (for `automate` — API-7, #144: ATC `.md` → codegen input). */
+export interface ParsedApiCase {
+  id: string;
+  title: string;
+  method: string;
+  path: string;
+  params: ApiCaseParams;
+  body?: unknown;
+  /** Declared success status ("200"/"201"/"default"/"2XX"…) — same vocabulary as {@link ApiCase}. */
+  expectedStatus: string;
+}
+
+/** Parse an API ATC markdown doc (rendered by {@link renderApiTestCaseMd}) back into a structure. */
+export function parseApiTestCaseMd(md: string): ParsedApiCase {
+  const id = md.match(/^id:\s*(.+?)\s*$/m)?.[1]?.trim() ?? "";
+  const titleM = md.match(/^title:\s*"?(.+?)"?\s*$/m);
+  const title = (titleM?.[1] ?? "Untitled").trim();
+
+  const requestLine = section(md, "Request")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => /^-\s+\S+\s+\S+/.test(l) && !l.startsWith("- Params/body:"));
+  const [, method = "GET", path = "/"] = requestLine?.match(/^-\s+(\S+)\s+(\S+)/) ?? [];
+
+  const sentBlob = section(md, "Request").match(/^-\s+Params\/body:\s+`(.+)`\s*$/m)?.[1];
+  const sent = sentBlob ? (JSON.parse(sentBlob) as Record<string, unknown>) : {};
+  const { body, ...rest } = sent;
+  const params: ApiCaseParams = {
+    path: (rest.path as Record<string, unknown>) ?? {},
+    query: (rest.query as Record<string, unknown>) ?? {},
+    header: (rest.header as Record<string, unknown>) ?? {},
+    cookie: (rest.cookie as Record<string, unknown>) ?? {},
+  };
+
+  const expectedStatus = section(md, "Expected Result").match(/^-\s+HTTP\s+(\S+)/m)?.[1] ?? "default";
+
+  return { id, title, method, path, params, body, expectedStatus };
 }
