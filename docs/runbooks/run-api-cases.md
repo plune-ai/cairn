@@ -1,7 +1,8 @@
-# Runbook: run API cases against a base URL (API-3)
+# Runbook: run API cases against a base URL (API-3/API-4)
 
 > Execute the happy-path cases `cairn api` generates from an OpenAPI spec and assert each response
-> (status + schema). Builds on API-1 (ingest) / API-2 (case generation). The rich report is API-4.
+> (status + schema). Builds on API-1 (ingest) / API-2 (case generation). The rich report + run
+> summary/TUI integration is API-4.
 
 ## Steps
 1. **Generate only (no execution)** — sanity-check the cases first:
@@ -33,7 +34,13 @@
 ## Output
 - **Evidence:** `runs/api-<id>/api-evidence.json` (override the dir with `--out`) — per-case request +
   response, status/schema verdicts, attempt count. **Sensitive headers are redacted** (`***`).
-- **Console:** `N/M case(s) passed`, then a ✓/✗ line per case with the status and any schema errors.
+- **Console:** `N/M case(s) passed`, then a ✓/✗ line per case with the status and any schema errors,
+  then the **shared run-summary footer** (same renderer as web runs) — `Operations: N/M passed · K
+  endpoint(s) covered`, the evidence path, and the artifacts dir.
+- **Report + TUI (API-4):** `report.json` + `report.md` are written next to the evidence file, in the
+  same shape/location web runs use — so `cairn` (no args) → **Past runs** lists the api run too, with
+  pass/fail + endpoint coverage instead of green%/pilot, and its Report tab shows the per-operation
+  table + a link to `api-evidence.json`.
 
 ## Robustness
 - **Transient faults** (connection reset / timeout / `429` / `5xx`) retry with backoff before failing,
