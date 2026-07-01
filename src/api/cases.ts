@@ -64,6 +64,10 @@ export interface ApiCase {
   /** Declared `links` on this case's success response (API-9, #146), if the spec has any. A scenario
    * runner (`scenario-runner.ts`) prefers these over its same-name-field capture heuristic. */
   responseLinks?: Record<string, ApiLink>;
+  /** The media type `body` was synthesised from (API-10, #150) — the operation's first declared
+   * `requestBody.mediaTypes` entry. The runner encodes as `multipart/form-data` when this says so,
+   * JSON otherwise (including when the operation declares no body at all). */
+  bodyMediaType?: string;
 }
 
 /** Generate one baseline happy-path case per operation, in the model's (deterministic) order. */
@@ -107,6 +111,7 @@ export function toCase(e: ApiEndpoint): ApiCase {
     expectedStatus,
     expectedSchema: success?.schema,
     ...(success?.links ? { responseLinks: success.links } : {}),
+    ...(e.requestBody?.mediaTypes[0] !== undefined ? { bodyMediaType: e.requestBody.mediaTypes[0] } : {}),
     type: "Positive",
     // Nominal happy-path = the valid equivalence class for this operation's inputs (ISO 29119-4).
     technique: "equivalence-partitioning",
@@ -255,7 +260,8 @@ function synth(schema: unknown, seen: Set<object> = new Set()): unknown {
 
   switch (type) {
     case "string":
-      return synthString(s.format);
+      // `format: binary` (e.g. a multipart file field) needs real bytes, not the literal word "string".
+      return s.format === "binary" ? synthBinary() : synthString(s.format);
     case "integer":
     case "number":
       return s.minimum ?? 0;
@@ -286,6 +292,13 @@ function mergeAllOf(parts: Schema[]): Schema {
     if (p.required) merged.required!.push(...p.required);
   }
   return merged;
+}
+
+/** A small in-memory placeholder for a `format: binary` property (API-10, #150) — real bytes so a
+ * multipart file field has actual "file" content to send; the runner (`runner.ts`) recognises a
+ * `Buffer` value and encodes it as a file part instead of a stringified form field. */
+function synthBinary(): Buffer {
+  return Buffer.from("cairn placeholder file content");
 }
 
 /** A format-appropriate sample string (valid for the common OpenAPI string formats). */

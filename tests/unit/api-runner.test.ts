@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { runApiCases, validateAgainstSchema, type FetchLike, type ResponseLike } from "../../src/api/runner.js";
-import type { ApiCase } from "../../src/api/cases.js";
+import { generateApiCases, type ApiCase } from "../../src/api/cases.js";
+import { ingestOpenApi } from "../../src/api/openapi.js";
+
+const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "api");
 
 /**
  * C1-04 / API-3 (#133): the runner executes generated cases against a base URL and asserts each
@@ -65,6 +70,55 @@ describe("runApiCases — execution + status assertion (a)", () => {
     await runApiCases([c], { baseUrl: "https://api.test", fetch });
     expect(calls[0]!.init.body).toBe(JSON.stringify({ name: "Rex" }));
     expect((calls[0]!.init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+  });
+});
+
+describe("multipart/form-data encoding (API-10, #150)", () => {
+  it("encodes a multipart case as FormData — a Buffer field becomes a File part, others stringified fields — without forcing JSON content-type", async () => {
+    const { fetch, calls } = fakeFetch([res(201, { id: "f1" })]);
+    const c = caseOf({
+      method: "POST",
+      path: "/upload",
+      expectedStatus: "201",
+      bodyMediaType: "multipart/form-data",
+      body: { file: Buffer.from("hello"), description: "a file" },
+      params: { path: {}, query: {}, header: {}, cookie: {} },
+    });
+    const [r] = await runApiCases([c], { baseUrl: "https://api.test", fetch });
+
+    const sentBody = calls[0]!.init.body as FormData;
+    expect(sentBody).toBeInstanceOf(FormData);
+    expect(sentBody.get("description")).toBe("a file");
+    const filePart = sentBody.get("file") as File;
+    expect(filePart).toBeInstanceOf(File);
+    expect(await filePart.text()).toBe("hello");
+
+    // fetch/undici must generate its own multipart boundary — a manual JSON header would fight it.
+    expect((calls[0]!.init.headers as Record<string, string>)["Content-Type"]).toBeUndefined();
+    expect(r!.passed).toBe(true);
+  });
+
+  it("still JSON-encodes a case with no bodyMediaType (default, unchanged behaviour)", async () => {
+    const { fetch, calls } = fakeFetch([res(201, { id: "x" })]);
+    const c = caseOf({ method: "POST", path: "/pets", expectedStatus: "201", body: { name: "Rex" }, params: { path: {}, query: {}, header: {}, cookie: {} } });
+    await runApiCases([c], { baseUrl: "https://api.test", fetch });
+    expect(calls[0]!.init.body).toBe(JSON.stringify({ name: "Rex" }));
+    expect((calls[0]!.init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+  });
+
+  it("ingest → generate → run end to end against a real multipart fixture spec", async () => {
+    const m = await ingestOpenApi(join(fixtures, "multipart-upload.yaml"));
+    const [c] = generateApiCases(m);
+    expect(c!.bodyMediaType).toBe("multipart/form-data");
+
+    const { fetch, calls } = fakeFetch([res(201, { id: "f2" })]);
+    const [r] = await runApiCases([c!], { baseUrl: "https://api.test", fetch });
+
+    const sentBody = calls[0]!.init.body as FormData;
+    const filePart = sentBody.get("file") as File;
+    expect(filePart).toBeInstanceOf(File);
+    expect((await filePart.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    expect(r!.passed).toBe(true);
   });
 });
 

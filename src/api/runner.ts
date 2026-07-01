@@ -102,10 +102,11 @@ async function runOne(c: ApiCase, opts: RunnerOptions): Promise<ApiCaseResult> {
   const url = buildUrl(opts.baseUrl, c);
   const headers = buildHeaders(c, opts.auth);
   const hasBody = c.body !== undefined;
+  const isMultipart = c.bodyMediaType === "multipart/form-data";
   const init: RequestInit = {
     method: c.method,
     headers,
-    ...(hasBody ? { body: JSON.stringify(c.body) } : {}),
+    ...(hasBody ? { body: isMultipart ? toFormData(c.body) : JSON.stringify(c.body) } : {}),
   };
 
   const evidence: ApiCaseResult = {
@@ -211,16 +212,39 @@ function buildUrl(baseUrl: string, c: ApiCase): string {
   return `${base}${sep}${path}${query ? `?${query}` : ""}`;
 }
 
-/** Merge auth headers, case header-params and a Cookie header from cookie-params; add JSON content-type. */
+/**
+ * Merge auth headers, case header-params and a Cookie header from cookie-params; add a JSON
+ * content-type for a body case — UNLESS the operation declares `multipart/form-data` (API-10,
+ * #150), where `fetch`/undici must generate its own `Content-Type: multipart/form-data; boundary=…`
+ * from the `FormData` body; a manually-set header here would just fight (and lose to) that.
+ */
 function buildHeaders(c: ApiCase, auth?: ApiAuth): Record<string, string> {
   const headers: Record<string, string> = { ...(auth?.headers ?? {}) };
   for (const [k, v] of Object.entries(c.params.header)) headers[k] = String(v);
   const cookies = Object.entries(c.params.cookie);
   if (cookies.length) headers["Cookie"] = cookies.map(([k, v]) => `${k}=${v}`).join("; ");
-  if (c.body !== undefined && !Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) {
+  const hasContentType = Object.keys(headers).some((h) => h.toLowerCase() === "content-type");
+  if (c.body !== undefined && !hasContentType && c.bodyMediaType !== "multipart/form-data") {
     headers["Content-Type"] = "application/json";
   }
   return headers;
+}
+
+/**
+ * C1-04 / API-10 (#150) — encode a synthesised body object as `multipart/form-data`. A `Buffer`
+ * value (from `synth()`'s `format: binary` handling, `cases.ts`) becomes a file part; every other
+ * value is a stringified form field. Relies on Node's native `FormData`/`File` (undici, global since
+ * Node 18+) so `fetch` itself generates the boundary and per-part `Content-Disposition` — no
+ * hand-rolled multipart encoder.
+ */
+function toFormData(body: unknown): FormData {
+  const fd = new FormData();
+  if (!body || typeof body !== "object") return fd;
+  for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    fd.append(k, Buffer.isBuffer(v) ? new File([v], `${k}.bin`, { type: "application/octet-stream" }) : String(v));
+  }
+  return fd;
 }
 
 /**
