@@ -128,6 +128,28 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       expect(reportMd).toContain("4/4 passed");
       expect(reportMd).toContain("4 endpoint(s) covered");
       expect(reportMd).toContain("api-evidence.json");
+
+      // API-5 (#135): methodology-tagged cases in report.json + ATC artifacts on the same boundary
+      // (`testcases/<id>.md`) web runs use.
+      const reportCases = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        cases: { name: string; technique: string; rationale: string }[];
+      };
+      expect(reportCases.cases).toHaveLength(4);
+      for (const rc of reportCases.cases) {
+        expect(rc.technique).toBe("equivalence-partitioning");
+        expect(rc.rationale.length).toBeGreaterThan(0);
+      }
+
+      const { readdir } = await import("node:fs/promises");
+      const tcDir = join(out, "testcases");
+      const tcFileNames = await readdir(tcDir);
+      expect(tcFileNames).toHaveLength(4);
+      expect(tcFileNames.every((f) => /^ATC-PET-STORE-API-\d{3}\.md$/.test(f))).toBe(true);
+      const listPetsMd = await readFile(join(tcDir, "ATC-PET-STORE-API-001.md"), "utf8");
+      expect(listPetsMd).toContain('title: "listPets"');
+      expect(listPetsMd).toContain("technique: equivalence-partitioning");
+      expect(listPetsMd).toContain("status: ✅ Passed");
+      expect(out0).toContain("Cases (ATC .md):");
     } finally {
       await rm(kdir, { recursive: true, force: true });
       await rm(out, { recursive: true, force: true });

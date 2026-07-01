@@ -9,8 +9,17 @@
  * cases). The provider abstraction (`StructuredInvoke`) stays available for later, fuzzier slices
  * (negative / boundary cases, API-3+); the DoD's "any LLM use is mockable" holds vacuously because
  * this slice uses none. No runner either — that is API-3.
+ *
+ * API-5 (#135): every case also carries a `technique` + `rationale` — the same ISO/IEC/IEEE 29119-4
+ * methodology tagging web cases carry (`design/schema.ts`) — so the emitted ATC artifact states WHY
+ * the case exists, not just what it sends.
  */
+import type { z } from "zod";
+import type { TestTechniqueSchema } from "../design/schema.js";
 import type { ApiEndpoint, ApiModel } from "./openapi.js";
+
+/** ISO/IEC/IEEE 29119-4 technique — shared enum with web cases (`design/schema.ts`). */
+export type ApiCaseTechnique = z.infer<typeof TestTechniqueSchema>;
 
 /** Values synthesised for an operation's parameters, grouped by location. */
 export interface ApiCaseParams {
@@ -35,6 +44,10 @@ export interface ApiCase {
   expectedStatus: string;
   /** Schema of the expected success body, if that response carries one. */
   expectedSchema?: unknown;
+  /** ISO/IEC/IEEE 29119-4 technique this case embodies (API-5 methodology tagging). */
+  technique: ApiCaseTechnique;
+  /** Why this case exists / what it covers — the coverage rationale (API-5). */
+  rationale: string;
 }
 
 /** Generate one baseline happy-path case per operation, in the model's (deterministic) order. */
@@ -51,6 +64,7 @@ function toCase(e: ApiEndpoint): ApiCase {
   }
 
   const success = pickSuccess(e);
+  const expectedStatus = success?.status ?? "200";
   return {
     name: e.operationId ?? `${e.method} ${e.path}`,
     method: e.method,
@@ -58,8 +72,14 @@ function toCase(e: ApiEndpoint): ApiCase {
     operationId: e.operationId,
     params,
     body: e.requestBody?.schema !== undefined ? synth(e.requestBody.schema) : undefined,
-    expectedStatus: success?.status ?? "200",
+    expectedStatus,
     expectedSchema: success?.schema,
+    // Nominal happy-path = the valid equivalence class for this operation's inputs (ISO 29119-4).
+    technique: "equivalence-partitioning",
+    rationale:
+      `Happy-path case in the valid equivalence class for ${e.method} ${e.path}: exercises the ` +
+      `required parameters/body with schema-valid values and asserts the declared success response ` +
+      `(${expectedStatus}).`,
   };
 }
 

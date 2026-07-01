@@ -12,9 +12,10 @@ import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, type ApiCase } from "../../api/cases.js";
 import { runApiCases, type ApiCaseResult } from "../../api/runner.js";
+import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
 import { loadApiCreds } from "../../knowledge/index.js";
 import { defaultRunsBaseDir } from "../../fs/run-dir.js";
-import { renderRunSummary } from "../../agent/summary.js";
+import { renderRunSummary, displayPath } from "../../agent/summary.js";
 import { renderApiReportMd } from "../../artifacts/report.js";
 import type { Modality, ModalityContext } from "../modality.js";
 
@@ -64,6 +65,19 @@ function isUrl(spec: string): boolean {
   return /^https?:\/\//i.test(spec);
 }
 
+/** ATC id suite for this run's cases — mirrors web's `suiteFromUrl` (`agent/index.ts`). */
+function suiteFromApi(model: ApiModel, source: string): string {
+  const base = model.title ?? basename(source).replace(/\.[^.]+$/, "");
+  return `${base.replace(/[^a-z0-9]+/gi, "-").toUpperCase()}-API`;
+}
+
+/** Drop `expectedSchema` — a raw (possibly cyclic) pointer into the dereferenced spec, not JSON-safe. */
+function omitExpectedSchema(c: ApiCase): Omit<ApiCase, "expectedSchema"> {
+  const rest: Partial<ApiCase> = { ...c };
+  delete rest.expectedSchema;
+  return rest as Omit<ApiCase, "expectedSchema">;
+}
+
 /** Print the parsed-model summary — the verifiable artifact of this slice. */
 export function renderApiSummary(model: ApiModel, source: string): string[] {
   const lines = [
@@ -90,6 +104,7 @@ export function renderApiCases(cases: ApiCase[]): string[] {
   ];
   for (const c of cases) {
     lines.push(`  ▸ ${c.name} → ${c.expectedStatus}`);
+    lines.push(`      [${c.technique}] ${c.rationale}`);
     const sent: Record<string, unknown> = {};
     for (const [where, vals] of Object.entries(c.params)) {
       if (Object.keys(vals as object).length) sent[where] = vals;
@@ -158,6 +173,10 @@ export const apiModality: Modality = {
           url: opts.baseUrl,
           mode: "api",
           api: { passed, total: results.length, endpointCount: model.endpoints.length },
+          // API-5 (#135): methodology-tagged cases (technique + rationale) — the Plune-record payload.
+          // `expectedSchema` is dropped: it's a raw pointer into the (possibly cyclic, e.g. `Pet.friends:
+          // Pet[]`) dereferenced spec schema, not serialisable — the case's own contract is enough here.
+          cases: cases.map((c) => omitExpectedSchema(c)),
         },
         null,
         2,
@@ -177,6 +196,15 @@ export const apiModality: Modality = {
       "utf8",
     );
 
+    // API-5 (#135): emit the same ATC artifact boundary web runs write (`testcases/<id>.md`) so Plune
+    // ingests API cases identically — each doc carries the technique/rationale tag and a
+    // provenance-checked status (only "Passed" when a matching, positively-asserted result exists).
+    const suite = suiteFromApi(model, source);
+    const caseDocs = buildApiTestCaseDocs(cases, results, suite);
+    const testCasesDir = join(outDir, "testcases");
+    await mkdir(testCasesDir, { recursive: true });
+    for (const d of caseDocs.docs) await writeFile(join(testCasesDir, `${d.id}.md`), d.md, "utf8");
+
     for (const line of renderApiRun(results)) ctx.out(`${line}\n`);
     for (const line of renderRunSummary({
       runDir: outDir,
@@ -184,6 +212,7 @@ export const apiModality: Modality = {
     })) {
       ctx.out(`${line}\n`);
     }
+    ctx.out(`  Cases (ATC .md): ${displayPath(testCasesDir)}/\n`);
     if (results.some((r) => !r.passed)) process.exitCode = 1; // any failed assertion → non-zero exit
   },
 };

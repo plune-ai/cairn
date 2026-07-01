@@ -1,4 +1,5 @@
 import type { TestCase } from "../design/index.js";
+import type { ApiCase } from "../api/cases.js";
 
 /** Context for rendering a single case into the user's ATC format. */
 export interface TestCaseDoc {
@@ -66,6 +67,54 @@ export function renderTestCaseMd(tc: TestCase, doc: TestCaseDoc): string {
     for (const t of doc.traceability) lines.push(`| ${t.source} | ${t.reference} |`);
     lines.push("");
   }
+
+  return lines.join("\n");
+}
+
+/** Context for rendering one API case into ATC markdown (API-5, #135). */
+export interface ApiTestCaseDoc {
+  id: string;
+  suite: string;
+  /** Provenance-checked verdict (aligns with BORROW-04, #91) — only "Passed" backed by a real result. */
+  status: string;
+}
+
+/**
+ * Render an API case into the same ATC frontmatter contract as {@link renderTestCaseMd} (id/title/
+ * suite/type/execution/status), with the operation's request/response contract and its methodology
+ * tag (technique + coverage rationale) standing in for UI preconditions/steps/selectors.
+ */
+export function renderApiTestCaseMd(c: ApiCase, doc: ApiTestCaseDoc): string {
+  const lines: string[] = [];
+  lines.push("---");
+  lines.push(`id: ${doc.id}`);
+  lines.push(`title: "${c.name.replace(/"/g, "'")}"`);
+  lines.push(`suite: ${doc.suite}`);
+  lines.push(`technique: ${c.technique}`);
+  lines.push(`type: Positive`);
+  lines.push(`execution: auto`);
+  lines.push(`status: ${doc.status}`);
+  lines.push("---", "");
+  lines.push(`# ${doc.id}: ${c.name}`, "");
+
+  lines.push("## Methodology", "");
+  lines.push(`- Technique: ${c.technique}`);
+  lines.push(`- Rationale: ${c.rationale}`);
+  lines.push("");
+
+  lines.push("## Request", "");
+  lines.push(`- ${c.method} ${c.path}`);
+  const sent: Record<string, unknown> = {};
+  for (const [where, vals] of Object.entries(c.params)) {
+    if (Object.keys(vals as object).length) sent[where] = vals;
+  }
+  if (c.body !== undefined) sent.body = c.body;
+  if (Object.keys(sent).length) lines.push(`- Params/body: \`${JSON.stringify(sent)}\``);
+  lines.push("");
+
+  lines.push("## Expected Result", "");
+  lines.push(`- HTTP ${c.expectedStatus}${c.expectedSchema !== undefined ? " conforming to the declared success schema" : ""}`);
+  lines.push("");
 
   return lines.join("\n");
 }
