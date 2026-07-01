@@ -91,7 +91,7 @@ export function renderApiTestCaseMd(c: ApiCase, doc: ApiTestCaseDoc): string {
   lines.push(`title: "${c.name.replace(/"/g, "'")}"`);
   lines.push(`suite: ${doc.suite}`);
   lines.push(`technique: ${c.technique}`);
-  lines.push(`type: Positive`);
+  lines.push(`type: ${c.type}`);
   lines.push(`execution: auto`);
   lines.push(`status: ${doc.status}`);
   lines.push("---", "");
@@ -113,7 +113,8 @@ export function renderApiTestCaseMd(c: ApiCase, doc: ApiTestCaseDoc): string {
   lines.push("");
 
   lines.push("## Expected Result", "");
-  lines.push(`- HTTP ${c.expectedStatus}${c.expectedSchema !== undefined ? " conforming to the declared success schema" : ""}`);
+  const schemaNote = c.expectedSchema !== undefined ? ` conforming to the declared ${c.type === "Negative" ? "error" : "success"} schema` : "";
+  lines.push(`- HTTP ${c.expectedStatus}${schemaNote}`);
   lines.push("");
 
   return lines.join("\n");

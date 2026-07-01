@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../src/api/openapi.js";
-import { generateApiCases } from "../../src/api/cases.js";
+import { generateApiCases, generateNegativeCases } from "../../src/api/cases.js";
 
 /**
  * C1-04 / API-2 (#132): baseline happy-path case generation. The synthesis is pure/deterministic
@@ -157,5 +157,54 @@ describe("no body / multiple responses (d)", () => {
       security: [],
     });
     expect(generateApiCases(m)[0].expectedStatus).toBe("default");
+  });
+});
+
+describe("generateNegativeCases — one contract-violation case per operation with something to violate (API-8, #145)", () => {
+  it("corrupts a request-body property to the wrong type (createPet: Pet has no required fields, so it violates by type)", async () => {
+    const mAll = await ingestOpenApi(join(fixtures, "petstore.yaml"));
+    const negatives = generateNegativeCases(mAll);
+
+    // getPet/listPets/deletePet have nothing worth violating (no body, no non-path required params).
+    expect(negatives).toHaveLength(1);
+    const [neg] = negatives;
+    expect(neg!.name).toBe("createPet (negative)");
+    expect(neg!.type).toBe("Negative");
+    expect(neg!.technique).toBe("error-guessing");
+    expect(typeof (neg!.body as Record<string, unknown>).id).toBe("number"); // was string — flipped
+    expect((neg!.body as Record<string, unknown>).name).toBe("string"); // untouched, still valid
+    expect(neg!.expectedStatus).toBe("4XX"); // createPet only declares 201 — generic range fallback
+    expect(neg!.expectedSchema).toBeUndefined(); // nothing declared for "4XX" to check against
+  });
+
+  it("omits a required non-path param (query/header/cookie) when there's no body to violate", () => {
+    const m = model({
+      method: "GET",
+      path: "/search",
+      tags: [],
+      parameters: [{ name: "q", in: "query", required: true, schema: { type: "string" } }],
+      responses: [{ status: "200" }, { status: "400" }],
+      security: [],
+    });
+    const [neg] = generateNegativeCases(m);
+    expect(neg!.params.query).toEqual({}); // required "q" dropped
+    expect(neg!.expectedStatus).toBe("400"); // the declared 4xx is used, not the generic range
+  });
+
+  it("skips an operation with nothing to violate (no body, no non-path required params)", async () => {
+    const tiny = await ingestOpenApi(join(fixtures, "tiny.json"));
+    expect(generateNegativeCases(tiny)).toEqual([]);
+  });
+
+  it("does not try to violate a required PATH param (it would just break routing, not the contract)", () => {
+    const m = model({
+      method: "GET",
+      path: "/items/{id}",
+      tags: [],
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      responses: [{ status: "200" }],
+      security: [],
+    });
+    expect(generateNegativeCases(m)).toEqual([]);
   });
 });

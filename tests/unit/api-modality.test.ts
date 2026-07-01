@@ -186,6 +186,50 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       await rm(out, { recursive: true, force: true });
     }
   });
+
+  it("(API-8, #145) --negative adds one contract-violation case per operation with something to violate", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-out3-"));
+    try {
+      // A server that actually enforces its contract: rejects the malformed createPet body (id sent
+      // as a number, not the declared string) with 400 — the case the plain happy-path stub can't catch.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (_url: string, init: RequestInit) => {
+          if (init.method === "POST") {
+            const body = JSON.parse(init.body as string) as { id: unknown };
+            const status = typeof body.id === "string" ? 201 : 400;
+            return { status, headers: { get: () => null }, text: async () => "" } as unknown as Response;
+          }
+          const status = init.method === "DELETE" ? 204 : 200;
+          const bodyText = init.method === "GET" ? (_url.includes("{") || _url.endsWith("/pets") ? "[]" : "{}") : "";
+          return { status, headers: { get: () => null }, text: async () => bodyText } as unknown as Response;
+        }),
+      );
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync([
+        "node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"),
+        "--base-url", "https://api.test", "--out", out, "--negative",
+      ]);
+
+      const out0 = outChunks.join("");
+      expect(out0).toContain("5 case(s) generated (1 negative-schema)");
+      expect(out0).toContain("5/5 case(s) passed"); // the malformed body IS correctly rejected (400)
+      expect(process.exitCode ?? 0).toBe(0);
+
+      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        cases: { name: string; type: string }[];
+      };
+      expect(report.cases).toHaveLength(5);
+      const neg = report.cases.find((c) => c.type === "Negative");
+      expect(neg?.name).toBe("createPet (negative)");
+
+      const { readdir } = await import("node:fs/promises");
+      const tcFileNames = await readdir(join(out, "testcases"));
+      expect(tcFileNames).toHaveLength(5);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("cairn api source resolution (mocked ingest)", () => {
