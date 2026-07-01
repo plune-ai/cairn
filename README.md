@@ -18,7 +18,7 @@ pages (ARIA snapshot + screenshot), designs methodology-based UI test cases (ISO
 generates runnable `@playwright/test` code, self-validates, self-repairs, and **self-improves** via
 Langfuse. A portable CLI + library for embedding into other TypeScript projects.
 
-**Cairn is the generation layer** — it produces tests across surfaces (UI today; API / unit / docs
+**Cairn is the generation layer** — it produces tests across surfaces (UI + API shipped; unit / docs
 planned), each arriving by demand. A separate **Plune** layer owns record / management / eval.
 
 > **Renamed Lex-Bot → Cairn.** The old `lex-bot` command and `@plune-ai/lex-bot` package still work
@@ -103,7 +103,7 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 | `cairn automate --run <dir> [--validate --session <s>] [--screencast]` | `@playwright/test` from `ATC-*` cases |
 | `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
 | `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique] [--screencast]` | Full pipeline (cases → code → validate → repair → Pilot) |
-| `cairn api --spec <path\|url>` | Ingest an OpenAPI 3.x spec (JSON/YAML, file or URL) and generate one happy-path case per operation (params + body synthesised from the schema, paired with the success response) — _API-2: cases, no runner yet (#132)_ |
+| `cairn api --spec <path\|url> [--base-url <u>] [--negative] [--scenarios] [--adversarial [styles]]` | Generate (and, with `--base-url`, run + assert status/contract) happy-path, negative-schema, multi-endpoint-scenario, and adversarial (`normal`/`curious`/`psycho`/`hacker`) cases from an OpenAPI 3.x spec |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).

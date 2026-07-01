@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-01
+
 ### Added
 
 - **`cairn api` — adversarial testing styles (#95, BORROW-07).** New `--adversarial [styles]` flag —
