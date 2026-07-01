@@ -172,13 +172,24 @@ function psychoCase(
 }
 
 /**
+ * A declared 401, else 403 — the specific "auth rejection" codes — over `pickErrorStatus`'s generic
+ * "lowest declared 4xx" (bug #154): an operation can legitimately declare an unrelated 4xx (e.g. a
+ * `404` for "resource not found") that has nothing to do with authentication, and reusing that here
+ * would expect the wrong failure mode from a server that's actually enforcing auth correctly.
+ */
+function pickAuthRejectionStatus(e: ApiEndpoint): string {
+  const auth = e.responses.find((r) => r.status === "401") ?? e.responses.find((r) => r.status === "403");
+  return auth?.status ?? pickErrorStatus(e);
+}
+
+/**
  * Auth-header-stripped case for one operation (`hacker`, deterministic subset — see module doc): only
  * for operations that actually declare `security`, since a public operation has nothing to strip.
  */
 function toHackerCase(e: ApiEndpoint): ApiCase | undefined {
   if (e.security.length === 0) return undefined;
   const base = toCase(e);
-  const expectedStatus = pickErrorStatus(e);
+  const expectedStatus = pickAuthRejectionStatus(e);
   return {
     ...base,
     name: `${apiEndpointKey(e)} (hacker: no-auth)`,

@@ -168,6 +168,42 @@ describe("hacker — deterministic auth-strip subset", () => {
     expect(hackerCase!.expectedStatus).not.toBe("200");
     expect(/^4/.test(hackerCase!.expectedStatus) || hackerCase!.expectedStatus === "4XX").toBe(true);
   });
+
+  // Bug #154, found live: an operation can declare a 4xx unrelated to auth (e.g. petstore's getPet
+  // only declares 404 "not found") — the auth-strip case must not blindly reuse "the lowest declared
+  // 4xx" for that, since a server correctly enforcing auth (401) would then fail a case that expected
+  // the wrong failure mode entirely.
+  it("(#154) prefers a declared 401 over any other declared 4xx", () => {
+    const m = model({
+      method: "GET",
+      path: "/x",
+      tags: [],
+      parameters: [],
+      responses: [{ status: "200" }, { status: "404" }, { status: "401" }],
+      security: ["apiKey"],
+    });
+    const [hackerCase] = generateAdversarialCases(m, ["hacker"]);
+    expect(hackerCase!.expectedStatus).toBe("401");
+  });
+
+  it("(#154) prefers a declared 403 when no 401 is declared", () => {
+    const m = model({
+      method: "GET",
+      path: "/x",
+      tags: [],
+      parameters: [],
+      responses: [{ status: "200" }, { status: "404" }, { status: "403" }],
+      security: ["apiKey"],
+    });
+    const [hackerCase] = generateAdversarialCases(m, ["hacker"]);
+    expect(hackerCase!.expectedStatus).toBe("403");
+  });
+
+  it("(#154) falls back to the generic lowest-4xx when neither 401 nor 403 is declared (petstore's getPet: only 404)", async () => {
+    const petstore = await ingestOpenApi(join(fixtures, "petstore.yaml"));
+    const getPetCase = generateAdversarialCases(petstore, ["hacker"]).find((c) => c.name.startsWith("getPet"));
+    expect(getPetCase!.expectedStatus).toBe("404");
+  });
 });
 
 describe("style selection", () => {
