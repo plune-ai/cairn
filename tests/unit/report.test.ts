@@ -182,4 +182,57 @@ describe("renderApiReportMd (C1-04 / API-4, #134)", () => {
     expect(md).toMatch(/✓ \| GET/);
     expect(md).toMatch(/✗ \| POST/);
   });
+
+  it("renders a Coverage section (gaps only) when `coverage` is supplied (API-6, #136)", () => {
+    const md = renderApiReportMd({
+      runId: "api-1",
+      baseUrl: "https://api.test",
+      source: "petstore.yaml",
+      results,
+      endpointCount: 2,
+      evidencePath: "/tmp/runs/api-1/api-evidence.json",
+      coverage: {
+        endpointCount: 2,
+        coveredCount: 1,
+        partialCount: 1,
+        uncoveredCount: 0,
+        ratio: 0.5,
+        endpoints: [
+          {
+            method: "GET",
+            path: "/pets",
+            operationId: "listPets",
+            deprecated: false,
+            status: "covered",
+            declaredStatuses: ["200"],
+            testedStatuses: ["200"],
+          },
+          {
+            method: "GET",
+            path: "/pets/{id}",
+            operationId: "getPet",
+            deprecated: false,
+            status: "partial",
+            declaredStatuses: ["200", "404"],
+            testedStatuses: ["200"],
+          },
+        ],
+      },
+    });
+    expect(md).toContain("Coverage (1/2 endpoint(s) — 50%)");
+    expect(md).toContain("⚠ partial | GET | /pets/{id} | getPet | 200 | 404");
+    expect(md).not.toContain("listPets |"); // fully-covered rows are omitted — gaps only
+  });
+
+  it("omits the Coverage section entirely when `coverage` is absent (back-compat)", () => {
+    const md = renderApiReportMd({
+      runId: "api-1",
+      baseUrl: "https://api.test",
+      source: "petstore.yaml",
+      results,
+      endpointCount: 2,
+      evidencePath: "/tmp/runs/api-1/api-evidence.json",
+    });
+    expect(md).not.toContain("## Coverage");
+  });
 });

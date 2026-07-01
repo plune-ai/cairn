@@ -13,6 +13,7 @@ import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, type ApiCase } from "../../api/cases.js";
 import { runApiCases, type ApiCaseResult } from "../../api/runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
+import { computeApiCoverage, type ApiCoverageReport } from "../../api/coverage.js";
 import { loadApiCreds } from "../../knowledge/index.js";
 import { defaultRunsBaseDir } from "../../fs/run-dir.js";
 import { renderRunSummary, displayPath } from "../../agent/summary.js";
@@ -116,6 +117,31 @@ export function renderApiCases(cases: ApiCase[]): string[] {
   return lines;
 }
 
+/**
+ * Render the spec-vs-tested coverage report (API-6, #136, `playswag`-style) — a summary line plus
+ * gaps only (uncovered/partial); fully-covered operations need no per-row listing.
+ */
+export function renderApiCoverage(coverage: ApiCoverageReport): string[] {
+  const lines = [
+    "",
+    `=== Coverage (${coverage.coveredCount}/${coverage.endpointCount} endpoint(s) — ${Math.round(coverage.ratio * 100)}%) ===`,
+  ];
+  if (coverage.partialCount) lines.push(`  ${coverage.partialCount} partially covered`);
+  if (coverage.uncoveredCount) lines.push(`  ${coverage.uncoveredCount} uncovered`);
+  for (const e of coverage.endpoints) {
+    if (e.status === "covered") continue;
+    const mark = e.status === "partial" ? "⚠" : "✗";
+    const op = e.operationId ? ` (${e.operationId})` : "";
+    const dep = e.deprecated ? " [deprecated]" : "";
+    const tested = e.testedStatuses.length ? e.testedStatuses.join(", ") : "—";
+    const missing = e.declaredStatuses.filter((s) => !e.testedStatuses.includes(s)).join(", ");
+    lines.push(
+      `  ${mark} ${e.status.padEnd(9)} ${e.method.padEnd(6)} ${e.path}${op}${dep} — tested: ${tested}${missing ? ` · missing: ${missing}` : ""}`,
+    );
+  }
+  return lines;
+}
+
 export const apiModality: Modality = {
   name: "api",
   gated: false,
@@ -144,6 +170,8 @@ export const apiModality: Modality = {
 
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
     if (!opts.baseUrl) {
+      // API-6 (#136): coverage is meaningful even without a run — it's spec-vs-generated-cases.
+      for (const line of renderApiCoverage(computeApiCoverage(model, cases))) ctx.out(`${line}\n`);
       ctx.out("Note: cases only. Pass --base-url <url> to execute them and assert responses (API-3).\n");
       return;
     }
@@ -155,6 +183,8 @@ export const apiModality: Modality = {
 
     ctx.err(`▸ Running ${cases.length} case(s) against ${opts.baseUrl}…\n`);
     const results = await runApiCases(cases, { baseUrl: opts.baseUrl, auth: { headers } });
+    // API-6 (#136): spec-vs-tested coverage, overlaid with this run's pass/fail per operation.
+    const coverage = computeApiCoverage(model, cases, results);
 
     const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     await mkdir(outDir, { recursive: true });
@@ -177,6 +207,8 @@ export const apiModality: Modality = {
           // `expectedSchema` is dropped: it's a raw pointer into the (possibly cyclic, e.g. `Pet.friends:
           // Pet[]`) dereferenced spec schema, not serialisable — the case's own contract is enough here.
           cases: cases.map((c) => omitExpectedSchema(c)),
+          // API-6 (#136): spec-vs-tested coverage (playswag-style) — which operations/statuses are gaps.
+          coverage,
         },
         null,
         2,
@@ -192,6 +224,7 @@ export const apiModality: Modality = {
         results,
         endpointCount: model.endpoints.length,
         evidencePath,
+        coverage,
       }),
       "utf8",
     );
@@ -206,6 +239,7 @@ export const apiModality: Modality = {
     for (const d of caseDocs.docs) await writeFile(join(testCasesDir, `${d.id}.md`), d.md, "utf8");
 
     for (const line of renderApiRun(results)) ctx.out(`${line}\n`);
+    for (const line of renderApiCoverage(coverage)) ctx.out(`${line}\n`);
     for (const line of renderRunSummary({
       runDir: outDir,
       api: { passed, total: results.length, endpointCount: model.endpoints.length, evidencePath },

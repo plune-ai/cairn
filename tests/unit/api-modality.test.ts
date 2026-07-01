@@ -49,6 +49,9 @@ describe("cairn api command (real ingest)", () => {
     expect(out).toContain("1 security scheme(s)");
     expect(out).toContain("GET    /pets");
     expect(out).toContain("DELETE /pets/{id}");
+    // API-6 (#136): coverage is meaningful even without a run — spec-vs-generated-cases.
+    expect(out).toContain("Coverage (3/4 endpoint(s)");
+    expect(out).toMatch(/⚠ partial\s+GET\s+\/pets\/\{id\} \(getPet\) — tested: 200 · missing: 404/);
     expect(process.exitCode ?? 0).toBe(0);
   });
 
@@ -150,6 +153,17 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       expect(listPetsMd).toContain("technique: equivalence-partitioning");
       expect(listPetsMd).toContain("status: ✅ Passed");
       expect(out0).toContain("Cases (ATC .md):");
+
+      // API-6 (#136): spec-vs-tested coverage — getPet declares 200+404 but the happy-path case only
+      // targets 200, so it's "partial" even though this run is 4/4 GREEN — coverage ≠ pass rate.
+      const reportCoverage = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        coverage: { endpointCount: number; coveredCount: number; partialCount: number; uncoveredCount: number };
+      };
+      expect(reportCoverage.coverage).toMatchObject({ endpointCount: 4, coveredCount: 3, partialCount: 1, uncoveredCount: 0 });
+      expect(reportMd).toContain("Coverage (3/4 endpoint(s)");
+      expect(reportMd).toContain("⚠ partial | GET | /pets/{id}");
+      expect(out0).toContain("Coverage (3/4 endpoint(s)");
+      expect(out0).toContain("partially covered");
     } finally {
       await rm(kdir, { recursive: true, force: true });
       await rm(out, { recursive: true, force: true });
