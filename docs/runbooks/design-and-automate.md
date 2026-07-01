@@ -33,7 +33,18 @@ cairn explore --url ... --session ... [--checklist ...]
 ```
 observe→design→code→validation→repair (keep-best)→Pilot verdict — a validated suite + metrics right away.
 
-## 5. Plug into an existing Playwright project (`--into-project`, #51)
+## 5. `automate` on an API run (API-7, #144)
+```
+cairn api --spec ./openapi.yaml --base-url https://api.example.com --out runs/api-1
+cairn automate --run runs/api-1
+```
+`automate` detects an API run from `report.json`'s `mode: "api"` (written by `cairn api --base-url`,
+API-4) and generates `runs/api-1/tests/api.spec.ts` from the ATC cases (API-5) instead — one
+`@playwright/test` `test()` per case using the `request` fixture, asserting the declared success
+status. No LLM, no session/`--validate` (that's a web-only, browser concept — a no-op here); `baseURL`
+is overridable per environment via `API_BASE_URL` so the same generated suite runs standalone in CI.
+
+## 6. Plug into an existing Playwright project (`--into-project`, #51)
 ```
 cairn explore  --url ... --into-project           # detect playwright.config.* from cwd
 cairn automate --run runs/<id> --into-project ./e2e   # or point at a project dir
