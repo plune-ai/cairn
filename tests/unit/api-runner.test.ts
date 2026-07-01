@@ -97,14 +97,45 @@ describe("response-schema conformance (b)", () => {
 
   it("validateAgainstSchema handles enums, arrays, integers, nullable and composition", () => {
     expect(validateAgainstSchema(["a", "b"], { type: "array", items: { type: "string" } })).toEqual([]);
-    expect(validateAgainstSchema([1, "x"], { type: "array", items: { type: "integer" } })).toEqual([expect.stringContaining("[1]: expected number")]);
+    expect(validateAgainstSchema([1, "x"], { type: "array", items: { type: "integer" } })).toEqual([expect.stringContaining(".1: expected integer, got string")]);
     expect(validateAgainstSchema("z", { enum: ["a", "b"] })).toEqual([expect.stringContaining("not in enum")]);
     expect(validateAgainstSchema(7, { type: "integer" })).toEqual([]); // integer satisfied by a JSON number
     expect(validateAgainstSchema(null, { type: "string", nullable: true })).toEqual([]);
-    expect(validateAgainstSchema(null, { type: "string" })).toEqual([expect.stringContaining("null is not")]);
+    expect(validateAgainstSchema(null, { type: "string" })).toEqual([expect.stringContaining("expected string, got null")]);
     expect(validateAgainstSchema({ a: { b: 1 } }, { type: "object", properties: { a: { type: "object", properties: { b: { type: "string" } } } } })).toEqual([expect.stringContaining("$.a.b: expected string")]);
     expect(validateAgainstSchema(5, { oneOf: [{ type: "string" }, { type: "number" }] })).toEqual([]);
-    expect(validateAgainstSchema(true, { oneOf: [{ type: "string" }, { type: "number" }] })).toEqual([expect.stringContaining("matches none")]);
+    expect(validateAgainstSchema(true, { oneOf: [{ type: "string" }, { type: "number" }] })).toEqual(
+      expect.arrayContaining([expect.stringContaining("must match exactly one schema in oneOf")]),
+    );
+  });
+
+  it("(API-8, #145) enforces keywords the old hand-rolled checker skipped — format/pattern/min/max/additionalProperties", () => {
+    expect(validateAgainstSchema("not-an-email", { type: "string", format: "email" })).toEqual([
+      expect.stringContaining('must match format "email"'),
+    ]);
+    expect(validateAgainstSchema("abc", { type: "string", pattern: "^\\d+$" })).toEqual([expect.stringContaining("must match pattern")]);
+    expect(validateAgainstSchema(3, { type: "integer", minimum: 5 })).toEqual([expect.stringContaining(">= 5")]);
+    expect(validateAgainstSchema(11, { type: "integer", maximum: 10 })).toEqual([expect.stringContaining("<= 10")]);
+    expect(validateAgainstSchema({ id: "1", extra: "nope" }, { type: "object", properties: { id: { type: "string" } }, additionalProperties: false })).toEqual([
+      expect.stringContaining('unexpected additional property "extra"'),
+    ]);
+    // valid against every added keyword — no false positives from the upgrade.
+    expect(
+      validateAgainstSchema(
+        { id: "user@example.com" },
+        { type: "object", properties: { id: { type: "string", format: "email" } }, additionalProperties: false },
+      ),
+    ).toEqual([]);
+  });
+
+  it("(API-8, #145) compiles a schema with a real circular $ref (swagger-parser dereference) without infinite recursion", () => {
+    const pet: { type: string; properties: Record<string, unknown> } = {
+      type: "object",
+      properties: { id: { type: "string" } },
+    };
+    pet.properties.friends = { type: "array", items: pet }; // literal object cycle, not a $ref keyword
+    expect(validateAgainstSchema({ id: "1", friends: [{ id: "2", friends: [] }] }, pet)).toEqual([]);
+    expect(validateAgainstSchema({ id: 1 }, pet)).toEqual([expect.stringContaining("expected string, got number")]);
   });
 });
 

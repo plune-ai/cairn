@@ -139,6 +139,7 @@ export function buildProgram(): Command {
     )
     .option("--out <dir>", "API-3: where to write run evidence (default runs/api-<id>/)")
     .option("--knowledge-dir <dir>", "API-3: dir holding api-scope auth/headers knowledge (default knowledge/)")
+    .option("--negative", "API-8: also generate/run one negative-schema (contract-violation) case per operation")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
     });

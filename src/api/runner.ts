@@ -12,6 +12,8 @@
  * fault earns a cheap backoff + retry of the SAME request; everything else fails fast (we never mask a
  * real 4xx / assertion failure behind a retry). `fetch` is injected so tests never touch the network.
  */
+import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
+import addFormats from "ajv-formats";
 import type { ApiCase } from "./cases.js";
 
 /** Minimal response shape we read — satisfied by the global `fetch` Response. */
@@ -222,70 +224,84 @@ function buildHeaders(c: ApiCase, auth?: ApiAuth): Record<string, string> {
 }
 
 /**
- * Minimal JSON-Schema instance check for happy-path response conformance. The schema is already
- * dereferenced (API-1), so there are no `$ref`s to follow. Returns path-qualified error strings.
- *
- * ponytail: covers the keywords real success-response schemas use — type (incl. 3.1 type-arrays +
- * 3.0 `nullable`), required, properties, items, enum, and allOf/oneOf/anyOf composition. It does NOT
- * enforce format/pattern/min/max/additionalProperties — upgrade to ajv if strict contract checks are
- * ever needed (none of the happy-path slices require it).
+ * C1-04 / API-8 (#145) — strict JSON-Schema response conformance via `ajv` (draft 2020-12 + formats):
+ * type/required/properties/items/enum/allOf/oneOf/anyOf, plus format/pattern/min/max/additionalProperties
+ * that a hand-rolled checker would have to reimplement one keyword at a time. Returns path-qualified
+ * error strings (same shape callers already expect).
  */
-export function validateAgainstSchema(value: unknown, schema: unknown, path = "$"): string[] {
-  if (!schema || typeof schema !== "object") return [];
-  const s = schema as Record<string, unknown>;
+const ajv = new Ajv({ allErrors: true, strict: false, verbose: true });
+// ponytail: ajv-formats' .d.ts models CJS/ESM interop differently than its actual dist/index.js emit
+// (`module.exports = formatsPlugin` directly) — the mismatch is type-only, so this cast matches runtime.
+(addFormats as unknown as (a: Ajv) => void)(ajv);
 
-  if (Array.isArray(s.allOf)) return s.allOf.flatMap((sub) => validateAgainstSchema(value, sub, path));
-  for (const key of ["oneOf", "anyOf"] as const) {
-    const branches = s[key];
-    if (Array.isArray(branches) && branches.length) {
-      const anyOk = branches.some((b) => validateAgainstSchema(value, b, path).length === 0);
-      return anyOk ? [] : [`${path}: matches none of ${key}`];
-    }
-  }
+/** One compiled validator per (already-dereferenced) schema object — a run checks the same declared
+ * schema across many responses; recompiling per call would be wasted work. */
+const compiledCache = new WeakMap<object, ValidateFunction>();
 
-  if (s.enum && Array.isArray(s.enum)) {
-    return s.enum.some((e) => deepEqual(e, value)) ? [] : [`${path}: ${JSON.stringify(value)} not in enum`];
-  }
-
-  const types = normaliseTypes(s);
-  if (types.length === 0) return []; // untyped schema — nothing to check
-  if (value === null) return types.includes("null") ? [] : [`${path}: null is not ${types.join("|")}`];
-
-  const actual = jsonType(value);
-  if (!types.includes(actual)) return [`${path}: expected ${types.join("|")}, got ${actual}`];
-
-  const errors: string[] = [];
-  if (actual === "object") {
-    const obj = value as Record<string, unknown>;
-    for (const req of (s.required as string[]) ?? []) {
-      if (!(req in obj)) errors.push(`${path}.${req}: required property missing`);
-    }
-    const props = (s.properties as Record<string, unknown>) ?? {};
-    for (const [k, sub] of Object.entries(props)) {
-      if (k in obj) errors.push(...validateAgainstSchema(obj[k], sub, `${path}.${k}`));
-    }
-  } else if (actual === "array" && s.items) {
-    (value as unknown[]).forEach((item, i) => errors.push(...validateAgainstSchema(item, s.items, `${path}[${i}]`)));
-  }
-  return errors;
+function compile(schema: object): ValidateFunction {
+  const cached = compiledCache.get(schema);
+  if (cached) return cached;
+  const validate = ajv.compile(deCycle(schema, new Set()) as object);
+  compiledCache.set(schema, validate);
+  return validate;
 }
 
-/** Declared types as a list, folding OpenAPI 3.0 `nullable: true` into an implicit `null` member. */
-function normaliseTypes(s: Record<string, unknown>): string[] {
-  const raw = s.type;
-  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
-  if (s.nullable === true && !list.includes("null")) list.push("null");
-  // `integer` is satisfied by a JSON number — collapse it so jsonType() comparison lines up.
-  return list.map((t) => (t === "integer" ? "number" : t)) as string[];
+/**
+ * Swagger-parser's `dereference()` (API-1) resolves circular `$ref`s into literal object-identity
+ * cycles (e.g. `Pet.friends -> Pet`) rather than JSON-Schema `$ref` pointers — ajv can't compile a
+ * schema containing a real object cycle (infinite recursion). Breaking the cycle at the point of
+ * re-entry — tracked as the current DFS ancestor path, not a global "seen" set, since a schema
+ * legitimately reused as two *sibling* branches is not a cycle — relaxes only the recursive tail to
+ * "anything" and keeps the rest of the schema strict. Also folds OpenAPI 3.0's `nullable: true` into
+ * a `type` array, since ajv only understands the keyword `type` (no 3.0 extensions).
+ */
+function deCycle(node: unknown, ancestors: Set<object>): unknown {
+  if (!node || typeof node !== "object") return node;
+  if (ancestors.has(node)) return true; // re-entering an ancestor — stop recursing, accept anything
+  ancestors.add(node);
+  try {
+    if (Array.isArray(node)) return node.map((v) => deCycle(v, ancestors));
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) out[k] = deCycle(v, ancestors);
+    if (out.nullable === true) {
+      const t = out.type;
+      out.type = Array.isArray(t) ? [...t, "null"] : t !== undefined ? [t, "null"] : "null";
+    }
+    return out;
+  } finally {
+    ancestors.delete(node);
+  }
+}
+
+export function validateAgainstSchema(value: unknown, schema: unknown, path = "$"): string[] {
+  if (!schema || typeof schema !== "object") return [];
+  const validate = compile(schema);
+  if (validate(value)) return [];
+  return (validate.errors ?? []).map((e) => formatAjvError(e, path));
+}
+
+function formatAjvError(e: ErrorObject, root: string): string {
+  const dotPath = e.instancePath ? e.instancePath.replace(/\//g, ".") : "";
+  if (e.keyword === "required") {
+    const prop = (e.params as { missingProperty: string }).missingProperty;
+    return `${root}${dotPath}.${prop}: required property missing`;
+  }
+  if (e.keyword === "type") {
+    return `${root}${dotPath}: expected ${(e.params as { type: string }).type}, got ${jsonType(e.data)}`;
+  }
+  if (e.keyword === "enum") {
+    return `${root}${dotPath}: ${JSON.stringify(e.data)} not in enum`;
+  }
+  if (e.keyword === "additionalProperties") {
+    const extra = (e.params as { additionalProperty: string }).additionalProperty;
+    return `${root}${dotPath}: unexpected additional property "${extra}"`;
+  }
+  return `${root}${dotPath}: ${e.message ?? "invalid"}`;
 }
 
 function jsonType(v: unknown): string {
   if (v === null) return "null";
   if (Array.isArray(v)) return "array";
-  if (Number.isInteger(v as number) || typeof v === "number") return "number";
+  if (typeof v === "number") return "number";
   return typeof v; // string | boolean | object | undefined
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
 }

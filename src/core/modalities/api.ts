@@ -5,12 +5,14 @@
  * API-2 (#132): from that model, generate one nominal happy-path case per operation and print them.
  * API-3 (#133): with `--base-url`, execute those cases (auth from config + api-scope knowledge),
  *   assert status + response-schema per case, and capture request/response evidence to disk.
+ * API-8 (#145): with `--negative`, also generate/run one negative-schema (contract-violation) case
+ *   per operation, alongside the happy-path case — same pipeline, distinct `type: "Negative"`.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
-import { generateApiCases, type ApiCase } from "../../api/cases.js";
+import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
 import { runApiCases, type ApiCaseResult } from "../../api/runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
 import { computeApiCoverage, type ApiCoverageReport } from "../../api/coverage.js";
@@ -31,6 +33,8 @@ interface ApiFlags {
   out?: string;
   /** API-3: knowledge dir for api-scope auth/headers (#92). Default `knowledge`. */
   knowledgeDir?: string;
+  /** API-8: also generate/run one negative-schema (contract-violation) case per operation. */
+  negative?: boolean;
 }
 
 /** Parse repeated `--header "Name: Value"` flags into a header map (config auth). */
@@ -96,15 +100,16 @@ export function renderApiSummary(model: ApiModel, source: string): string[] {
   return lines;
 }
 
-/** Render the generated baseline cases — the verifiable artifact of API-2. */
+/** Render the generated cases — the verifiable artifact of API-2 (+ API-8 negative cases, if requested). */
 export function renderApiCases(cases: ApiCase[]): string[] {
+  const negative = cases.filter((c) => c.type === "Negative").length;
   const lines = [
     "",
     "=== Baseline cases (happy-path · 1 per operation) ===",
-    `${cases.length} case(s) generated`,
+    `${cases.length} case(s) generated${negative ? ` (${negative} negative-schema)` : ""}`,
   ];
   for (const c of cases) {
-    lines.push(`  ▸ ${c.name} → ${c.expectedStatus}`);
+    lines.push(`  ▸ ${c.name} [${c.type}] → ${c.expectedStatus}`);
     lines.push(`      [${c.technique}] ${c.rationale}`);
     const sent: Record<string, unknown> = {};
     for (const [where, vals] of Object.entries(c.params)) {
@@ -165,7 +170,7 @@ export const apiModality: Modality = {
       return;
     }
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
-    const cases = generateApiCases(model);
+    const cases = [...generateApiCases(model), ...(opts.negative ? generateNegativeCases(model) : [])];
     for (const line of renderApiCases(cases)) ctx.out(`${line}\n`);
 
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).

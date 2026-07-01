@@ -66,6 +66,8 @@
     "@langchain/core": "^1.1.48",
     "@langchain/openai": "^1.4.7",
     "@playwright/test": "^1.60.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "commander": "^15.0.0",
     "dotenv": "^17.4.2",
     "playwright": "^1.60.0",

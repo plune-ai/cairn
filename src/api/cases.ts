@@ -15,11 +15,14 @@
  * the case exists, not just what it sends.
  */
 import type { z } from "zod";
-import type { TestTechniqueSchema } from "../design/schema.js";
-import type { ApiEndpoint, ApiModel } from "./openapi.js";
+import type { TestTechniqueSchema, TestTypeSchema } from "../design/schema.js";
+import type { ApiEndpoint, ApiModel, ApiParam } from "./openapi.js";
 
 /** ISO/IEC/IEEE 29119-4 technique — shared enum with web cases (`design/schema.ts`). */
 export type ApiCaseTechnique = z.infer<typeof TestTechniqueSchema>;
+
+/** Positive (valid path) | Negative (invalid/erroneous) — shared enum with web cases (API-8, #145). */
+export type ApiCaseType = z.infer<typeof TestTypeSchema>;
 
 /**
  * The stable key an operation is identified by across the model/cases/results/coverage — same rule
@@ -52,6 +55,8 @@ export interface ApiCase {
   expectedStatus: string;
   /** Schema of the expected success body, if that response carries one. */
   expectedSchema?: unknown;
+  /** Positive (happy-path) | Negative (contract-violating) — API-8 (#145) distinct case category. */
+  type: ApiCaseType;
   /** ISO/IEC/IEEE 29119-4 technique this case embodies (API-5 methodology tagging). */
   technique: ApiCaseTechnique;
   /** Why this case exists / what it covers — the coverage rationale (API-5). */
@@ -63,14 +68,28 @@ export function generateApiCases(model: ApiModel): ApiCase[] {
   return model.endpoints.map(toCase);
 }
 
-function toCase(e: ApiEndpoint): ApiCase {
+/**
+ * C1-04 / API-8 (#145) — one negative-schema case per operation that has a request contract worth
+ * violating: corrupt a request-body property to the wrong JSON type, or (bodyless operations) omit a
+ * required non-path parameter. An operation with neither (e.g. `GET /health`) has nothing to violate
+ * and is skipped — a forced violation would just be noise, not a contract check.
+ */
+export function generateNegativeCases(model: ApiModel): ApiCase[] {
+  return model.endpoints.map(toNegativeCase).filter((c): c is ApiCase => c !== undefined);
+}
+
+/** Required params (as sent for the nominal happy path), optionally dropping one to violate it. */
+function synthRequiredParams(e: ApiEndpoint, omit?: ApiParam): ApiCaseParams {
   const params: ApiCaseParams = { path: {}, query: {}, header: {}, cookie: {} };
   for (const p of e.parameters) {
-    // Nominal happy-path: send the required params; leave optional ones unset.
     if (!p.required) continue;
+    if (omit && p.in === omit.in && p.name === omit.name) continue;
     params[p.in][p.name] = synth(p.schema);
   }
+  return params;
+}
 
+function toCase(e: ApiEndpoint): ApiCase {
   const success = pickSuccess(e);
   const expectedStatus = success?.status ?? "200";
   return {
@@ -78,10 +97,11 @@ function toCase(e: ApiEndpoint): ApiCase {
     method: e.method,
     path: e.path,
     operationId: e.operationId,
-    params,
+    params: synthRequiredParams(e),
     body: e.requestBody?.schema !== undefined ? synth(e.requestBody.schema) : undefined,
     expectedStatus,
     expectedSchema: success?.schema,
+    type: "Positive",
     // Nominal happy-path = the valid equivalence class for this operation's inputs (ISO 29119-4).
     technique: "equivalence-partitioning",
     rationale:
@@ -89,6 +109,90 @@ function toCase(e: ApiEndpoint): ApiCase {
       `required parameters/body with schema-valid values and asserts the declared success response ` +
       `(${expectedStatus}).`,
   };
+}
+
+/** Body-schema properties whose declared (primitive) type we can flip to something invalid. */
+function corruptibleProps(schema: Schema): [string, string][] {
+  const out: [string, string][] = [];
+  for (const [name, sub] of Object.entries(schema.properties ?? {})) {
+    const type = Array.isArray(sub.type) ? sub.type.find((t) => t !== "null") : sub.type;
+    if (typeof type === "string") out.push([name, type]);
+  }
+  return out;
+}
+
+/** A JSON value of a different type than `type` — always a contract violation for that property. */
+function wrongTypeValue(type: string): unknown {
+  switch (type) {
+    case "string":
+      return 42;
+    case "integer":
+    case "number":
+      return "not-a-number";
+    case "boolean":
+      return "not-a-boolean";
+    default:
+      return "not-a-valid-value"; // array/object/other
+  }
+}
+
+/** The lowest declared 4xx status, else the generic "4XX" range (matched by the runner's `statusMatches`). */
+function pickErrorStatus(e: ApiEndpoint): string {
+  const fourXX = e.responses.filter((r) => /^4\d\d$/.test(r.status)).sort((a, b) => a.status.localeCompare(b.status));
+  return fourXX[0]?.status ?? "4XX";
+}
+
+/** The declared response schema for an EXACT status match, if the case picked one (not the "4XX" fallback). */
+function pickErrorSchema(e: ApiEndpoint, expectedStatus: string): unknown {
+  return e.responses.find((r) => r.status === expectedStatus)?.schema;
+}
+
+function buildNegativeCase(e: ApiEndpoint, input: { body?: unknown; params: ApiCaseParams }, violation: string): ApiCase {
+  const expectedStatus = pickErrorStatus(e);
+  return {
+    name: `${apiEndpointKey(e)} (negative)`,
+    method: e.method,
+    path: e.path,
+    operationId: e.operationId,
+    params: input.params,
+    body: input.body,
+    expectedStatus,
+    expectedSchema: pickErrorSchema(e, expectedStatus),
+    type: "Negative",
+    // Deliberately-invalid input, chosen from experience of common contract violations (ISO 29119-4).
+    technique: "error-guessing",
+    rationale:
+      `Negative-schema case for ${e.method} ${e.path}: ${violation}, expecting the API to reject the ` +
+      `request (${expectedStatus}) rather than accept it.`,
+  };
+}
+
+function toNegativeCase(e: ApiEndpoint): ApiCase | undefined {
+  const bodySchema = e.requestBody?.schema as Schema | undefined;
+  if (bodySchema) {
+    const [prop] = corruptibleProps(bodySchema);
+    if (prop) {
+      const [name, type] = prop;
+      const body = synth(bodySchema) as Record<string, unknown>;
+      body[name] = wrongTypeValue(type);
+      return buildNegativeCase(
+        e,
+        { body, params: synthRequiredParams(e) },
+        `sends "${name}" as the wrong type in the request body (expected ${type})`,
+      );
+    }
+  }
+
+  const nonPathRequired = e.parameters.find((p) => p.required && p.in !== "path");
+  if (nonPathRequired) {
+    return buildNegativeCase(
+      e,
+      { params: synthRequiredParams(e, nonPathRequired) },
+      `omits the required ${nonPathRequired.in} param "${nonPathRequired.name}"`,
+    );
+  }
+
+  return undefined; // nothing in this operation's contract is worth violating
 }
 
 /** The declared success response: the lowest 2xx, else `default`, else the first declared. */

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — stricter contract validation + negative-schema cases (#145, C1-04 / API-8).**
+  Response-schema conformance now goes through `ajv` (+ `ajv-formats`) instead of the hand-rolled
+  structural checker: `format`/`pattern`/`minimum`/`maximum`/`additionalProperties` are now enforced,
+  not just type/required/properties/items/enum/allOf/oneOf/anyOf. Circular schemas from swagger-parser's
+  dereference (e.g. `Pet.friends -> Pet`) are de-cycled before compiling so ajv doesn't recurse forever.
+  New `--negative` flag: generates one additional contract-violation case per operation that has
+  something to violate (a request-body property flipped to the wrong JSON type, or a required
+  query/header/cookie param omitted — path params are left alone since removing one just breaks
+  routing), expecting the declared 4xx (or a generic `4XX` range) rather than acceptance. Tagged
+  `type: "Negative"` / technique `error-guessing`, flowing through the same run/report/coverage/ATC
+  pipeline as the happy-path cases — a distinct case category, not a parallel one.
+
 - **`cairn api` — Playwright codegen from ATC cases (#144, C1-04 / API-7).** `cairn automate --run
   <runDir>` — the same decoupled design→automate contract web runs use — now also works on an API
   run (`report.json`'s `mode: "api"`, API-4): it reads the ATC `.md` cases (API-5) and generates a
