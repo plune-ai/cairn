@@ -209,6 +209,23 @@ describe("auth / headers application (c)", () => {
   });
 });
 
+describe("auth stripping (BORROW-07, #95 hacker style)", () => {
+  it("omits configured auth headers entirely when the case sets stripAuth", async () => {
+    const { fetch, calls } = fakeFetch([res(401, { error: "unauthorized" })]);
+    const c = caseOf({ stripAuth: true, expectedStatus: "401" });
+    const [r] = await runApiCases([c], { baseUrl: "https://api.test", fetch, auth: { headers: { Authorization: "Bearer t0ken" } } });
+    const sent = calls[0]!.init.headers as Record<string, string>;
+    expect(sent["Authorization"]).toBeUndefined();
+    expect(r!.passed).toBe(true); // 401 matches the case's own expectedStatus
+  });
+
+  it("still applies auth headers normally when stripAuth is absent (unchanged default)", async () => {
+    const { fetch, calls } = fakeFetch([res(200, {})]);
+    await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, auth: { headers: { Authorization: "Bearer t0ken" } } });
+    expect((calls[0]!.init.headers as Record<string, string>)["Authorization"]).toBe("Bearer t0ken");
+  });
+});
+
 describe("transient recovery then fail (d) — reuses the #90 ladder", () => {
   it("retries on a 5xx and passes once the service recovers", async () => {
     const { fetch, calls } = fakeFetch([res(503), res(503), res(200, {})]);
