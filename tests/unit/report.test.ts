@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { renderReportMd, locatorFor } from "../../src/artifacts/report.js";
+import { renderReportMd, renderApiReportMd, locatorFor } from "../../src/artifacts/report.js";
 import type { ElementRef } from "../../src/browser/types.js";
+import type { ApiCaseResult } from "../../src/api/runner.js";
 
 const btn: ElementRef = { ref: "e6", role: "button", name: "Sign In", interactive: true, rank: 3 };
 
@@ -131,5 +132,54 @@ describe("renderReportMd", () => {
     });
     expect(md).toContain("Cost (per role)");
     expect(md).toMatch(/\bworker\b.*—/);
+  });
+});
+
+describe("renderApiReportMd (C1-04 / API-4, #134)", () => {
+  const results: ApiCaseResult[] = [
+    {
+      name: "listPets",
+      method: "GET",
+      url: "https://api.test/pets",
+      request: { headers: {} },
+      response: { status: 200, bodyText: "[]", json: [] },
+      attempts: 1,
+      expectedStatus: "200",
+      statusOk: true,
+      schemaOk: true,
+      schemaErrors: [],
+      passed: true,
+    },
+    {
+      name: "createPet",
+      method: "POST",
+      url: "https://api.test/pets",
+      request: { headers: {} },
+      response: { status: 500, bodyText: "", json: undefined },
+      attempts: 1,
+      expectedStatus: "201",
+      statusOk: false,
+      schemaOk: true,
+      schemaErrors: [],
+      passed: false,
+    },
+  ];
+
+  it("contains base URL, per-operation pass/fail marks, endpoint coverage, and the evidence path", () => {
+    const md = renderApiReportMd({
+      runId: "api-1",
+      baseUrl: "https://api.test",
+      source: "petstore.yaml",
+      results,
+      endpointCount: 2,
+      evidencePath: "/tmp/runs/api-1/api-evidence.json",
+    });
+    expect(md).toContain("https://api.test");
+    expect(md).toContain("petstore.yaml");
+    expect(md).toContain("1/2 passed");
+    expect(md).toContain("2 endpoint(s) covered");
+    expect(md).toContain("/tmp/runs/api-1/api-evidence.json");
+    expect(md).toMatch(/✓ \| GET/);
+    expect(md).toMatch(/✗ \| POST/);
   });
 });

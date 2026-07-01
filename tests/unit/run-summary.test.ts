@@ -81,6 +81,16 @@ describe("renderRunSummary (L1-04, Box 4 — first-run UX)", () => {
     const text = renderRunSummary({ runDir: "/x", budget: { used: 85, max: 80 } }).join("\n");
     expect(text).not.toMatch(/-\d/);
   });
+
+  it("C1-04/API-4 (#134): renders api run pass/fail, endpoint coverage, and the evidence path", () => {
+    const text = renderRunSummary({
+      runDir: "/tmp/runs/api-1",
+      api: { passed: 3, total: 4, endpointCount: 4, evidencePath: "/tmp/runs/api-1/api-evidence.json" },
+    }).join("\n");
+    expect(text).toMatch(/3\/4 passed/);
+    expect(text).toMatch(/4 endpoint\(s\) covered/);
+    expect(text).toContain("Evidence:  /tmp/runs/api-1/api-evidence.json");
+  });
 });
 
 describe("classifyRunError (L1-04, Box 1/3 — friendly, actionable)", () => {

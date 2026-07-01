@@ -8,12 +8,14 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, type ApiCase } from "../../api/cases.js";
 import { runApiCases, type ApiCaseResult } from "../../api/runner.js";
 import { loadApiCreds } from "../../knowledge/index.js";
 import { defaultRunsBaseDir } from "../../fs/run-dir.js";
+import { renderRunSummary } from "../../agent/summary.js";
+import { renderApiReportMd } from "../../artifacts/report.js";
 import type { Modality, ModalityContext } from "../modality.js";
 
 /** Parsed flags for `cairn api` (mirrors the command's option definitions). */
@@ -39,8 +41,11 @@ function parseHeaderFlags(flags: string[] | undefined): Record<string, string> {
   return out;
 }
 
-/** Render the runner's per-case verdicts — the verifiable artifact of API-3. */
-export function renderApiRun(results: ApiCaseResult[], evidencePath: string): string[] {
+/**
+ * Render the runner's per-case verdicts — the verifiable artifact of API-3. The aggregate
+ * pass/fail + coverage + evidence-path footer is API-4's `renderRunSummary` (shared with web runs).
+ */
+export function renderApiRun(results: ApiCaseResult[]): string[] {
   const passed = results.filter((r) => r.passed).length;
   const lines = ["", "=== Run results (status + schema asserts) ===", `${passed}/${results.length} case(s) passed`];
   for (const r of results) {
@@ -51,7 +56,6 @@ export function renderApiRun(results: ApiCaseResult[], evidencePath: string): st
     if (!r.statusOk && !r.error) lines.push(`      status mismatch`);
     for (const e of r.schemaErrors) lines.push(`      schema: ${e}`);
   }
-  lines.push("", `Evidence: ${evidencePath}`);
   return lines;
 }
 
@@ -142,7 +146,44 @@ export const apiModality: Modality = {
     const evidencePath = join(outDir, "api-evidence.json");
     await writeFile(evidencePath, JSON.stringify(results, null, 2), "utf8");
 
-    for (const line of renderApiRun(results, evidencePath)) ctx.out(`${line}\n`);
+    // API-4 (#134): report.json/report.md in the same shape/location the run summary and the TUI's
+    // past-run browser already read for web runs — no parallel reporting layer.
+    const passed = results.filter((r) => r.passed).length;
+    const runId = basename(outDir);
+    await writeFile(
+      join(outDir, "report.json"),
+      JSON.stringify(
+        {
+          runId,
+          url: opts.baseUrl,
+          mode: "api",
+          api: { passed, total: results.length, endpointCount: model.endpoints.length },
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await writeFile(
+      join(outDir, "report.md"),
+      renderApiReportMd({
+        runId,
+        baseUrl: opts.baseUrl,
+        source,
+        results,
+        endpointCount: model.endpoints.length,
+        evidencePath,
+      }),
+      "utf8",
+    );
+
+    for (const line of renderApiRun(results)) ctx.out(`${line}\n`);
+    for (const line of renderRunSummary({
+      runDir: outDir,
+      api: { passed, total: results.length, endpointCount: model.endpoints.length, evidencePath },
+    })) {
+      ctx.out(`${line}\n`);
+    }
     if (results.some((r) => !r.passed)) process.exitCode = 1; // any failed assertion → non-zero exit
   },
 };

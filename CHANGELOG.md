@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — reporting + run summary/TUI integration (#134, C1-04 / API-4).** A `--base-url` run
+  now writes `report.json` + `report.md` alongside the existing `api-evidence.json`, in the same
+  shape/location web runs already use — so the TUI's past-run browser (`Past runs`) lists api runs
+  too, showing per-operation pass/fail and endpoint coverage instead of green%/pilot. The CLI's final
+  line is now the **shared** `renderRunSummary` footer ("Operations: X/Y passed · N endpoint(s)
+  covered", evidence path, artifacts dir) — the same renderer web runs use, not a parallel one.
+
 - **`cairn api` — runner + response assertions (#133, C1-04 / API-3).** With `--base-url <url>`,
   `cairn api` now **executes** the generated happy-path cases (API-2) and, per case, asserts the HTTP
   **status** matches the declared success code and the response **body conforms** to the declared
