@@ -89,6 +89,20 @@ function omitExpectedSchema(c: ApiCase): Omit<ApiCase, "expectedSchema"> {
   return rest as Omit<ApiCase, "expectedSchema">;
 }
 
+/**
+ * `JSON.stringify` replacer (API-10, #150): a `format: binary` property synthesises to a real
+ * `Buffer` (so the runner can send actual file bytes) — but a raw byte-array dump is noise in a
+ * rendered/persisted artifact (CLI preview, `api-evidence.json`, `report.json`). `Buffer` already
+ * ran through its own `toJSON()` (`{ type: "Buffer", data: [...] }`) by the time a replacer sees it,
+ * which is the shape this recognises and swaps for a short marker.
+ */
+function jsonSafe(_key: string, value: unknown): unknown {
+  if (value && typeof value === "object" && (value as { type?: unknown }).type === "Buffer" && Array.isArray((value as { data?: unknown }).data)) {
+    return `<binary ${(value as { data: unknown[] }).data.length}b>`;
+  }
+  return value;
+}
+
 /** Print the parsed-model summary — the verifiable artifact of this slice. */
 export function renderApiSummary(model: ApiModel, source: string): string[] {
   const lines = [
@@ -122,7 +136,7 @@ export function renderApiCases(cases: ApiCase[]): string[] {
       if (Object.keys(vals as object).length) sent[where] = vals;
     }
     if (c.body !== undefined) sent.body = c.body;
-    if (Object.keys(sent).length) lines.push(`      ${JSON.stringify(sent)}`);
+    if (Object.keys(sent).length) lines.push(`      ${JSON.stringify(sent, jsonSafe)}`);
   }
   lines.push("");
   return lines;
@@ -234,7 +248,7 @@ export const apiModality: Modality = {
     const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     await mkdir(outDir, { recursive: true });
     const evidencePath = join(outDir, "api-evidence.json");
-    await writeFile(evidencePath, JSON.stringify(results, null, 2), "utf8");
+    await writeFile(evidencePath, JSON.stringify(results, jsonSafe, 2), "utf8");
 
     // API-4 (#134): report.json/report.md in the same shape/location the run summary and the TUI's
     // past-run browser already read for web runs — no parallel reporting layer.
@@ -258,7 +272,7 @@ export const apiModality: Modality = {
           // key is only present when --scenarios generated something to report.
           ...(scenarioResults.length ? { scenarios: scenarioResults } : {}),
         },
-        null,
+        jsonSafe,
         2,
       ),
       "utf8",

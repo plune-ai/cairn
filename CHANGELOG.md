@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api` — `multipart/form-data` request encoding (#150, C1-04 / API-10).** The runner
+  (`runner.ts`) now encodes a case's body as real `multipart/form-data` (boundary, per-part
+  `Content-Disposition`, correct `Content-Type`) when the operation declares it, instead of always
+  JSON-encoding — via Node's native `FormData`/`File` (undici), which generates the wire format
+  itself rather than a hand-rolled encoder. Case generation (`cases.ts`) synthesises a `format:
+  binary` property (e.g. a file-upload field) as a real in-memory `Buffer` instead of the literal
+  string `"string"`, so a multipart body has actual file content to send. A new fixture spec
+  (`tests/fixtures/api/multipart-upload.yaml`) exercises this end to end: generate → run against a
+  mocked server → correct encoding asserted. Follow-ups (out of scope here): `--negative` (API-8)
+  doesn't yet propagate `bodyMediaType` to its corrupted-body case for a multipart operation, and
+  array-of-files (`items: { format: binary }`) synthesises only one file, mirroring the existing
+  one-element array behaviour for every schema type.
+
 - **`cairn api` — multi-endpoint scenario chains / journeys (#146, C1-04 / API-9).** New `--scenarios`
   flag: given the ingested spec, chains related operations on the same resource (a *collection* path
   like `/pets` plus an *item* path templated one level deeper, `/pets/{id}`) into an ordered

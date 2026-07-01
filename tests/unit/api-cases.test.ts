@@ -116,6 +116,53 @@ describe("respects required / enum / types / example / format (b)", () => {
   });
 });
 
+describe("multipart/form-data request bodies (API-10, #150)", () => {
+  function multipartModel(): ApiModel {
+    return model({
+      method: "POST",
+      path: "/upload",
+      tags: [],
+      parameters: [],
+      requestBody: {
+        required: true,
+        mediaTypes: ["multipart/form-data"],
+        schema: {
+          type: "object",
+          required: ["file"],
+          properties: { file: { type: "string", format: "binary" }, description: { type: "string" } },
+        },
+      },
+      responses: [{ status: "201" }],
+      security: [],
+    });
+  }
+
+  it("synthesises a format:binary property as real bytes (a Buffer), not the literal string \"string\"", () => {
+    const [c] = generateApiCases(multipartModel());
+    const body = c!.body as Record<string, unknown>;
+    expect(Buffer.isBuffer(body.file)).toBe(true);
+    expect((body.file as Buffer).length).toBeGreaterThan(0);
+    expect(body.description).toBe("string"); // unaffected — only `format: binary` changes
+  });
+
+  it("tags the case with bodyMediaType from the operation's first declared media type", () => {
+    const [c] = generateApiCases(multipartModel());
+    expect(c!.bodyMediaType).toBe("multipart/form-data");
+  });
+
+  it("leaves bodyMediaType as application/json for a plain JSON operation (unchanged default)", async () => {
+    const m = await ingestOpenApi(join(fixtures, "petstore.yaml"));
+    const createPet = generateApiCases(m).find((c) => c.name === "createPet")!;
+    expect(createPet.bodyMediaType).toBe("application/json");
+  });
+
+  it("leaves bodyMediaType undefined for a bodyless operation", async () => {
+    const tiny = await ingestOpenApi(join(fixtures, "tiny.json"));
+    const [health] = generateApiCases(tiny);
+    expect(health!.bodyMediaType).toBeUndefined();
+  });
+});
+
 describe("determinism (c)", () => {
   it("same model → identical synthesised cases across runs", async () => {
     const m = await ingestOpenApi(join(fixtures, "petstore.yaml"));
