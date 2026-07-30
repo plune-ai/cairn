@@ -4,6 +4,7 @@ import type { StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import { DesignedCaseSchema, TestTechniqueSchema, type TestCase } from "./schema.js";
 import { dedupCases } from "./dedup.js";
+import { designedCaseStableId } from "../artifacts/contract.js";
 
 /** The 6 × ISO/IEC/IEEE 29119-4 techniques (single source: the schema enum). */
 const ALL_TECHNIQUES = TestTechniqueSchema.options;
@@ -84,6 +85,8 @@ export async function critiqueCases(
   const toppedUpCases = result.add.map((c) => ({
     ...c,
     id: "tc-pending",
+    // The re-id below rewrites `id`; identity must be minted here, from the case's own substance.
+    stableId: designedCaseStableId(c),
     elementRefs: c.elementRefs.filter((r) => known.has(r)),
   }));
 

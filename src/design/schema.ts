@@ -43,7 +43,10 @@ export const DesignResultSchema = z.object({ testCases: z.array(DesignedCaseSche
 
 /** Final test case with an assigned id. */
 export interface TestCase extends DesignedCase {
+  /** Position WITHIN this run (`tc-1`, `tc-2`, …) — it moves when the run designs a different set. */
   id: string;
+  /** Content-derived identity, stable ACROSS runs — see `artifacts/contract.ts`. Dedup on this one. */
+  stableId: string;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { ValidationReport } from "../validate/index.js";
 import type { CostReport } from "../llm/cost.js";
+import { ARTIFACT_SCHEMA_VERSION, type RunMode } from "../artifacts/contract.js";
 
 /**
  * Normalize a path for DISPLAY (console/report) to forward slashes. `resolve()`/`join()` produce
@@ -170,6 +171,8 @@ export function classifyRunError(
 export interface PartialReportInput {
   runId: string;
   url: string;
+  /** Which kind of run failed. Optional only because a caller might not know it; pass it when you do. */
+  mode?: RunMode;
   error: string;
   cost?: CostReport;
   budget?: BudgetReport;
@@ -178,8 +181,12 @@ export interface PartialReportInput {
 /** Build the report.json payload for a failed/partial run (L1-04, Box 1/3). Pure. */
 export function partialReportPayload(i: PartialReportInput): Record<string, unknown> {
   return {
+    // A partial artifact is still an artifact someone parses — it carries the same version and kind
+    // as a complete one, so a reader can tell what it is holding before deciding it is unusable.
+    schemaVersion: ARTIFACT_SCHEMA_VERSION,
     runId: i.runId,
     url: i.url,
+    ...(i.mode ? { mode: i.mode } : {}),
     partial: true,
     error: i.error,
     ...(i.cost ? { cost: i.cost } : {}),

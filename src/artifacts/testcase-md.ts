@@ -30,6 +30,9 @@ export function renderTestCaseMd(tc: TestCase, doc: TestCaseDoc): string {
   const lines: string[] = [];
   lines.push("---");
   lines.push(`id: ${doc.id}`);
+  // `id` above numbers the case within THIS run; `stableId` is the same case across runs — the two
+  // answer different questions, so the file carries both (`artifacts/contract.ts`).
+  lines.push(`stableId: ${tc.stableId}`);
   lines.push(`title: "${tc.title.replace(/"/g, "'")}"`);
   lines.push(`suite: ${doc.suite}`);
   lines.push(`priority: ${mapPriority(tc.priority)}`);
@@ -88,6 +91,7 @@ export function renderApiTestCaseMd(c: ApiCase, doc: ApiTestCaseDoc): string {
   const lines: string[] = [];
   lines.push("---");
   lines.push(`id: ${doc.id}`);
+  if (c.stableId) lines.push(`stableId: ${c.stableId}`);
   lines.push(`title: "${c.name.replace(/"/g, "'")}"`);
   lines.push(`suite: ${doc.suite}`);
   lines.push(`technique: ${c.technique}`);
@@ -123,6 +127,8 @@ export function renderApiTestCaseMd(c: ApiCase, doc: ApiTestCaseDoc): string {
 /** A parsed test case (for the automate command). */
 export interface ParsedTestCase {
   id: string;
+  /** Empty for a file written before the field existed — treat absence as "unknown", never as a match. */
+  stableId: string;
   execution: string;
   title: string;
   steps: string[];
@@ -138,6 +144,8 @@ function section(md: string, name: string): string {
 /** Parse ATC markdown back into a structure (for automate: .md → code). */
 export function parseTestCaseMd(md: string): ParsedTestCase {
   const id = md.match(/^id:\s*(.+?)\s*$/m)?.[1]?.trim() ?? "";
+  // `^id:` cannot capture the `stableId:` line — the anchor requires the line to START with `id:`.
+  const stableId = md.match(/^stableId:\s*(.+?)\s*$/m)?.[1]?.trim() ?? "";
   const execution = md.match(/^execution:\s*(.+?)\s*$/m)?.[1]?.trim() ?? "auto";
   const titleM = md.match(/^title:\s*"?(.+?)"?\s*$/m);
   const title = (titleM?.[1] ?? md.match(/^#\s+[^:\n]*:\s*(.+)$/m)?.[1] ?? "Untitled").trim();
@@ -163,7 +171,7 @@ export function parseTestCaseMd(md: string): ParsedTestCase {
       return { label: cells[0] ?? "", locator: (cells[1] ?? "").replace(/`/g, "").trim() };
     })
     .filter((s) => s.locator.length > 0);
-  return { id, execution, title, steps, expected, selectors };
+  return { id, stableId, execution, title, steps, expected, selectors };
 }
 
 /** A parsed API test case (for `automate` — API-7, #144: ATC `.md` → codegen input). */
