@@ -44,6 +44,10 @@ export interface ApiCaseParams {
 export interface ApiCase {
   /** `operationId` if present, else `METHOD path` — stable per operation. */
   name: string;
+  /** Content-derived identity, stable ACROSS runs — see `artifacts/contract.ts`. Stamped once where
+   * the full case set is assembled, so every generator (happy, negative, adversarial) gets one
+   * without each having to remember; absent only on a case that never reached that point. */
+  stableId?: string;
   method: string;
   path: string;
   operationId?: string;

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The run artifact is now a versioned, self-describing contract.** `report.json` carries
+  `schemaVersion` (currently `1`) in every shape it is written in — `explore`, `design`, `api`, and the
+  partial one a failed run leaves behind. Anything that reads a Cairn run can now tell whether it is
+  looking at a format it understands, instead of finding out by misparsing it.
+- **Every artifact says which kind of run produced it.** `mode` was previously present only on `design`
+  and `api`; `explore` and the partial artifact now carry it too. A reader no longer has to infer the
+  kind of a run from whichever optional keys happen to be present — a guess that silently starts
+  returning the wrong answer the moment a key becomes optional.
+- **Cases carry `stableId`, a content-derived identity that survives a re-run**
+  (`artifacts/contract.ts`), alongside the existing `id`. It appears in `report.json` and in the `.md`
+  frontmatter, and `parseTestCaseMd` reads it back. The two answer different questions and both are
+  kept: `id` numbers the case *within this run*, `stableId` says whether this is *the same case as
+  last time*.
+
+  The existing `id` is untouched, so `promote` and `automate` — which match on the `ATC-<suite>-<n>`
+  shape — behave exactly as before.
+
+  Scope, measured rather than assumed: identity is fully stable for spec-derived `api` cases (two runs
+  produced 26/26 identical ids, including distinct ids for the positive and the negative case of the
+  same operation). It is exact-content identity, so LLM-designed cases that get reworded between runs
+  do not match — two `design` runs over the same page shared none. That is still strictly better than
+  the positional id, which produced *false* matches; this one either matches truly or reports that it
+  does not know. Similarity matching (`design/dedup.ts`) remains the tool for reworded cases.
+
 ## [0.6.0] - 2026-07-01
 
 ### Added

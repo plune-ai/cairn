@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename, join } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
+import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
 import { ensureBrowsersInstalled } from "../browser/preflight.js";
 import { RoleRouter, type CostReport } from "../llm/index.js";
@@ -478,8 +479,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           );
         }
         await runWriter.writeReport({
+          schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
           url: out.study.url,
+          mode: "explore",
           pageSemantics: out.analysis.pageSemantics,
           testCases: out.testCases,
           validation,
@@ -550,6 +553,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     throw await finalizeFailure(runWriter, {
       runId,
       url: input.url,
+      mode: "explore",
       error: err,
       cost: router.ledger.report(),
       budget: { used: budget.spent, max: budget.max },
@@ -807,6 +811,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
 
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         await runWriter.writeReport({
+          schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
           url: out.study.url,
           mode: "design",
@@ -846,6 +851,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     throw await finalizeFailure(runWriter, {
       runId,
       url: input.url,
+      mode: "design",
       error: err,
       cost: router.ledger.report(),
       budget: { used: budget.spent, max: budget.max },

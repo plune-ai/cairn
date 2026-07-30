@@ -3,6 +3,7 @@ import type { StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import { DesignResultSchema, type TestCase } from "../design/schema.js";
 import type { CoverageGap } from "./coverage.js";
+import { designedCaseStableId } from "../artifacts/contract.js";
 
 export interface GapCaseInput {
   /** Top untested elements to suggest cases for. */
@@ -38,6 +39,7 @@ export async function designGapCases(input: GapCaseInput, deps: GapCaseDeps): Pr
   return result.testCases.map((c, i) => ({
     ...c,
     id: `gap-${i + 1}`,
+    stableId: designedCaseStableId(c),
     elementRefs: c.elementRefs.filter((r) => known.has(r)),
   }));
 }

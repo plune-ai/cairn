@@ -25,6 +25,7 @@ import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
 import { computeApiCoverage, type ApiCoverageReport } from "../../api/coverage.js";
 import { loadApiCreds } from "../../knowledge/index.js";
 import { defaultRunsBaseDir } from "../../fs/run-dir.js";
+import { ARTIFACT_SCHEMA_VERSION, stableCaseId } from "../../artifacts/contract.js";
 import { renderRunSummary, displayPath } from "../../agent/summary.js";
 import { renderApiReportMd } from "../../artifacts/report.js";
 import type { Modality, ModalityContext } from "../modality.js";
@@ -253,7 +254,16 @@ export const apiModality: Modality = {
       ...taggedBaseCases,
       ...(opts.negative ? generateNegativeCases(model) : []),
       ...generateAdversarialCases(model, adversarialStyles),
-    ];
+    ].map(
+      (c): ApiCase => ({
+        ...c,
+        // One stamp covering every generator, rather than one per generator — a new case kind cannot
+        // forget to carry an identity. Keyed on what distinguishes cases OF THE SAME operation from
+        // each other (kind, technique, adversarial style), not on the synthesised request values,
+        // which can differ between runs without the case being a different case.
+        stableId: stableCaseId([c.method, c.path, c.name, c.type, c.technique, c.adversarialStyle]),
+      }),
+    );
     for (const line of renderApiCases(cases)) ctx.out(`${line}\n`);
     const scenarios = opts.scenarios ? generateApiScenarios(model) : [];
     for (const line of renderApiScenarios(scenarios)) ctx.out(`${line}\n`);
@@ -293,6 +303,7 @@ export const apiModality: Modality = {
       join(outDir, "report.json"),
       JSON.stringify(
         {
+          schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
           url: opts.baseUrl,
           mode: "api",

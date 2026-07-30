@@ -6,6 +6,7 @@ import type { VerifiedElement } from "../browser/types.js";
 import { formatTransitions, type Transition } from "../probe/index.js";
 import { DesignResultSchema, type TestCase } from "./schema.js";
 import { dedupCases } from "./dedup.js";
+import { designedCaseStableId } from "../artifacts/contract.js";
 
 export type { TestCase, DesignedCase } from "./schema.js";
 export {
@@ -76,6 +77,9 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
   const grounded = result.testCases.map((c, i) => ({
     ...c,
     id: `tc-${i + 1}`,
+    // Substance, not position: the same case keeps this id across runs even when the run designs a
+    // different number of cases and `id` shifts under it.
+    stableId: designedCaseStableId(c),
     elementRefs: c.elementRefs.filter((r) => known.has(r)),
   }));
   return dedupCases(grounded).merged; // #58: merge high-confidence near-duplicates (reduced count is the report)

@@ -1,10 +1,14 @@
 import type { RunWriter } from "../artifacts/index.js";
 import type { CostReport } from "../llm/cost.js";
 import { classifyRunError, renderRunSummary, partialReportPayload, type BudgetReport } from "./summary.js";
+import type { RunMode } from "../artifacts/contract.js";
 
 export interface FailureContext {
   runId: string;
   url: string;
+  /** Which kind of run this was, so the partial artifact says so too. A reader should never have to
+   * infer the kind of a run from whichever keys a FAILURE happened to leave behind. */
+  mode?: RunMode;
   error: unknown;
   cost?: CostReport;
   budget?: BudgetReport;
@@ -41,7 +45,14 @@ export async function finalizeFailure(runWriter: RunWriter, ctx: FailureContext)
 
   await safe(() =>
     runWriter.writeReport(
-      partialReportPayload({ runId: ctx.runId, url: ctx.url, error: info.line, cost: ctx.cost, budget: ctx.budget }),
+      partialReportPayload({
+        runId: ctx.runId,
+        url: ctx.url,
+        mode: ctx.mode,
+        error: info.line,
+        cost: ctx.cost,
+        budget: ctx.budget,
+      }),
     ),
   );
   await safe(() =>
