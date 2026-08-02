@@ -49,13 +49,15 @@ graphify-out/
 /observe-screenshot.png
 
 # Internal dev docs — kept local, NOT in the public repo (keep only architecture/adr/runbooks)
+# `docs/README.md` is deliberately NOT here: it is the published entry point to docs/, and it must
+# link only to paths that survive this list. It used to be ignored because it indexed the internal
+# files below and would have shipped as a page of broken links.
 docs/sprints/
 docs/tasks/
 docs/research/
 docs/prompts/
 docs/PLAN.md
 docs/traceability.md
-docs/README.md
 
 # npm pack artifacts
 *.tgz

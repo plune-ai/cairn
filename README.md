@@ -124,7 +124,8 @@ const result = await runDesign({ url, config, sessionName: "myapp", checklistTex
 - **[Authenticated targets](docs/sessions.md)** · **[Configuration & role routing](docs/configuration.md)** · **[Prompts & styles](docs/prompts-and-styles.md)** · **[Interactive TUI](docs/tui.md)** · **[MCP server](docs/mcp.md)**
 - **[Metrics](docs/metrics.md)** · **[Cost benchmark](docs/cost.md)** · **[Langfuse](docs/langfuse.md)**
 - **[Architecture overview](docs/architecture/overview.md)** — the plain async pipeline, locator grounding, self-improvement.
-- **[Architecture Decision Records](docs/adr/)** — why it's built this way (0001–0013).
+- **[Architecture Decision Records](docs/adr/README.md)** — why it's built this way (0001–0020, indexed).
+- **[All documentation](docs/README.md)** — the full map of `docs/`.
 
 ## Development
 
