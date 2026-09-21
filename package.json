@@ -69,7 +69,7 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "commander": "^15.0.0",
-    "dotenv": "^17.4.2",
+    "dotenv": "^18.0.0",
     "playwright": "^1.60.0",
     "zod": "^4.4.3"
   },
