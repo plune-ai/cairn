@@ -35,6 +35,7 @@ interface ExploreFlags {
   gaps?: boolean;
   intoProject?: boolean | string;
   screencast?: boolean;
+  decider?: string;
 }
 
 export const exploreModality: Modality = {
@@ -44,7 +45,7 @@ export const exploreModality: Modality = {
   async run(ctx: ModalityContext): Promise<void> {
     // commander hands the action untyped options; the command's option defs guarantee this shape.
     const opts = ctx.flags as unknown as ExploreFlags;
-    const config = resolveConfig({ backend: opts.backend, routing: opts.routing, channel: opts.channel });
+    const config = resolveConfig({ backend: opts.backend, routing: opts.routing, channel: opts.channel, decider: opts.decider });
     const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
     // #80: --style resolves to a house-style pack (prompts/styles/<v>.md or a path) → {{style}} slot,
     // else the built-in inline hint. Methodology / assertion-safety are never touched.

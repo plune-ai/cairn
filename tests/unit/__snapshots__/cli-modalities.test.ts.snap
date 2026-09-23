@@ -25,8 +25,9 @@ Commands:
                          (runs/<id>/testcases/*.md)
   install-browsers       Download the Chromium build Cairn drives — uses Cairn's
                          OWN Playwright, so the revision always matches
-  doctor                 Diagnose the browser setup: Cairn's Playwright version,
-                         the Chromium it expects, and how to fix a missing build
+  doctor                 Diagnose the setup: Cairn's Playwright and the Chromium
+                         it expects (with the fix for a missing build), plus the
+                         decision layer when DECIDER is set
   promote [options]      Promote manual MTC case(s) to automatable ATC (.md
                          only; run \`automate\` to generate code)
   session                Manage saved login sessions (.auth/)
@@ -85,6 +86,8 @@ Options:
                          testDir/naming) instead of runs/<id>/tests
   --screencast           record a .webm per scenario (with step chapters) during
                          validation → runs/<id>/screencasts/ for the review gate
+  --decider <provider>   opt-in decision layer: off | jev | laya | compat (sets
+                         DECIDER; see docs/decider.md)
   -h, --help             display help for command
 "
 `;

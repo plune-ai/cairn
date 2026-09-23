@@ -1,5 +1,7 @@
 import type { CostLedger } from "../llm/cost.js";
 import type { Telemetry } from "../telemetry/index.js";
+import { createEnvReader } from "../config/env.js";
+import { parseDeciderConfig } from "../config/index.js";
 import { CAPS, checkCaps } from "./capabilities.js";
 import { postSystemOne, type HttpTarget } from "./client-http.js";
 import { guarded } from "./guarded.js";
@@ -85,4 +87,47 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
       }
     },
   };
+}
+
+const DOCTOR_QUESTION: Question = {
+  type: "noul",
+  instructions: "Is this text a connectivity check?",
+  criteria: { true: "The text says it is a connectivity check", false: "The text is about something else" },
+};
+
+/**
+ * `cairn doctor` (spec §4): the provider, where the data goes, and ONE real `noul` call with its latency.
+ * `[]` when DECIDER is off. Never throws — a misconfiguration or a dead server is a finding, not a crash.
+ */
+export async function deciderDoctorReport(
+  env: Record<string, string | undefined>,
+  fetchFn: typeof fetch = fetch,
+): Promise<string[]> {
+  const head = ["", "Cairn decision layer (DECIDER — ADR-0022)"];
+  let cfg: DeciderConfig | undefined;
+  try {
+    cfg = parseDeciderConfig(createEnvReader(env, () => undefined));
+  } catch (e) {
+    return [...head, `  ✗ ${(e as Error).message}`];
+  }
+  if (!cfg) return [];
+  const dest = dataDestination(cfg.baseUrl);
+  const lines = [
+    ...head,
+    `  Provider: ${cfg.provider} · model: ${cfg.model}`,
+    `  Base URL: ${cfg.baseUrl}`,
+    `  Data goes to: ${dest.label}${dest.local ? "" : " — ARIA fragments, case texts and test errors leave this machine"}`,
+    `  Uses: ${cfg.uses.join(", ")} · min confidence ${cfg.minConfidence} · timeout ${cfg.timeoutMs} ms · ≤ ${cfg.maxCalls} calls/run`,
+  ];
+  const target = httpTarget(cfg);
+  const t0 = Date.now();
+  try {
+    const r = await guarded({ timeoutMs: cfg.timeoutMs, maxCalls: 1 }).run((signal) =>
+      postSystemOne(target, "Cairn doctor connectivity check.", { q: DOCTOR_QUESTION }, signal, fetchFn),
+    );
+    lines.push(`  ✓ Test call (noul): ${Date.now() - t0} ms · answered by ${r.model ?? cfg.model}`);
+  } catch (e) {
+    lines.push(`  ✗ Test call failed: ${(e as Error).message}`);
+  }
+  return lines;
 }

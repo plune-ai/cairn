@@ -90,6 +90,17 @@ describe("MCP explore/design tools (#49)", () => {
     expect(r.pilot).toEqual({ verdict: "pass", reason: "ok", guidance: "ship" });
   });
 
+  it("`decider` passes through to resolveConfig for explore, design and automate (ADR-0022)", async () => {
+    const { deps, calls } = makeDeps();
+    await exploreTool({ url: "http://x", decider: "laya" }, deps);
+    expect(calls.config).toMatchObject({ decider: "laya" });
+    await designTool({ url: "http://x", decider: "jev" }, deps);
+    expect(calls.config).toMatchObject({ decider: "jev" });
+    await automateTool({ run: "runs/r1", decider: "off" }, deps);
+    expect(calls.config).toMatchObject({ decider: "off" });
+    expect(ToolInputSchema.safeParse({ url: "http://x", decider: 1 }).success).toBe(false);
+  });
+
   it("flow off → maxPages stays undefined (no crawl)", async () => {
     const { deps, calls } = makeDeps();
     await exploreTool({ url: "http://x" }, deps);
