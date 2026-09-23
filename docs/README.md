@@ -20,6 +20,7 @@ Start at the [root README](../README.md) for the 30-second pitch; this page is t
 | To read the run metrics and scores | [`metrics.md`](./metrics.md) |
 | To know what a run costs | [`cost.md`](./cost.md) |
 | To wire up tracing and experiments | [`langfuse.md`](./langfuse.md) |
+| To let a small System One model (Jev / Laya) answer pick-from-a-list steps | [`decider.md`](./decider.md) |
 | To see it move | [`demo/`](./demo/) |
 | **Why it is built this way** | [`adr/README.md`](./adr/README.md) — the decision index |
 | How the pieces fit together | [`architecture/overview.md`](./architecture/overview.md) |
@@ -67,7 +68,7 @@ docs/
 ├─ README.md              ← this file
 ├─ getting-started.md     ← onboarding
 ├─ sessions.md · configuration.md · prompts-and-styles.md · tui.md · mcp.md
-├─ metrics.md · cost.md · langfuse.md
+├─ metrics.md · cost.md · langfuse.md · decider.md
 ├─ adr/                   ← Architecture Decision Records (+ README index)
 ├─ architecture/          ← system design
 ├─ runbooks/              ← operational procedures

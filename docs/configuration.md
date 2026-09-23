@@ -11,6 +11,7 @@
 | `BROWSER_BACKEND` | `lib` (in-process Playwright) \| `cli` |
 | `BROWSER_CHANNEL` | `chrome`/`msedge` → drive a system browser (helps with OAuth; **no bundled-Chromium download**, and coexists with a host project's own Playwright). Per-command flag: `--channel`. |
 | `MAX_REPAIR` | repair attempts (default 2) |
+| `DECIDER` | opt-in decision layer: `off` (default) \| `jev` \| `laya` \| `compat` — see [Decision layer](#decision-layer). Per-command flag: `--decider`. |
 
 - **Env var prefix:** every variable above is read as-is **or** with a `CAIRN_` prefix (e.g. `CAIRN_LLM_PROFILE`, `CAIRN_MAX_REPAIR`). Legacy `LEX_`/`LEXBOT_` prefixes still work but print a one-time deprecation warning — prefer `CAIRN_`.
 - <a id="role-routing"></a>**Role routing (`LLM_ROUTING`, optional):** layer a cheap **worker** over any profile while keeping the strong **reasoner**. One flag picks where the mechanical steps (identify-elements, generate-code/repair) run:
@@ -21,5 +22,21 @@
 
   In **every** preset the reasoner (design test cases + Pilot verdict) stays on **Anthropic** `claude-opus-4-8` for judgment quality, and the cheap `judge` scorer keeps the profile tier (routing never touches it). Override any role with `CAIRN_ROLE_WORKER` / `CAIRN_ROLE_REASONER=provider:model`; pass `--routing <preset>` on `explore`/`design`/`automate` to set it per run. Per-run **per-role cost** (tokens + $) is printed in the run summary.
 - <a id="provider-latency"></a>**Provider latency & per-step timeout (`STEP_TIMEOUT_MS`, #110):** providers differ by minutes per step. Measured on `https://plune.ai/`: Anthropic `claude-opus-4-8` design ≈ **90 s** (finishes); OpenRouter `deepseek-chat` codegen ≈ **4.5–13 min**; OpenRouter `deepseek-r1` design **overran 4 min without finishing**. Each structured call is bounded by `STEP_TIMEOUT_MS` (default `240000`); on overrun the step fails with an **actionable error** (try a faster `--routing` such as `volume-fast`, or `LLM_PROFILE=anthropic`, or raise `STEP_TIMEOUT_MS`) instead of hanging. `0` disables the timeout. **MCP guidance:** the MCP caller (Claude Code / Cursor) sees a timeout as a clean tool error — keep `STEP_TIMEOUT_MS` at/under your client's tool timeout, and prefer the `volume-fast`/`anthropic` paths for interactive MCP use.
+- <a id="decision-layer"></a>**Decision layer (`DECIDER`, optional — [ADR-0022](adr/0022-optional-decision-layer.md), guide: [decider.md](decider.md)):** a System One model (TypeSafe **Jev** in the cloud, **Laya** on your machine, or any Jev-compatible server) answers the pipeline's pick-from-a-list questions. **Off unless `DECIDER` names a provider — a key alone changes nothing.** With it off, a run is byte-identical to one without the feature.
+
+  | Var | Default | Meaning |
+  |---|---|---|
+  | `DECIDER` | `off` | `jev` \| `laya` \| `compat` (`--decider` overrides it) |
+  | `DECIDER_BASE_URL` | jev: `https://api.typesafe.ai` | required for `laya` / `compat`, e.g. `http://127.0.0.1:8000` |
+  | `DECIDER_MODEL` | `jev-latest` | laya picks its checkpoint by language unless you pin one (`multilingual` for non-English apps) |
+  | `TYPESAFE_API_KEY` | — | **jev only** (required) |
+  | `LAYA_API_KEY` | — | **laya only** — the bearer token `laya-serve` was started with |
+  | `DECIDER_API_KEY` | — | **compat only** |
+  | `DECIDER_USES` | `repair-triage,coverage` | use points to enable; an unknown name is an error, not a silent no-op |
+  | `DECIDER_MIN_CONFIDENCE` | `0.75` | below it an answer is ignored and the current path runs |
+  | `DECIDER_TIMEOUT_MS` | `10000` | per call, one retry on 429/5xx included |
+  | `DECIDER_MAX_CALLS` | `200` | per-run ceiling (separate from the LLM call budget) |
+
+  Each provider reads only its own key, so a TypeSafe key is never sent to a local or third-party server. `cairn doctor` shows the provider, **where the data goes**, and the latency of one real call. A misconfiguration (`jev` without a key, `laya`/`compat` without a URL, an unknown use) fails at start.
 - **Domain knowledge:** put `*.md` files in `./knowledge/` with a `url:` front-matter to inject credentials/validation rules into design.
 - **Prompt overrides & house-style:** drop `./prompts/<name>.md` to override any built-in prompt, and use `--style` to load a house-style pack — see [Prompts & styles](prompts-and-styles.md).
