@@ -18,6 +18,11 @@ export interface ConfigFlags {
   routing?: string;
   /** `--channel <chrome|msedge>` → `BROWSER_CHANNEL` (drive a system browser; no bundled Chromium). */
   channel?: string;
+  /**
+   * `--decider <off|jev|laya|compat>` (ADR-0022). Written as `CAIRN_DECIDER` — the spelling the env reader
+   * checks FIRST — so the flag beats `DECIDER` and `CAIRN_DECIDER` alike.
+   */
+  decider?: string;
 }
 
 /**
@@ -31,5 +36,6 @@ export function resolveConfig(flags: ConfigFlags = {}, env: Env = process.env): 
   if (flags.backend) merged.BROWSER_BACKEND = flags.backend;
   if (flags.routing) merged.LLM_ROUTING = flags.routing;
   if (flags.channel) merged.BROWSER_CHANNEL = flags.channel;
+  if (flags.decider) merged.CAIRN_DECIDER = flags.decider;
   return loadConfig(merged);
 }

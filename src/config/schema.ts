@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DeciderConfig } from "../decider/types.js";
 
 /** LLM provider (ADR-0002; Groq added in L1-02). */
 export const ProviderSchema = z.enum(["anthropic", "openrouter", "groq"]);
@@ -38,6 +39,9 @@ export type RolesConfig = Partial<Record<Role, RoleModel>>;
 export const LlmProfileSchema = z.enum(["anthropic", "openrouter", "mixed"]);
 export type LlmProfile = z.infer<typeof LlmProfileSchema>;
 
+/** ADR-0022 decision layer: `off` or a provider. */
+export const DeciderProviderSchema = z.enum(["off", "jev", "laya", "compat"]);
+
 export const BrowserBackendSchema = z.enum(["lib", "cli"]);
 export type BrowserBackend = z.infer<typeof BrowserBackendSchema>;
 
@@ -70,4 +74,6 @@ export interface AppConfig {
    * actionable error instead of hanging — important for the MCP server. `0` disables the timeout.
    */
   stepTimeoutMs: number;
+  /** ADR-0022: the opt-in decision layer — absent unless DECIDER / --decider names a provider. */
+  decider?: DeciderConfig;
 }
