@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { runRepairLoop } from "../../src/agent/repair-loop.js";
+import { describe, it, expect, vi } from "vitest";
+import { runRepairLoop, failedTestsHint } from "../../src/agent/repair-loop.js";
+import type { TriageResult } from "../../src/decider/uses/repair-triage.js";
 import type { GeneratedSuite } from "../../src/codegen/index.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 
@@ -106,5 +107,84 @@ describe("runRepairLoop (L1-04 #40 — shared validate⇄repair⇄keep-best)", (
     ]);
     await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3 });
     expect(h.hints[1]).toBe("- t: boom"); // nothing appended
+  });
+});
+
+describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
+  const two = report(
+    [
+      { test: "a", status: "failed", error: "500 Internal Server Error" },
+      { test: "b", status: "failed", error: "Timeout 5000ms exceeded" },
+    ],
+    0,
+  );
+  const tr = (test: string, category: TriageResult["category"], exclude: boolean): TriageResult => ({
+    test,
+    category,
+    confidence: 0.9,
+    exclude,
+  });
+
+  it("failedTestsHint without triage (or with an empty one) is byte-identical to today's", () => {
+    expect(failedTestsHint(two.results, new Map())).toBe(failedTestsHint(two.results));
+    expect(failedTestsHint(two.results)).toBe("- a: 500 Internal Server Error\n- b: Timeout 5000ms exceeded");
+  });
+
+  it("an excluded test leaves the hint and is reported as not repaired; a confident category tags the rest", async () => {
+    const h = harness([two, report([{ test: "a", status: "failed" }, { test: "b", status: "passed" }], 0.5)]);
+    const triage = vi.fn(async () => [tr("a", "app-bug", true), tr("b", "timing", false)]);
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 1, triage });
+    expect(h.hints[1]).toBe("- b [triage: timing]: Timeout 5000ms exceeded");
+    expect(r.notRepaired).toEqual([tr("a", "app-bug", true)]);
+    expect(r.attempts).toBe(1);
+  });
+
+  it("triage answers nothing confident → the hint is exactly today's", async () => {
+    const h = harness([two, report([{ test: "a", status: "passed" }, { test: "b", status: "passed" }], 1)]);
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 1, triage: async () => [] });
+    expect(h.hints[1]).toBe(failedTestsHint(two.results));
+    expect("notRepaired" in r).toBe(false);
+  });
+
+  it("everything excluded → the loop ends before spending an attempt, and says why", async () => {
+    const h = harness([two]);
+    const progress: string[] = [];
+    const r = await runRepairLoop({
+      generate: h.generate,
+      validate: h.validate,
+      maxRepair: 3,
+      onProgress: (e) => progress.push(e),
+      triage: async () => [tr("a", "app-bug", true), tr("b", "env-or-session", true)],
+    });
+    expect(r.attempts).toBe(0);
+    expect(h.genCount()).toBe(1); // only the initial generation
+    expect(r.notRepaired).toHaveLength(2);
+    expect(progress.join("\n")).toMatch(/repair — skipped: .*2 failing test/);
+  });
+
+  it("a test excluded once stays excluded — it is not sent to the decider again", async () => {
+    const still = report(
+      [
+        { test: "a", status: "failed", error: "500 Internal Server Error" },
+        { test: "b", status: "failed", error: "Timeout 2" },
+      ],
+      0.1,
+    );
+    const h = harness([two, still, report([{ test: "a", status: "failed" }, { test: "b", status: "passed" }], 0.5)]);
+    const triage = vi.fn(async (failedTests: { test: string }[]) =>
+      failedTests.map((t) => (t.test === "a" ? tr("a", "app-bug", true) : tr("b", "timing", false))),
+    );
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage });
+    expect(triage.mock.calls[0]![0].map((t) => t.test)).toEqual(["a", "b"]);
+    expect(triage.mock.calls[1]![0].map((t) => t.test)).toEqual(["b"]);
+    expect(h.hints[2]).toBe("- b [triage: timing]: Timeout 2");
+    expect(r.notRepaired).toEqual([tr("a", "app-bug", true)]);
+  });
+
+  it("green on the first try → triage is never called", async () => {
+    const h = harness([report([{ test: "t", status: "passed" }], 1)]);
+    const triage = vi.fn(async () => []);
+    await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3, triage });
+    expect(triage).not.toHaveBeenCalled();
   });
 });
