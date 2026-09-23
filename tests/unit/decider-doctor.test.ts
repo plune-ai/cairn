@@ -29,7 +29,14 @@ describe("cairn doctor — decision layer section (spec §4)", () => {
     expect(text).toContain("this machine (localhost)");
     expect(text).toMatch(/✓ Test call \(noul\): \d+ ms · answered by laya-rl-agent/);
     expect(text).not.toContain("s3cr3t-laya"); // never prints a key
+    expect(text).not.toContain("shadow");
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("shadow mode is said out loud — a pilot must know its answers are only recorded", async () => {
+    const fetchFn = respond({ model: "jev-1.13.0", answers: { q: { type: "noul", noul: 0.9 } } });
+    const text = (await deciderDoctorReport({ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_SHADOW: "1" }, fetchFn)).join("\n");
+    expect(text).toContain("shadow mode — answers are recorded, never acted on");
   });
 
   it("the cloud destination is spelled out", async () => {

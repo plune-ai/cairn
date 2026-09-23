@@ -121,10 +121,11 @@ describe("explore parity (C1-02)", () => {
       "--into-project",
       "--screencast",
       "--decider",
+      "--decider-shadow",
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(19); // + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51) + --goal (#63) + --screencast (#94) + --decider (ADR-0022)
+    expect(longs).toHaveLength(20); // + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51) + --goal (#63) + --screencast (#94) + --decider / --decider-shadow (ADR-0022)
   });
 
   it("--decider reaches the config on explore, design and automate — and `off` means no decider", async () => {
@@ -144,6 +145,20 @@ describe("explore parity (C1-02)", () => {
     vi.stubEnv("CAIRN_DECIDER", "laya");
     await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test", "--decider", "off"]);
     expect("decider" in runExploration.mock.calls[0][0].config).toBe(false); // the flag beats CAIRN_DECIDER
+  });
+
+  it("--decider-shadow turns shadow mode on for explore, design and automate", async () => {
+    vi.stubEnv("DECIDER_BASE_URL", "http://127.0.0.1:8000");
+    await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test", "--decider", "laya", "--decider-shadow"]);
+    expect(runExploration.mock.calls[0][0].config.decider?.shadow).toBe(true);
+
+    runDesign.mockResolvedValue({ runDir: "/runs/d", testCases: [], testCaseFiles: [], scores: [], cost: { perRole: [], totalTokens: 0, totalCostUsd: 0 } });
+    await buildProgram().parseAsync(["node", "cairn", "design", "--url", "https://app.test", "--decider", "laya", "--decider-shadow"]);
+    expect(runDesign.mock.calls[0][0].config.decider?.shadow).toBe(true);
+
+    runAutomate.mockResolvedValue({ runDir: "/runs/a", specFiles: [], cost: { perRole: [], totalTokens: 0, totalCostUsd: 0 }, budget: { used: 0, max: 80 }, stoppedEarly: false });
+    await buildProgram().parseAsync(["node", "cairn", "automate", "--run", "/runs/a", "--decider", "laya", "--decider-shadow"]);
+    expect(runAutomate.mock.calls[0][0].config.decider?.shadow).toBe(true);
   });
 
   it("maps flags to runExploration the same way as before the refactor", async () => {

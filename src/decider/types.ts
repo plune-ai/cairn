@@ -1,3 +1,5 @@
+import type { CostReport } from "../llm/cost.js";
+
 /**
  * The decision layer's contract (ADR-0022). A System One model — TypeSafe Jev, Convai Laya, or any
  * server speaking Jev's `POST /v1/systemone` — answers typed questions about a state; it never writes
@@ -67,6 +69,38 @@ export interface DeciderConfig {
   minConfidence: number;
   timeoutMs: number;
   maxCalls: number;
+  /** DECIDER_SHADOW / --decider-shadow: ask, record next to the current path's decision, act on nothing. */
+  shadow: boolean;
+}
+
+/** One shadow-mode observation (spec §7): what the current path did and what the decider would have done. */
+export interface ShadowEntry {
+  use: DeciderUse;
+  /** What the decider was shown (the state, or a compact description of it). */
+  input: unknown;
+  /** What the current path decided. */
+  current: unknown;
+  /** What the decider would have decided, or `{ unavailable: reason }`. */
+  decider: unknown;
+  confidence?: number;
+  latencyMs: number;
+  /** 1/0 when the current path makes a comparable decision; absent otherwise (repair-triage: spec §9.3). */
+  agreement?: 0 | 1;
+}
+
+export interface ShadowLog {
+  readonly entries: readonly ShadowEntry[];
+  record(e: ShadowEntry): void;
+}
+
+/** What a run tells about its decider: calls made, and every fallback with its reason. */
+export interface DeciderSummary {
+  provider: DeciderProvider;
+  model: string;
+  calls: number;
+  fallbacks: { use: DeciderUse; reason: string }[];
+  /** Shadow mode only: its private ledger. An active decider prices into the run's own cost report. */
+  cost?: CostReport;
 }
 
 export interface Decider {
@@ -77,6 +111,9 @@ export interface Decider {
   readonly minConfidence: number;
   /** The questions are independent: they share `state` and never see each other's answers. */
   decide<K extends string>(use: DeciderUse, state: string, questions: Record<K, Question>): Promise<Record<K, Answer>>;
+  /** Present only in shadow mode: use points record here and act on nothing. */
+  readonly shadow?: ShadowLog;
+  summary(): DeciderSummary;
 }
 
 /** Any failure or limit. The call site catches it and takes the path it would have taken without a decider. */

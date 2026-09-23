@@ -1,4 +1,6 @@
-import type { CostLedger } from "../llm/cost.js";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { CostLedger } from "../llm/cost.js";
 import type { DecisionTrace, Telemetry } from "../telemetry/index.js";
 import { createEnvReader } from "../config/env.js";
 import { parseDeciderConfig, TYPESAFE_HOST } from "../config/index.js";
@@ -6,16 +8,38 @@ import { CAPS, checkCaps } from "./capabilities.js";
 import { postSystemOne, type HttpTarget } from "./client-http.js";
 import { guarded } from "./guarded.js";
 import { redact, redactQuestion } from "./redact.js";
-import { DeciderUnavailable, type Decider, type DeciderConfig, type Question } from "./types.js";
+import {
+  DeciderUnavailable,
+  type Decider,
+  type DeciderConfig,
+  type DeciderSummary,
+  type Question,
+  type ShadowEntry,
+  type ShadowLog,
+} from "./types.js";
 
 export { DeciderUnavailable, DECIDER_USES, DECIDER_PROVIDERS } from "./types.js";
-export type { Answer, Decider, DeciderCaps, DeciderConfig, DeciderProvider, DeciderUse, Question } from "./types.js";
+export type {
+  Answer,
+  Decider,
+  DeciderCaps,
+  DeciderConfig,
+  DeciderProvider,
+  DeciderSummary,
+  DeciderUse,
+  Question,
+  ShadowEntry,
+  ShadowLog,
+} from "./types.js";
 export { secretValues } from "./redact.js";
 
 export interface DeciderDeps {
-  /** Where decider tokens and cost land (spec §5.5: a `decider` row, only when the decider is on). */
+  /**
+   * Where decider tokens and cost land (spec §5.5: a `decider` row, only when the decider is on). In shadow
+   * mode the decider meters into a private ledger instead, so the run's `report.json` cost is untouched.
+   */
   ledger: CostLedger;
-  telemetry?: Pick<Telemetry, "recordDecision">;
+  telemetry?: Pick<Telemetry, "recordDecision" | "recordScore">;
   /** Scrubbed from every state before it leaves the process (redact.ts). */
   secrets?: readonly string[];
   /** One-line notices (where the data goes). Default: stderr. */
@@ -53,6 +77,9 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
   const target = httpTarget(cfg);
   const guard = guarded({ timeoutMs: cfg.timeoutMs, maxCalls: cfg.maxCalls });
   const dest = dataDestination(cfg.baseUrl);
+  const ledger = cfg.shadow ? new CostLedger() : deps.ledger;
+  let calls = 0;
+  const fallbacks: DeciderSummary["fallbacks"] = [];
   if (!dest.local && !warnedRemote) {
     warnedRemote = true;
     (deps.warn ?? ((m: string): void => void process.stderr.write(`${m}\n`)))(
@@ -66,7 +93,16 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
     caps,
     uses: new Set(cfg.uses),
     minConfidence: cfg.minConfidence,
+    ...(cfg.shadow ? { shadow: shadowLog(deps.telemetry) } : {}),
+    summary: () => ({
+      provider: cfg.provider,
+      model: cfg.model,
+      calls,
+      fallbacks: [...fallbacks],
+      ...(cfg.shadow ? { cost: ledger.report() } : {}),
+    }),
     async decide(use, rawState, rawQuestions) {
+      calls += 1;
       // state/questions are filled only once scrubbed: a trace never carries the raw text.
       const trace = { use, provider: cfg.provider, startTime: new Date(), state: "", questions: {} as unknown, minConfidence: cfg.minConfidence };
       const record = (t: DecisionTrace): void => {
@@ -88,16 +124,39 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
         Object.assign(trace, { state, questions });
         checkCaps(caps, state, questions);
         const res = await guard.run((signal) => postSystemOne(target, state, questions, signal, deps.fetchFn));
-        deps.ledger.record("decider", cfg.model, res.usage ?? estimateUsage(state, questions), caps.price);
+        ledger.record("decider", cfg.model, res.usage ?? estimateUsage(state, questions), caps.price);
         record({ ...trace, model: res.model ?? cfg.model, endTime: new Date(), answers: res.answers, fallback: false });
         return res.answers;
       } catch (e) {
         const err = e instanceof DeciderUnavailable ? e : new DeciderUnavailable(e instanceof Error ? e.message : String(e));
+        fallbacks.push({ use, reason: err.message });
         record({ ...trace, model: cfg.model, endTime: new Date(), fallback: true, reason: err.message });
         throw err;
       }
     },
   };
+}
+
+function shadowLog(telemetry?: Pick<Telemetry, "recordScore">): ShadowLog {
+  const entries: ShadowEntry[] = [];
+  return {
+    entries,
+    record(e) {
+      entries.push(e);
+      if (e.agreement !== undefined) telemetry?.recordScore?.(`decider.${e.use}.agreement`, e.agreement);
+    },
+  };
+}
+
+/**
+ * Shadow mode's only artifact (spec §7): `runs/<id>/decider-shadow.json`. A no-op for an active decider or
+ * none, so every other file of the run stays what it would have been without the flag.
+ */
+export async function writeShadowFile(runDir: string, decider: Decider | undefined): Promise<void> {
+  if (!decider?.shadow) return;
+  const { provider, model, calls, fallbacks, cost } = decider.summary();
+  const payload = { provider, model, minConfidence: decider.minConfidence, calls, fallbacks, cost, entries: decider.shadow.entries };
+  await writeFile(join(runDir, "decider-shadow.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 const DOCTOR_QUESTION: Question = {
@@ -129,6 +188,7 @@ export async function deciderDoctorReport(
     `  Base URL: ${cfg.baseUrl}`,
     `  Data goes to: ${dest.label}${dest.local ? "" : " — ARIA fragments, case texts and test errors leave this machine"}`,
     `  Uses: ${cfg.uses.join(", ")} · min confidence ${cfg.minConfidence} · timeout ${cfg.timeoutMs} ms · ≤ ${cfg.maxCalls} decisions/run`,
+    ...(cfg.shadow ? ["  Mode: shadow mode — answers are recorded, never acted on (runs/<id>/decider-shadow.json)"] : []),
   ];
   const target = httpTarget(cfg);
   const t0 = Date.now();

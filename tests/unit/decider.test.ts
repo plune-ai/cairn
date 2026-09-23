@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { makeDecider, dataDestination } from "../../src/decider/index.js";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { makeDecider, dataDestination, writeShadowFile } from "../../src/decider/index.js";
 import { secretValues, redact } from "../../src/decider/redact.js";
 import { CostLedger } from "../../src/llm/cost.js";
 import type { DecisionTrace } from "../../src/telemetry/index.js";
@@ -14,6 +17,7 @@ const cfg = (over: Partial<DeciderConfig> = {}): DeciderConfig => ({
   minConfidence: 0.75,
   timeoutMs: 1000,
   maxCalls: 10,
+  shadow: false,
   ...over,
 });
 const localLaya = { provider: "laya" as const, baseUrl: "http://127.0.0.1:8000" };
@@ -211,6 +215,71 @@ describe("makeDecider", () => {
     expect(ledger.report().perRole[0]!.calls).toBe(1);
     const dead = makeDecider(cfg(), { ledger, fetchFn: respond({}, 401), telemetry: { recordDecision: boom } })!;
     await expect(dead.decide("coverage", "S", { q })).rejects.toThrow("HTTP 401");
+  });
+});
+
+describe("shadow mode (spec §7) and the run summary", () => {
+  const layaFetch = () =>
+    respond({
+      model: "laya-rl-agent",
+      answers: { q: { type: "choice", choice: "a", probabilities: { a: 0.9, b: 0.1 }, confidence: 0.5 } },
+      usage: { input_tokens: 10, output_tokens: 0 },
+    });
+
+  it("a shadow decider meters into its own ledger — the run's cost report stays byte-identical", async () => {
+    const ledger = new CostLedger();
+    const d = makeDecider(cfg({ ...localLaya, shadow: true }), { ledger, fetchFn: layaFetch() })!;
+    await d.decide("coverage", "S", { q });
+    expect(ledger.report().perRole).toEqual([]);
+    expect(d.shadow?.entries).toEqual([]);
+  });
+
+  it("an active decider has no shadow log", () => {
+    expect(makeDecider(cfg(localLaya), { ledger: new CostLedger() })!.shadow).toBeUndefined();
+  });
+
+  it("summary() counts every decide() call and lists each fallback with its reason", async () => {
+    const d = makeDecider(cfg(localLaya), { ledger: new CostLedger(), fetchFn: respond({}, 500) })!;
+    await expect(d.decide("repair-triage", "S", { q })).rejects.toBeInstanceOf(DeciderUnavailable);
+    await expect(d.decide("coverage", "x".repeat(1201), { q })).rejects.toBeInstanceOf(DeciderUnavailable);
+    expect(d.summary()).toEqual({
+      provider: "laya",
+      model: "jev-latest",
+      calls: 2,
+      fallbacks: [
+        { use: "repair-triage", reason: "HTTP 500" },
+        { use: "coverage", reason: "input is 1212 chars (state 1201 + question 11) > 1200" },
+      ],
+    });
+  });
+
+  it("shadow.record keeps every entry and sends agreement to tracing as decider.<use>.agreement", () => {
+    const recordScore = vi.fn();
+    const d = makeDecider(cfg({ ...localLaya, shadow: true }), { ledger: new CostLedger(), telemetry: { recordScore } })!;
+    d.shadow!.record({ use: "coverage", input: { items: 1, cases: 1 }, current: 0.5, decider: 0.5, latencyMs: 3, agreement: 1 });
+    d.shadow!.record({ use: "repair-triage", input: "S", current: "repair", decider: { unavailable: "HTTP 500" }, latencyMs: 3 });
+    expect(d.shadow!.entries).toHaveLength(2);
+    expect(recordScore).toHaveBeenCalledTimes(1);
+    expect(recordScore).toHaveBeenCalledWith("decider.coverage.agreement", 1);
+  });
+
+  it("writeShadowFile writes nothing without a decider or for an active one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cairn-shadow-"));
+    await writeShadowFile(dir, undefined);
+    await writeShadowFile(dir, makeDecider(cfg(localLaya), { ledger: new CostLedger() }));
+    expect(await readdir(dir)).toEqual([]);
+  });
+
+  it("writeShadowFile writes decider-shadow.json: provider, model, threshold, calls, fallbacks, private cost, entries", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cairn-shadow-"));
+    const d = makeDecider(cfg({ ...localLaya, shadow: true }), { ledger: new CostLedger(), fetchFn: layaFetch() })!;
+    await d.decide("coverage", "S", { q });
+    d.shadow!.record({ use: "coverage", input: { items: 1, cases: 1 }, current: 1, decider: [{ item: "a", covered: true }], latencyMs: 5, agreement: 1 });
+    await writeShadowFile(dir, d);
+    const file = JSON.parse(await readFile(join(dir, "decider-shadow.json"), "utf8"));
+    expect(file).toMatchObject({ provider: "laya", model: "jev-latest", minConfidence: 0.75, calls: 1, fallbacks: [] });
+    expect(file.cost.perRole).toEqual([expect.objectContaining({ role: "decider", calls: 1, inputTokens: 10, costUsd: 0 })]);
+    expect(file.entries).toEqual([expect.objectContaining({ use: "coverage", agreement: 1 })]);
   });
 });
 

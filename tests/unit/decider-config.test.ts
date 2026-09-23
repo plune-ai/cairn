@@ -29,6 +29,7 @@ describe("decider config — opt-in only (ADR-0022)", () => {
       minConfidence: 0.75,
       timeoutMs: 10000,
       maxCalls: 200,
+      shadow: false,
     });
     expect(loadConfig({ ...BASE, DECIDER: "jev", TYPESAFE_API_KEY: "k" }).decider?.provider).toBe("jev");
   });
@@ -133,6 +134,7 @@ describe("decider config — opt-in only (ADR-0022)", () => {
       CAIRN_DECIDER_MODEL: "multilingual",
       CAIRN_DECIDER_TIMEOUT_MS: "5000",
       CAIRN_DECIDER_MAX_CALLS: "3",
+      CAIRN_DECIDER_SHADOW: "1",
     });
     expect(d).toEqual({
       provider: "laya",
@@ -143,6 +145,7 @@ describe("decider config — opt-in only (ADR-0022)", () => {
       minConfidence: 0.9,
       timeoutMs: 5000,
       maxCalls: 3,
+      shadow: true,
     });
   });
 
@@ -177,6 +180,29 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     expect(resolveConfig({ decider: "laya" }, { ...env, DECIDER_BASE_URL: "http://127.0.0.1:8000" }).decider?.provider).toBe(
       "laya",
     );
+  });
+
+  it("DECIDER_SHADOW: off by default, on with 1/true/on, CAIRN_-prefixable, strict about anything else", () => {
+    const laya = { DECIDER: "laya", DECIDER_BASE_URL: "http://127.0.0.1:8000" };
+    expect(parse(laya)?.shadow).toBe(false);
+    expect(parse({ ...laya, DECIDER_SHADOW: "0" })?.shadow).toBe(false);
+    expect(parse({ ...laya, DECIDER_SHADOW: "1" })?.shadow).toBe(true);
+    expect(parse({ ...laya, DECIDER_SHADOW: " TRUE " })?.shadow).toBe(true);
+    expect(parse({ ...laya, CAIRN_DECIDER_SHADOW: "on" })?.shadow).toBe(true);
+    expect(() => parse({ ...laya, DECIDER_SHADOW: "maybe" })).toThrow(/Invalid DECIDER_SHADOW='maybe'/);
+  });
+
+  it("DECIDER_SHADOW without a provider is an error — a pilot that silently collected nothing is worse", () => {
+    expect(() => parse({ DECIDER_SHADOW: "1" })).toThrow(/DECIDER_SHADOW needs a provider/);
+    expect(() => parse({ DECIDER: "off", DECIDER_SHADOW: "1" })).toThrow(/DECIDER_SHADOW needs a provider/);
+    expect(parse({ DECIDER_SHADOW: "0" })).toBeUndefined();
+  });
+
+  it("--decider-shadow reaches the config as CAIRN_DECIDER_SHADOW (beats DECIDER_SHADOW=0)", () => {
+    const env = { ...BASE, DECIDER: "laya", DECIDER_BASE_URL: "http://127.0.0.1:8000", DECIDER_SHADOW: "0" };
+    expect(resolveConfig({}, env).decider?.shadow).toBe(false);
+    expect(resolveConfig({ deciderShadow: true }, env).decider?.shadow).toBe(true);
+    expect(() => resolveConfig({ deciderShadow: true }, BASE)).toThrow(/needs a provider/);
   });
 
   it("resolveConfig never mutates the env it was given", () => {
