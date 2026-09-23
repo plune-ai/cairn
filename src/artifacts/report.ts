@@ -9,6 +9,8 @@ import type { CostReport } from "../llm/cost.js";
 import type { ApiCaseResult } from "../api/runner.js";
 import type { ApiCoverageReport } from "../api/coverage.js";
 import type { ApiScenarioResult } from "../api/scenario-runner.js";
+import type { DeciderSummary } from "../decider/types.js";
+import type { TriageResult } from "../decider/uses/repair-triage.js";
 import { displayPath } from "../agent/summary.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
@@ -40,6 +42,10 @@ export interface ReportInput {
   coverage?: CoverageReport;
   /** #61: suggested gap cases (--gaps) — rendered as clearly-marked suggestions. */
   gapCases?: TestCase[];
+  /** ADR-0022: tests repair-triage kept out of repair — rendered only when non-empty. */
+  notRepaired?: TriageResult[];
+  /** ADR-0022: an active decider's calls and fallbacks — rendered only when present. */
+  decider?: DeciderSummary;
 }
 
 function mark(status: string): string {
@@ -66,6 +72,19 @@ export function renderReportMd(r: ReportInput): string {
     lines.push("- **⚠ Repair:** stopped early — no progress across attempts (best-so-far suite kept)");
   }
   lines.push("");
+
+  if (r.notRepaired && r.notRepaired.length > 0) {
+    lines.push(
+      `## Not repaired — likely an app bug or a broken environment (${r.notRepaired.length})`,
+      "",
+      "The decision layer judged these failures confidently enough to keep them out of repair: check the application or the environment, not the test.",
+      "",
+      "| test | category | confidence |",
+      "|---|---|---|",
+    );
+    for (const t of r.notRepaired) lines.push(`| ${t.test} | ${t.category} | ${t.confidence.toFixed(2)} |`);
+    lines.push("");
+  }
 
   if (r.scores && r.scores.length > 0) {
     lines.push(
@@ -99,6 +118,20 @@ export function renderReportMd(r: ReportInput): string {
     }
     const total = r.cost.totalCostUsd === null ? "— (some prices unknown)" : `$${r.cost.totalCostUsd.toFixed(4)}`;
     lines.push(`| **total** |  |  |  | ${r.cost.totalTokens} | ${total} |`, "");
+  }
+
+  if (r.decider) {
+    const d = r.decider;
+    lines.push(
+      "## Decision layer",
+      "",
+      `- **Provider:** ${d.provider} · model ${d.model}`,
+      `- **Calls:** ${d.calls} · **fallbacks:** ${d.fallbacks.length}${d.fallbacks.length ? " (the current path ran instead)" : ""}`,
+    );
+    const grouped = new Map<string, number>();
+    for (const f of d.fallbacks) grouped.set(`${f.use} — ${f.reason}`, (grouped.get(`${f.use} — ${f.reason}`) ?? 0) + 1);
+    for (const [k, n] of grouped) lines.push(`  - ${k} (×${n})`);
+    lines.push("");
   }
 
   if (r.consoleErrors && r.consoleErrors.length > 0) {
