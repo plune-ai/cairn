@@ -65,6 +65,28 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     );
   });
 
+  it("jev reads only TypeSafe's own address (TYPESAFE_BASE_URL, as the SDK does) — never DECIDER_BASE_URL", () => {
+    // The .env still holds a laya setup; switching to jev must not send the TypeSafe key there.
+    const env = { DECIDER: "jev", TYPESAFE_API_KEY: "cloud", DECIDER_BASE_URL: "http://127.0.0.1:8000" };
+    expect(parse(env)?.baseUrl).toBe("https://api.typesafe.ai");
+    expect(parse({ ...env, TYPESAFE_BASE_URL: "https://eu.typesafe.example" })?.baseUrl).toBe("https://eu.typesafe.example");
+    expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "http://127.0.0.1:9000" })?.baseUrl).toBe("http://127.0.0.1:9000");
+  });
+
+  it("laya and compat never read TYPESAFE_BASE_URL", () => {
+    expect(() => parse({ DECIDER: "laya", TYPESAFE_BASE_URL: "http://127.0.0.1:8000" })).toThrow(/needs DECIDER_BASE_URL/);
+    expect(() => parse({ DECIDER: "compat", TYPESAFE_BASE_URL: "http://127.0.0.1:8000" })).toThrow(/needs DECIDER_BASE_URL/);
+  });
+
+  it("a base URL carrying user:password is refused — without printing it", () => {
+    const run = () => parse({ DECIDER: "compat", DECIDER_BASE_URL: "http://user:p4ssw0rd@gpu-box.lan:8000" });
+    expect(run).toThrow(/DECIDER_BASE_URL.*user:password/);
+    expect(run).not.toThrow(/p4ssw0rd/);
+    expect(() => parse({ DECIDER: "jev", TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "https://u:p4ssw0rd@x.test" })).toThrow(
+      /TYPESAFE_BASE_URL/,
+    );
+  });
+
   it("every variable reads with the CAIRN_ prefix too", () => {
     const d = parse({
       CAIRN_DECIDER: "laya",
@@ -107,6 +129,7 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_MAX_CALLS: "-1" }, /DECIDER_MAX_CALLS/],
     [{ DECIDER: "laya", DECIDER_BASE_URL: "not a url" }, /DECIDER_BASE_URL/],
     [{ DECIDER: "laya", DECIDER_BASE_URL: "ftp://127.0.0.1" }, /DECIDER_BASE_URL/],
+    [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "not a url" }, /Invalid TYPESAFE_BASE_URL/],
   ])("rejects %o", (env, msg) => {
     expect(() => parse(env)).toThrow(msg);
   });

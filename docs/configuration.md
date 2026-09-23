@@ -27,7 +27,8 @@
   | Var | Default | Meaning |
   |---|---|---|
   | `DECIDER` | `off` | `jev` \| `laya` \| `compat` (`--decider` overrides it) |
-  | `DECIDER_BASE_URL` | jev: `https://api.typesafe.ai` | required for `laya` / `compat`, e.g. `http://127.0.0.1:8000` |
+  | `DECIDER_BASE_URL` | — | **laya / compat only** (required), e.g. `http://127.0.0.1:8000` |
+  | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | **jev only** — TypeSafe's address, the TypeSafe SDK's own variable |
   | `DECIDER_MODEL` | `jev-latest` | laya picks its checkpoint by language unless you pin one (`multilingual` for non-English apps) |
   | `TYPESAFE_API_KEY` | — | **jev only** (required) |
   | `LAYA_API_KEY` | — | **laya only** — the bearer token `laya-serve` was started with |
@@ -35,8 +36,8 @@
   | `DECIDER_USES` | `repair-triage,coverage` | use points to enable; an unknown name is an error, not a silent no-op |
   | `DECIDER_MIN_CONFIDENCE` | `0.75` | below it an answer is ignored and the current path runs |
   | `DECIDER_TIMEOUT_MS` | `10000` | per call, one retry on 429/5xx included |
-  | `DECIDER_MAX_CALLS` | `200` | per-run ceiling (separate from the LLM call budget) |
+  | `DECIDER_MAX_CALLS` | `200` | per-run ceiling on decisions — a retry on 429/5xx belongs to its decision (separate from the LLM call budget) |
 
-  Each provider reads only its own key, so a TypeSafe key is never sent to a local or third-party server. `cairn doctor` shows the provider, **where the data goes**, and the latency of one real call. A misconfiguration (`jev` without a key, `laya`/`compat` without a URL, an unknown use) fails at start.
+  Each provider reads only its own address and key — jev the TypeSafe pair (`TYPESAFE_BASE_URL` + `TYPESAFE_API_KEY`), laya and compat `DECIDER_BASE_URL` + their own key — so a TypeSafe key is never sent to a laya or compat address, even one left in `.env`. `cairn doctor` shows the provider, **where the data goes**, and the latency of one real call. A misconfiguration (`jev` without a key, `laya`/`compat` without a URL, an unknown use) fails at start.
 - **Domain knowledge:** put `*.md` files in `./knowledge/` with a `url:` front-matter to inject credentials/validation rules into design.
 - **Prompt overrides & house-style:** drop `./prompts/<name>.md` to override any built-in prompt, and use `--style` to load a house-style pack — see [Prompts & styles](prompts-and-styles.md).

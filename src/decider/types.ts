@@ -7,7 +7,7 @@
 export const DECIDER_PROVIDERS = ["jev", "laya", "compat"] as const;
 export type DeciderProvider = (typeof DECIDER_PROVIDERS)[number];
 
-/** Use points this version implements. `DECIDER_USES` accepts nothing else (a typo must not look enabled). */
+/** Use points `DECIDER_USES` accepts — nothing else (a typo must not look enabled). */
 export const DECIDER_USES = ["repair-triage", "coverage"] as const;
 export type DeciderUse = (typeof DECIDER_USES)[number];
 
@@ -44,7 +44,10 @@ export type Answer =
   | { type: "score"; value: number; dist: number[]; confidence: number };
 
 export interface DeciderCaps {
-  maxStateChars: number;
+  /** State + its longest question, in characters: each question is encoded together with the state. */
+  maxInputChars: number;
+  /** One question's own text (instructions + options): laya cuts that part of its input separately. */
+  maxQuestionChars: number;
   maxOptions: number;
   maxQuestionsPerCall: number;
   /** USD per 1M tokens; undefined → unknown, the cost line shows n/a. */

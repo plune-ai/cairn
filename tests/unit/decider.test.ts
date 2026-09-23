@@ -48,6 +48,8 @@ describe("where the data goes", () => {
     ["http://[::1]:8000", true, "this machine"],
     ["https://api.typesafe.ai", false, "TypeSafe cloud"],
     ["https://laya.example.com", false, "laya.example.com"],
+    ["https://127.evil.com", false, "127.evil.com"], // a DNS name, not the loopback address
+    ["http://127.0.0.2:8000", true, "this machine"],
   ])("dataDestination(%s)", (url, local, label) => {
     expect(dataDestination(url).local).toBe(local);
     expect(dataDestination(url).label).toContain(label);
@@ -63,7 +65,7 @@ describe("makeDecider", () => {
     const d = makeDecider(cfg(localLaya), { ledger: new CostLedger() })!;
     expect(d.provider).toBe("laya");
     expect(d.model).toBe("jev-latest");
-    expect(d.caps.maxStateChars).toBe(1200);
+    expect(d.caps.maxInputChars).toBe(1200);
     expect([...d.uses]).toEqual(["repair-triage", "coverage"]);
     expect(d.minConfidence).toBe(0.75);
   });
@@ -156,6 +158,42 @@ describe("makeDecider", () => {
     expect(sentBody(fetchFn).state).toBe("type ‹redacted› into Password");
     expect(traces[0]!.state).not.toContain("Sup3rS3cret!");
   });
+
+  it("…and from every question's text; option labels (the answer contract) stay as they are", async () => {
+    const fetchFn = respond({
+      answers: { q: { type: "choice", choice: "c1", probabilities: { c1: 0.9, c2: 0.1 }, confidence: 0.9 } },
+    });
+    const traces: DecisionTrace[] = [];
+    const d = makeDecider(cfg(), {
+      ledger: new CostLedger(),
+      fetchFn,
+      secrets: ["Sup3rS3cret!"],
+      telemetry: { recordDecision: (t) => void traces.push(t) },
+    })!;
+    const question: Question = {
+      type: "choice",
+      instructions: "Which element does the step 'type Sup3rS3cret! into Password' mean?",
+      options: { c1: "textbox Password (holds Sup3rS3cret!)", c2: null },
+    };
+    const a = await d.decide("coverage", "S", { q: question });
+    expect(a.q).toMatchObject({ value: "c1" });
+    const sent = JSON.stringify((sentBody(fetchFn) as unknown as { questions: unknown }).questions);
+    expect(sent).not.toContain("Sup3rS3cret!");
+    expect(sent).toContain('"c1"');
+    expect(JSON.stringify(traces[0]!.questions)).not.toContain("Sup3rS3cret!");
+  });
+
+  it("a tracer that throws never turns an answer into a fallback, nor escapes as another error", async () => {
+    const ledger = new CostLedger();
+    const boom = (): void => {
+      throw new Error("tracing is down");
+    };
+    const ok = makeDecider(cfg(), { ledger, fetchFn: jevOk(), telemetry: { recordDecision: boom } })!;
+    await expect(ok.decide("coverage", "S", { q })).resolves.toMatchObject({ q: { value: true } });
+    expect(ledger.report().perRole[0]!.calls).toBe(1);
+    const dead = makeDecider(cfg(), { ledger, fetchFn: respond({}, 401), telemetry: { recordDecision: boom } })!;
+    await expect(dead.decide("coverage", "S", { q })).rejects.toThrow("HTTP 401");
+  });
 });
 
 describe("secretValues / redact (spec §3.7)", () => {
@@ -173,6 +211,46 @@ describe("secretValues / redact (spec §3.7)", () => {
     expect(s).not.toContain("/usr/bin:/bin");
     expect(s).not.toContain("abc"); // too short to be a credential, too common to scrub
     expect(s).not.toContain("production");
+  });
+
+  it.each([
+    ["Креденшели: admin@test / secret", ["secret"]],
+    ["Пароль: Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["**Password:** Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["Passphrase: correct horse battery", ["correct horse battery"]],
+    ["Passcode: 4711", ["4711"]],
+    ["Passwords: a1b2c3d4", ["a1b2c3d4"]],
+    ["Password: Sup3r S3cret!", ["Sup3r S3cret!"]],
+    ["Password: Sup,3rS3cret!", ["Sup,3rS3cret!"]],
+    ["Credentials: admin / Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["Password: `Sup3rS3cret!` (the admin's)", ["Sup3rS3cret!"]],
+    ["- Password (admin): Sup3rS3cret!", ["Sup3rS3cret!"]],
+  ])("knowledge %j yields a scrubbable secret", (line, expected) => {
+    const s = secretValues(line, {});
+    for (const e of expected) expect(redact(`type ${e} into the field`, s)).toBe("type ‹redacted› into the field");
+  });
+
+  it.each([
+    ["Key pages: /checkout, /cart", "/checkout"],
+    ["Pass criteria: every field is filled", "every"],
+    ["Password rules: must contain a digit", "must"],
+  ])("knowledge %j does not damage ordinary text", (line, word) => {
+    expect(redact(`the ${word} step`, secretValues(line, {}))).toBe(`the ${word} step`);
+  });
+
+  it("env: short secrets count, the working directory and flags do not", () => {
+    const s = secretValues("", {
+      TEST_USER_PASSWORD: "Test123",
+      DB_PASS: "hunter2x",
+      PWD: "/home/qa/project",
+      OLDPWD: "/home/qa",
+      PASS_THROUGH: "enabled",
+      ENABLE_TOKEN: "true",
+      TOKEN_TTL: "3600",
+      LANGFUSE_PUBLIC_KEY: "pk-lf-123456",
+    });
+    expect(s).toEqual(expect.arrayContaining(["Test123", "hunter2x"]));
+    for (const v of ["/home/qa/project", "/home/qa", "enabled", "true", "3600", "pk-lf-123456"]) expect(s).not.toContain(v);
   });
 
   it("redacts every occurrence, longest secret first", () => {

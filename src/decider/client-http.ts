@@ -75,8 +75,8 @@ function fromWire(provider: DeciderProvider, key: string, q: Question, raw: unkn
   };
   if (q.type === "noul" && NOUL_AS_CHOICE.has(provider)) {
     const a = WireChoice.safeParse(raw);
-    const p = a.success ? a.data.probabilities.a : undefined;
-    if (p === undefined) return bad("expected the two-option choice with option 'a'");
+    const p = a.success && (a.data.choice === "a" || a.data.choice === "b") ? a.data.probabilities.a : undefined;
+    if (p === undefined) return bad("expected the two-option choice between 'a' and 'b'");
     return { type: "noul", value: p >= 0.5, p, confidence: noulConfidence(p) };
   }
   switch (q.type) {
@@ -123,7 +123,10 @@ export async function postSystemOne<K extends string>(
       signal,
     });
   } catch (e) {
-    throw new DeciderUnavailable(`request failed: ${e instanceof Error ? e.message : String(e)}`);
+    // Never the message: fetch quotes header values and URLs in it (a key, URL credentials).
+    const code = (e as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+    const name = e instanceof Error ? e.name : typeof e;
+    throw new DeciderUnavailable(`request failed: ${name}${typeof code === "string" ? ` (${code})` : ""}`);
   }
   if (!res.ok) throw new DeciderUnavailable(`HTTP ${res.status}`, res.status);
   let json: unknown;

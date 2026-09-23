@@ -1,11 +1,11 @@
 import type { CostLedger } from "../llm/cost.js";
-import type { Telemetry } from "../telemetry/index.js";
+import type { DecisionTrace, Telemetry } from "../telemetry/index.js";
 import { createEnvReader } from "../config/env.js";
 import { parseDeciderConfig } from "../config/index.js";
 import { CAPS, checkCaps } from "./capabilities.js";
 import { postSystemOne, type HttpTarget } from "./client-http.js";
 import { guarded } from "./guarded.js";
-import { redact } from "./redact.js";
+import { redact, redactQuestion } from "./redact.js";
 import { DeciderUnavailable, type Decider, type DeciderConfig, type Question } from "./types.js";
 
 export { DeciderUnavailable, DECIDER_USES, DECIDER_PROVIDERS } from "./types.js";
@@ -30,7 +30,8 @@ export function httpTarget(cfg: DeciderConfig): HttpTarget {
 /** Where requests to `baseUrl` physically go — for the start-up notice and `cairn doctor`. */
 export function dataDestination(baseUrl: string): { local: boolean; label: string } {
   const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host === "::1" || /^127\./.test(host)) return { local: true, label: "this machine (localhost)" };
+  // A dotted quad only: `127.evil.com` is a DNS name like any other.
+  if (host === "localhost" || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host)) return { local: true, label: "this machine (localhost)" };
   if (host === "api.typesafe.ai") return { local: false, label: "TypeSafe cloud (api.typesafe.ai)" };
   return { local: false, label: `a remote server (${host})` };
 }
@@ -65,24 +66,31 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
     caps,
     uses: new Set(cfg.uses),
     minConfidence: cfg.minConfidence,
-    async decide(use, rawState, questions) {
-      const state = redact(rawState, deps.secrets ?? []);
+    async decide(use, rawState, rawQuestions) {
+      const secrets = deps.secrets ?? [];
+      const state = redact(rawState, secrets);
+      const questions = (
+        secrets.length
+          ? Object.fromEntries(Object.entries<Question>(rawQuestions).map(([k, q]) => [k, redactQuestion(q, secrets)]))
+          : rawQuestions
+      ) as typeof rawQuestions;
       const trace = { use, provider: cfg.provider, startTime: new Date(), state, questions, minConfidence: cfg.minConfidence };
+      const record = (t: DecisionTrace): void => {
+        try {
+          deps.telemetry?.recordDecision?.(t);
+        } catch {
+          // tracing never touches the answer
+        }
+      };
       try {
         checkCaps(caps, state, questions);
         const res = await guard.run((signal) => postSystemOne(target, state, questions, signal, deps.fetchFn));
         deps.ledger.record("decider", cfg.model, res.usage ?? estimateUsage(state, questions), caps.price);
-        deps.telemetry?.recordDecision?.({
-          ...trace,
-          model: res.model ?? cfg.model,
-          endTime: new Date(),
-          answers: res.answers,
-          fallback: false,
-        });
+        record({ ...trace, model: res.model ?? cfg.model, endTime: new Date(), answers: res.answers, fallback: false });
         return res.answers;
       } catch (e) {
         const err = e instanceof DeciderUnavailable ? e : new DeciderUnavailable(e instanceof Error ? e.message : String(e));
-        deps.telemetry?.recordDecision?.({ ...trace, model: cfg.model, endTime: new Date(), fallback: true, reason: err.message });
+        record({ ...trace, model: cfg.model, endTime: new Date(), fallback: true, reason: err.message });
         throw err;
       }
     },
@@ -117,7 +125,7 @@ export async function deciderDoctorReport(
     `  Provider: ${cfg.provider} · model: ${cfg.model}`,
     `  Base URL: ${cfg.baseUrl}`,
     `  Data goes to: ${dest.label}${dest.local ? "" : " — ARIA fragments, case texts and test errors leave this machine"}`,
-    `  Uses: ${cfg.uses.join(", ")} · min confidence ${cfg.minConfidence} · timeout ${cfg.timeoutMs} ms · ≤ ${cfg.maxCalls} calls/run`,
+    `  Uses: ${cfg.uses.join(", ")} · min confidence ${cfg.minConfidence} · timeout ${cfg.timeoutMs} ms · ≤ ${cfg.maxCalls} decisions/run`,
   ];
   const target = httpTarget(cfg);
   const t0 = Date.now();

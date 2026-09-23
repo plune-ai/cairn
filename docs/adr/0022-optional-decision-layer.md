@@ -45,18 +45,24 @@ only make a result stricter, falls back silently on any failure, and is bounded 
 4. **It never sinks a run.** Every failure — network, timeout, 4xx/5xx, a state over the provider's limit, an
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.
-5. **Bounded before it is sent.** Caps (state length, options per choice, questions per call) are checked
-   *before* any request; one timeout covers the whole call; exactly one retry on 429/5xx; a per-run ceiling
-   (`DECIDER_MAX_CALLS`). Decider calls are not charged to the LLM `CallBudget` — they have their own ceiling.
+5. **Bounded before it is sent.** Caps — the state together with its longest question, one question's own text,
+   options per choice, questions per call — are checked *before* any request; one timeout covers the whole call;
+   exactly one retry on 429/5xx; a per-run ceiling on decisions (`DECIDER_MAX_CALLS`; a retry belongs to its
+   decision). Decider calls are not charged to the LLM `CallBudget` — they have their own ceiling.
 6. **The data stays where the user put it.**
-   - Each provider reads **only its own key**: `jev` → `TYPESAFE_API_KEY` (required), `laya` → `LAYA_API_KEY`
-     (the server's own variable), `compat` → `DECIDER_API_KEY`. A TypeSafe cloud key is never sent to a local or
-     third-party server by accident.
+   - Each provider reads **only its own address and key**: `jev` → the TypeSafe SDK's own pair,
+     `TYPESAFE_BASE_URL` (default `https://api.typesafe.ai`) + `TYPESAFE_API_KEY` (required); `laya` →
+     `DECIDER_BASE_URL` + `LAYA_API_KEY` (the server's own variable); `compat` → `DECIDER_BASE_URL` +
+     `DECIDER_API_KEY`. A TypeSafe key is never sent to a laya or compat address — not even one left in `.env`
+     when `--decider jev` is tried for a single run. A URL carrying `user:password` is refused.
    - The first decider of a process whose base URL is not loopback prints one line saying where the data goes
      and recommending `laya` for apps behind a login; `cairn doctor` prints the destination explicitly.
    - A state never contains knowledge files, `storageState`, screenshots or env values — Cairn never puts them
-     there — and every state is additionally **scrubbed** of the secret-looking values found in the run's
-     knowledge and environment, because a designed case can *echo* a credential it read in a knowledge file.
+     there — and every state and question text is additionally **scrubbed**, best-effort, of the values the run's
+     knowledge labels as secrets and of secret environment variables, because a designed case can *echo* a
+     credential it read in a knowledge file. Option labels are the answer contract and are not rewritten.
+   - A failed request is reported by its error name and cause code, never by its message: `fetch` quotes header
+     values and URLs in its messages.
 7. **The wire format lives in one file.** `client-http.ts` is the only code that knows Jev's JSON. Cairn's own
    `Question` carries descriptions — a `choice` is `label → description`, a `score` is an ordered list of level
    descriptions, a `noul` has **required** `criteria.true/false` — because descriptions are part of the protocol
@@ -92,15 +98,21 @@ changed the design.
   - context is **512 tokens** for the `english` checkpoint and **1024** for `multilingual`
     (≈ 3.9 characters per token of English, ≈ 2.5 of Ukrainian);
   - an over-long state is **truncated silently** — `usage.input_tokens` stops at the limit and the server still
-    answers, from the part it read, wrongly. Hence caps are enforced by Cairn before the request, and `laya`
-    and `compat` get a conservative 1 200-character state cap;
+    answers, from the part it read, wrongly. Its source shows why: each question is encoded on its own as
+    `[question + options] [state]`, the question part is cut at 192 tokens (each option at 48), and the state
+    gets what is left. Hence Cairn enforces the caps before the request: `laya` and `compat` take at most
+    1 200 characters of state + question (under 512 tokens even at 2.5 characters per token) and 400 characters
+    of question text;
   - `noul` is **confidently wrong** on some phrasings (p = 0.89–0.94 on the wrong side, even with descriptive
     criteria) — a confident error passes any threshold;
   - the same judgment asked as a two-option `choice` with descriptive criteria errs with **low confidence**
     (0.00–0.15) — which the threshold turns into a fallback. That is why laya gets `noul` as `choice`;
   - bare `Yes`/`No` labels are unreliable in either form, which is why `noul` criteria are required;
   - laya's `choice` confidence is `1 − H(p)/ln n`; Jev documents a different statistic. **Thresholds do not
-    transfer between providers** — calibration is per use point and per provider.
+    transfer between providers** — calibration is per use point and per provider. Note the scale of the numbers
+    above: 0.00–0.15 is laya's entropy confidence, while Cairn thresholds a two-option `noul` on `|2p − 1|`
+    (0.15 there is about 0.45 here; the default 0.75 is about 0.46 there). The default still turns those errors
+    into fallbacks, but these figures are not a calibration.
 - **An unknown `model` id on laya auto-routes by detected language**, per its source. So the default model is
   `jev-latest` for every provider; `DECIDER_MODEL=multilingual` pins laya's multilingual checkpoint.
 
@@ -112,8 +124,8 @@ changed the design.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.
 - **The protocol has a single owner**, so a Jev wire change is one file and one test file.
-- **Configuration grows by eleven variables and two flags** — eight `DECIDER*` settings and three provider keys —
-  all `CAIRN_`-prefixable, all inert when `DECIDER` is off.
+- **Configuration grows by eleven variables and one flag** (`--decider`) — seven `DECIDER*` settings, three
+  provider keys and TypeSafe's own `TYPESAFE_BASE_URL` — all `CAIRN_`-prefixable, all inert when `DECIDER` is off.
   The `--help` snapshot changed on purpose.
 - **Confidence is a shape, not a promise.** Documentation never presents it as a probability of being right.
 - **Jev stays out of `docs/cost.md` and `npm run bench`** until the repository owner has read TypeSafe's terms on
@@ -132,6 +144,9 @@ changed the design.
   the very behaviour that produced wrong answers. A refusal is a fallback; a clipped state is a guess.
 - **One shared key variable for every provider.** Switching `DECIDER=jev` → `compat` would have sent a cloud key
   to a third-party server.
+- **One shared address variable for every provider.** Caught before release: a laya address left in `.env`
+  would have received the TypeSafe key the moment `--decider jev` was tried. Keys and addresses
+  are paired per provider for the same reason.
 
 ## Open questions from the spec, answered
 

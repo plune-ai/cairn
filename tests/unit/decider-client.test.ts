@@ -137,6 +137,11 @@ describe("postSystemOne — response mapping", () => {
       { n: { type: "choice", choice: "b", probabilities: { b: 1 }, confidence: 1 } },
       { n: noul },
     ],
+    [
+      "laya's two-option form choosing a label it was never offered",
+      { n: { type: "choice", choice: "zzz", probabilities: { a: 0.9 }, confidence: 0.8 } },
+      { n: noul },
+    ],
   ])("rejects %s → DeciderUnavailable (an untrusted answer is never acted on)", async (_label, answers, qs) => {
     const target = "n" in qs && _label.startsWith("laya") ? laya : jev;
     await expect(
@@ -167,6 +172,19 @@ describe("postSystemOne — response mapping", () => {
   it("never puts the API key into an error message", async () => {
     const e = await postSystemOne(jev, "S", { n: noul }, signal, fakeFetch({}, 401).fn).catch((x: unknown) => x as Error);
     expect((e as Error).message).not.toContain("k-jev");
+  });
+
+  it("a fetch error is reported by its name and cause code, never its message (which can quote a key or a URL)", async () => {
+    const leaky = vi.fn(async () => {
+      throw new TypeError('Headers.append: "Bearer k-jev\r\n" is an invalid header value.');
+    }) as unknown as typeof fetch;
+    const e1 = (await postSystemOne(jev, "S", { n: noul }, signal, leaky).catch((x: unknown) => x)) as Error;
+    expect(e1.message).toBe("request failed: TypeError");
+    const refused = vi.fn(async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    }) as unknown as typeof fetch;
+    const e2 = (await postSystemOne(jev, "S", { n: noul }, signal, refused).catch((x: unknown) => x)) as Error;
+    expect(e2.message).toBe("request failed: TypeError (ECONNREFUSED)");
   });
 });
 

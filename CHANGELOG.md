@@ -13,9 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   seam, off by default.** A System One model — TypeSafe **Jev** in the cloud, **Laya** on your own machine
   via `laya-serve`, or any Jev-compatible server — can answer the pipeline's pick-from-a-list questions. This
   release ships the layer without any use point consulting it yet: configuration (`DECIDER`, `DECIDER_*`,
-  `--decider` on `explore` / `design` / `automate` and the MCP tools), one bounded HTTP client (limits checked
-  before sending, one timeout, one retry, a per-run ceiling), secret scrubbing, a `decider` row in the cost
-  ledger, Langfuse spans, and a `cairn doctor` section that makes one real call and says where the data goes.
+  `--decider` on `explore` / `design` / `automate` and the MCP tools; each provider reads only its own address
+  and key — jev the TypeSafe SDK's `TYPESAFE_BASE_URL` / `TYPESAFE_API_KEY` pair), one bounded HTTP client
+  (limits on the state and question checked before sending, one timeout, one retry, a per-run ceiling),
+  best-effort secret scrubbing of everything sent, a `decider` row in the cost ledger, Langfuse spans, and a
+  `cairn doctor` section that makes one real call and says where the data goes.
   With `DECIDER` unset a run is byte-identical to a run without the layer, and a provider key alone enables
   nothing. Guide: [`docs/decider.md`](docs/decider.md).
 

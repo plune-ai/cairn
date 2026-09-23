@@ -177,17 +177,25 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
   }
   const provider = parsed.data;
 
-  const baseUrl = read("DECIDER_BASE_URL")?.trim() || (provider === "jev" ? "https://api.typesafe.ai" : "");
+  // Each provider reads only its OWN address and key: jev takes TypeSafe's pair (as the SDK does), laya/compat
+  // take DECIDER_*. A laya address left in .env therefore never receives the TypeSafe key.
+  const urlVar = provider === "jev" ? "TYPESAFE_BASE_URL" : "DECIDER_BASE_URL";
+  const keyVar = provider === "jev" ? "TYPESAFE_API_KEY" : provider === "laya" ? "LAYA_API_KEY" : "DECIDER_API_KEY";
+  const baseUrl = read(urlVar)?.trim() || (provider === "jev" ? "https://api.typesafe.ai" : "");
   if (!baseUrl) {
     throw new Error(
       `DECIDER=${provider} needs DECIDER_BASE_URL — the server's address, e.g. http://127.0.0.1:8000 (see docs/decider.md).`,
     );
   }
   if (!/^https?:\/\//i.test(baseUrl) || !URL.canParse(baseUrl)) {
-    throw new Error(`Invalid DECIDER_BASE_URL='${baseUrl}' — expected an http(s) URL.`);
+    throw new Error(`Invalid ${urlVar}='${baseUrl}' — expected an http(s) URL.`);
+  }
+  const url = new URL(baseUrl);
+  if (url.username || url.password) {
+    // Not echoed: the URL carries a credential.
+    throw new Error(`Invalid ${urlVar}: a user:password in the URL is not supported — put the key in ${keyVar}.`);
   }
 
-  const keyVar = provider === "jev" ? "TYPESAFE_API_KEY" : provider === "laya" ? "LAYA_API_KEY" : "DECIDER_API_KEY";
   const apiKey = read(keyVar)?.trim() || undefined;
   if (provider === "jev" && !apiKey) throw new Error("DECIDER=jev needs TYPESAFE_API_KEY (your TypeSafe API key).");
 
