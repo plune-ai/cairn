@@ -13,11 +13,33 @@ import type { AppConfig } from "../config/index.js";
  * LAZILY and only when Langfuse is actually configured. The type-only imports above are erased at
  * compile time, so nothing here pulls those packages at runtime unless the enabled path runs.
  */
+/** ADR-0022: one decider call, as reported to tracing. */
+export interface DecisionTrace {
+  use: string;
+  provider: string;
+  model: string;
+  startTime: Date;
+  endTime: Date;
+  /** The state as sent (already scrubbed of secrets). */
+  state: string;
+  questions: unknown;
+  answers?: unknown;
+  /** true when the call failed and the use point took its old path. */
+  fallback: boolean;
+  reason?: string;
+  minConfidence: number;
+}
+
 export interface Telemetry {
   enabled: boolean;
   callbackHandler?: CallbackHandler;
   client?: LangfuseClient;
   shutdown: () => Promise<void>;
+  /**
+   * ADR-0022: a decider call as a span nested under the active stage, plus a `decider.<use>.confidence`
+   * score (the lowest confidence among its answers). Absent when tracing is off.
+   */
+  recordDecision?: (d: DecisionTrace) => void;
   /**
    * Wraps `fn` in a root Langfuse span so that all nested LangChain callback-handler
    * generations are collected under ONE trace (rather than N separate traces). When
@@ -90,5 +112,42 @@ export async function initTelemetry(cfg: AppConfig): Promise<Telemetry> {
       return fn();
     }) as Promise<T>;
 
-  return { enabled: true, callbackHandler, client, shutdown, runInTrace };
+  const recordDecision = (d: DecisionTrace): void => {
+    try {
+      const span = lfTracing.startObservation(
+        `decider.${d.use}`,
+        {
+          input: { state: d.state.slice(0, 2000), questions: d.questions },
+          output: d.answers,
+          metadata: {
+            provider: d.provider,
+            model: d.model,
+            latencyMs: d.endTime.getTime() - d.startTime.getTime(),
+            fallback: d.fallback,
+            reason: d.reason,
+            minConfidence: d.minConfidence,
+          },
+          ...(d.fallback ? { level: "WARNING" as const, statusMessage: d.reason } : {}),
+        },
+        { startTime: d.startTime },
+      );
+      span.end(d.endTime);
+      const confidences = Object.values((d.answers ?? {}) as Record<string, { confidence?: unknown }>)
+        .map((a) => a.confidence)
+        .filter((c): c is number => typeof c === "number");
+      if (confidences.length > 0) {
+        client.score.create({
+          traceId: span.traceId,
+          observationId: span.id,
+          name: `decider.${d.use}.confidence`,
+          value: Math.min(...confidences),
+          dataType: "NUMERIC",
+        });
+      }
+    } catch {
+      // tracing is best-effort — it must never touch the run
+    }
+  };
+
+  return { enabled: true, callbackHandler, client, shutdown, runInTrace, recordDecision };
 }

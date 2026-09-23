@@ -1,6 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { CostLedger, extractUsage, priceFor, DEFAULT_PRICING } from "../../src/llm/cost.js";
 
+describe("CostLedger — explicit price (ADR-0022 decider)", () => {
+  it("an explicit price wins over the table; the role appears only once recorded", () => {
+    const l = new CostLedger({ "jev-latest": { inputPer1M: 99, outputPer1M: 99 } });
+    expect(l.report().perRole).toEqual([]);
+    l.record("decider", "jev-latest", { inputTokens: 1_000_000, outputTokens: 0 }, { inputPer1M: 0.042, outputPer1M: 0 });
+    expect(l.report().perRole[0]).toMatchObject({ role: "decider", costUsd: 0.042 });
+  });
+  it("the decider row sorts after the LLM roles", () => {
+    const l = new CostLedger({ m: { inputPer1M: 1, outputPer1M: 1 } });
+    l.record("decider", "jev-latest", { inputTokens: 1, outputTokens: 0 }, { inputPer1M: 0, outputPer1M: 0 });
+    l.record("worker", "m", { inputTokens: 1, outputTokens: 0 });
+    expect(l.report().perRole.map((r) => r.role)).toEqual(["worker", "decider"]);
+  });
+});
+
 const PRICES = {
   "m-cheap": { inputPer1M: 1, outputPer1M: 2 },
   "m-pricey": { inputPer1M: 10, outputPer1M: 30 },
