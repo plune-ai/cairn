@@ -148,7 +148,7 @@ changed the design.
   use point, and `coverage` acts only when named in `DECIDER_USES`.
 - **Latency on a CPU** (no GPU; the same twelve triage questions, sent together as a failing suite sends them, so
   each waits for the others): the multilingual checkpoint 0.7 s at the median and 1.2 s at p95, the English one
-  2.2 s and 3.6 s; one question alone, 0.1 s and 0.3 s. An earlier run on the same machine took 3.3 s and 4.6 s,
+  2.2 s and 3.6 s; one question alone, 0.1 s (multilingual) and 0.3 s (English). An earlier run on the same machine took 3.3 s and 4.6 s,
   and 9.5 s and 13.5 s: the load on the machine and the number of failing tests set the latency more than the
   checkpoint. The default `DECIDER_TIMEOUT_MS` of 10 000 covers every multilingual measurement. On the busier run
   the English checkpoint's slowest calls (13.5 s) would pass it and become fallbacks.

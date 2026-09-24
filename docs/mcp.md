@@ -34,8 +34,17 @@ back as JSON (run id, the generated cases or spec files, validation / metrics / 
 `runs/<id>/` directory).
 
 `decider` (`off` | `jev` | `laya` | `compat`) switches the [decision layer](decider.md) for one call, like
-`--decider`. Everything else about it — address, key, shadow mode (`DECIDER_SHADOW=1`), use points — comes from
-the MCP server's own `DECIDER_*` environment.
+`--decider`. Everything else comes from the MCP server's own environment, as it does for the CLI:
+- the provider's address and key ([Providers](decider.md#providers): `laya` reads `DECIDER_BASE_URL` and
+  `LAYA_API_KEY`, `jev` the `TYPESAFE_*` pair);
+- `DECIDER_USES`, `DECIDER_SHADOW` and the limits.
+
+On `design` the parameter changes nothing unless `DECIDER_USES` names `coverage` and the call passes a
+`checklist`. The default use point, repair triage, lives in the repair loop, which `design` does not run.
+
+`explore` and `design` report the layer in the run's `report.json`. `automate` writes no report, so it returns
+`decider` and `notRepaired` instead. A `decider: "off"` call is an error while the server's environment sets
+`DECIDER_SHADOW=1`, just as `--decider off` is on the command line.
 
 A typical agent flow: `design` a page → review the cases → `automate` the run dir it returned.
 
