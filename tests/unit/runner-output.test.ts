@@ -105,4 +105,21 @@ describe("resultsFromRunnerOutput — every error, once, without its code frame"
     const [r] = resultsFromRunnerOutput(reporterJson("timedOut", timeout, [timeout, thrown]), "");
     expect(r!.error).toBe(`${timeout}\n\nError: boom`);
   });
+
+  it("a failure inside a helper file reads as before too: its frame opens with `at helpers.ts:5`, no column", () => {
+    const strict = "Error: locator.click: Error: strict mode violation: getByRole('link') resolved to 2 elements:\n\nCall log:\n  - waiting for getByRole('link')\n";
+    const formatted =
+      `${strict}\n\n   at helpers.ts:5\n\n  4 | export async function openFirstLink(page: Page): Promise<void> {\n` +
+      `> 5 |   await page.getByRole("link").click();\n    |                                ^\n  6 | }\n` +
+      `    at openFirstLink (C:\\Users\\alice\\shop\\tests\\helpers.ts:5:32)\n    at C:\\Users\\alice\\shop\\tests\\login.spec.ts:24:9`;
+    const [r] = resultsFromRunnerOutput(reporterJson("failed", strict, [formatted]), "");
+    expect(r!.error).toBe(strict.trim());
+  });
+
+  it("a hostile error text costs linear time — no backtracking on a run of newlines or spaces", () => {
+    const hostile = ["x" + "\n".repeat(5_000) + "x", "x\n" + " ".repeat(80_000) + "x", "x\n  at " + "a:".repeat(40_000)];
+    const t0 = performance.now();
+    resultsFromRunnerOutput(reporterJson("failed", "boom", hostile), "");
+    expect(performance.now() - t0).toBeLessThan(200); // the cubic form took 1.2 s for 2 000 newlines
+  });
 });

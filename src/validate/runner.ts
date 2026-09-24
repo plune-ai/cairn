@@ -149,8 +149,12 @@ export function screencastsFromRunnerOutput(stdout: string, runDir: string): Scr
   }
 }
 
-/** The first code-frame line (`  8 |`, `> 8 |`) or stack line (`at …:8:54`) of a formatted error. */
-const FRAME = /\n\s*(?:>?\s*\d+ \||at .+:\d+:\d+\)?$)/m;
+/**
+ * The first code-frame line (`  8 |`, `> 8 |`) or stack line (`at …:8:54`, and a helper file's `at helpers.ts:5`) of
+ * a formatted error. Only `[ \t]`, never `\s`, after the newline: two `\s*` runs share a run of newlines and
+ * backtrack cubically (2 000 newlines took over a second).
+ */
+const FRAME = /\n[ \t]*(?:>[ \t]*)?(?:\d+ \||at .+:\d+(?::\d+)?\)?$)/m;
 
 /**
  * An error without its code frame and stack. They carry the spec's absolute path, and with it the machine's user
