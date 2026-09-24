@@ -11,7 +11,9 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 
 - It **never** writes cases, code or repairs, and never gives the Pilot verdict. Those stay on the LLM.
 - Its answers are **untrusted input**. It can make a result stricter (keep an app bug out of repair), never
-  softer; below `DECIDER_MIN_CONFIDENCE` its answer is ignored and Cairn does what it always did.
+  softer; below `DECIDER_MIN_CONFIDENCE` its answer is ignored and Cairn does what it always did. The one
+  exception is `coverage`, a metric rather than a gate: once you name it, its number replaces the judge's and can
+  come out higher. That is why it is off unless named.
 - It **never sinks a run**. Timeout, server error, an input too long for the model, an invalid answer — each is
   a silent fallback to the current behaviour, recorded in the trace.
 - `confidence` describes the shape of an answer's distribution, **not** the chance that it is right. Each
