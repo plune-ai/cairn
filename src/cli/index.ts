@@ -55,6 +55,8 @@ async function runCapture(opts: { url: string; name?: string; channel?: string; 
 
 /** `--decider` help, shared by explore / design / automate (ADR-0022). */
 const DECIDER_FLAG_HELP = "opt-in decision layer: off | jev | laya | compat (sets DECIDER; see docs/decider.md)";
+const DECIDER_SHADOW_HELP =
+  "with a decider: record its answers next to the current path in runs/<id>/decider-shadow.json, act on none (sets DECIDER_SHADOW)";
 
 /**
  * Build the `cairn` commander program. Exported (C1-02) so tests can drive commands and snapshot
@@ -126,6 +128,7 @@ export function buildProgram(): Command {
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .option("--screencast", "record a .webm per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
+    .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(async (opts: Record<string, unknown>) => {
       await runModality("explore", opts);
     });
@@ -266,6 +269,7 @@ export function buildProgram(): Command {
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--headed", "visible browser (debug)")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
+    .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(
       async (opts: {
         url: string;
@@ -283,8 +287,9 @@ export function buildProgram(): Command {
         setup?: boolean;
         gaps?: boolean;
         decider?: string;
+        deciderShadow?: boolean;
       }) => {
-        const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider });
+        const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider, deciderShadow: opts.deciderShadow });
         const checklistText = opts.checklist ? await readInputFile(opts.checklist, "Checklist") : undefined;
         // #80: --style resolves to a house-style pack file (prompts/styles/<v>.md or a path) → {{style}} slot,
         // else the built-in inline hint (happy/negative/coverage). Methodology is never touched.
@@ -344,9 +349,10 @@ export function buildProgram(): Command {
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .option("--screencast", "with --validate: record a .webm per scenario (with step chapters) → runs/<id>/screencasts/ for the review gate")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
+    .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(
-      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; decider?: string }) => {
-        const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider });
+      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; decider?: string; deciderShadow?: boolean }) => {
+        const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider, deciderShadow: opts.deciderShadow });
         process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
@@ -372,6 +378,20 @@ export function buildProgram(): Command {
         if (result.validation) {
           process.stdout.write(
             `\nValidation: ${Math.round(result.validation.greenRatio * 100)}% green out of ${result.validation.results.length} tests\n`,
+          );
+        }
+        // ADR-0022: said out loud, so nobody mistakes an unrepaired failure for a test problem.
+        if (result.notRepaired?.length) {
+          process.stdout.write("\nNot repaired — likely an app bug or a broken environment:\n");
+          for (const t of result.notRepaired) {
+            process.stdout.write(`  ${t.test} — ${t.category} (confidence ${t.confidence.toFixed(2)})\n`);
+          }
+        }
+        if (result.decider) {
+          const d = result.decider;
+          process.stdout.write(
+            `\nDecision layer (${d.provider}): ${d.calls} decisions · ${d.calls - d.fallbacks.length} answered · ${d.fallbacks.length} fallback(s)` +
+              `${d.fallbacks.length ? " — the current path ran instead" : ""}\n`,
           );
         }
         printCost(result.cost);

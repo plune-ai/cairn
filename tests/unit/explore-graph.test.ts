@@ -7,6 +7,7 @@ import type { BrowserGateway, Observation, Action } from "../../src/browser/inde
 import type { ValidationReport } from "../../src/validate/index.js";
 import type { PageStudy } from "../../src/observe/index.js";
 import type { TestCase } from "../../src/design/index.js";
+import type { Answer, Decider, DeciderUse } from "../../src/decider/types.js";
 
 /** A StructuredInvoke that ignores its args and yields a fixed value (no LLM). */
 const fixed = (value: unknown): StructuredInvoke =>
@@ -270,5 +271,66 @@ describe("runExploreGraph — durable test cases (onTestCases)", () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0]?.length).toBe(1);
+  });
+});
+
+describe("runExploreGraph — decision layer (ADR-0022)", () => {
+  const failing = (): ValidationReport => ({
+    results: [{ test: "A", status: "failed", error: "500 Internal Server Error" }],
+    greenRatio: 0,
+    flakyCount: 0,
+  });
+  const fakeDecider = (uses: DeciderUse[]) => {
+    const calls: string[] = [];
+    const decider: Decider = {
+      provider: "laya",
+      model: "jev-latest",
+      caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
+      uses: new Set(uses),
+      minConfidence: 0.75,
+      scrub: (t: string) => t,
+      summary: () => ({ provider: "laya", model: "jev-latest", calls: calls.length, fallbacks: [] }),
+      async decide(use, _state, questions) {
+        calls.push(use);
+        const a: Answer = { type: "choice", value: "app-bug", dist: { "app-bug": 0.95 }, confidence: 0.9 };
+        return Object.fromEntries(Object.keys(questions).map((k) => [k, a])) as never;
+      },
+    };
+    return { decider, calls };
+  };
+
+  it("repair-triage on: a confident app bug is kept out of repair and reported in the outcome", async () => {
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const { decider, calls } = fakeDecider(["repair-triage"]);
+    let validateCalls = 0;
+    const out = await runExploreGraph(
+      makeDeps({ gateway, decider, maxRepair: 3, validate: async () => (validateCalls++, failing()) }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(calls).toEqual(["repair-triage"]);
+    expect(out.notRepaired).toEqual([{ test: "A", category: "app-bug", confidence: 0.9, exclude: true }]);
+    expect(out.attempts).toBe(0);
+    expect(validateCalls).toBe(1);
+  });
+
+  it("a decider whose uses leave out repair-triage is never asked during repair", async () => {
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const { decider, calls } = fakeDecider(["coverage"]);
+    const out = await runExploreGraph(makeDeps({ gateway, decider, maxRepair: 1, validate: async () => failing() }), {
+      url: "https://app.test/page",
+      runId: "r",
+    });
+    expect(calls).toEqual([]);
+    expect("notRepaired" in out).toBe(false);
+    expect(out.attempts).toBe(1);
+  });
+
+  it("no decider → the outcome has no notRepaired key at all", async () => {
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const out = await runExploreGraph(makeDeps({ gateway, maxRepair: 1, validate: async () => failing() }), {
+      url: "https://app.test/page",
+      runId: "r",
+    });
+    expect("notRepaired" in out).toBe(false);
   });
 });

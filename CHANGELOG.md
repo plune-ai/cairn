@@ -11,16 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An optional decision layer (`DECIDER`, [ADR-0022](docs/adr/0022-optional-decision-layer.md)) — the
   seam, off by default.** A System One model — TypeSafe **Jev** in the cloud, **Laya** on your own machine
-  via `laya-serve`, or any Jev-compatible server — can answer the pipeline's pick-from-a-list questions. This
-  release ships the layer without any use point consulting it yet: configuration (`DECIDER`, `DECIDER_*`,
-  `--decider` on `explore` / `design` / `automate` and the MCP tools; each provider reads only its own address
-  and key — jev the TypeSafe SDK's `TYPESAFE_BASE_URL` / `TYPESAFE_API_KEY` pair, and only an `https://*.typesafe.ai`
-  address), one bounded HTTP client
+  via `laya-serve`, or any Jev-compatible server — can answer the pipeline's pick-from-a-list questions. The
+  layer itself: configuration (`DECIDER`, `DECIDER_*`, `--decider` on `explore` / `design` / `automate` and
+  the MCP tools; each provider reads only its own address and key — jev the TypeSafe SDK's
+  `TYPESAFE_BASE_URL` / `TYPESAFE_API_KEY` pair, and only an `https://*.typesafe.ai` address), one bounded HTTP client
   (limits on the state and question checked before sending, one timeout, one retry, a per-run ceiling),
   best-effort secret scrubbing of everything sent, a `decider` row in the cost ledger, Langfuse spans, and a
   `cairn doctor` section that makes one real call and says where the data goes.
   With `DECIDER` unset a run is byte-identical to a run without the layer, and a provider key alone enables
   nothing. Guide: [`docs/decider.md`](docs/decider.md).
+- **Two decider use points, and a shadow mode to judge them first.** `repair-triage`: a confident "the app
+  is broken" or "the environment is broken" keeps a failing test out of the repair hint — repairing test code
+  cannot fix either — and the run lists it under *Not repaired* (`report.json` `notRepaired`, `report.md`, the
+  `automate` output); every other confident category only tags the hint, and when *every* failure is excluded
+  the loop stops without spending an attempt; an exclusion holds only while the test fails the same way.
+  `coverage`: the checklist × case matrix as yes/no answers replaces the LLM coverage judge when every item
+  gets a confident verdict (the score's comment names the decider), and falls back to it otherwise.
+  `--decider-shadow` (`DECIDER_SHADOW=1`) asks the decider at every enabled use point, records its answers
+  next to what the run actually did in `runs/<id>/decider-shadow.json`, and changes nothing else. An active
+  run adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to
+  `report.md`. By default an active decider consults `repair-triage` alone and shadow mode asks both:
+  `coverage` answered confidently wrong on laya's multilingual checkpoint, so it acts only when named in
+  `DECIDER_USES`. A run in which no enabled use point can fire (no checklist, no repair loop) does not start the
+  layer: no data notice, no report key, no shadow file.
 
 ## [0.7.0] - 2026-07-30
 

@@ -172,8 +172,17 @@ export const TYPESAFE_HOST = /(?:^|\.)typesafe\.ai$/;
  * laya/compat server. Misconfiguration fails here, at start, not in the middle of a run.
  */
 export function parseDeciderConfig(read: (name: string) => string | undefined): DeciderConfig | undefined {
+  const shadowRaw = read("DECIDER_SHADOW")?.trim().toLowerCase() ?? "";
+  if (!["", "0", "false", "off", "1", "true", "on"].includes(shadowRaw)) {
+    throw new Error(`Invalid DECIDER_SHADOW='${shadowRaw}'. Use 1 (on) or 0 (off).`);
+  }
+  const shadow = ["1", "true", "on"].includes(shadowRaw);
   const raw = read("DECIDER")?.trim().toLowerCase();
-  if (!raw || raw === "off") return undefined;
+  if (!raw || raw === "off") {
+    // A pilot that silently collected nothing is worse than a refusal.
+    if (shadow) throw new Error("DECIDER_SHADOW needs a provider: set DECIDER (or --decider) to jev, laya or compat.");
+    return undefined;
+  }
   const parsed = DeciderProviderSchema.safeParse(raw);
   if (!parsed.success || parsed.data === "off") {
     throw new Error(`Invalid DECIDER='${raw}'. Allowed: off | jev | laya | compat.`);
@@ -220,7 +229,9 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
     throw new Error("CAIRN_TYPESAFE_BASE_URL is set, so DECIDER=jev takes its key from CAIRN_TYPESAFE_API_KEY — set that too.");
   }
 
-  const usesRaw = read("DECIDER_USES")?.trim() || "repair-triage,coverage";
+  // ADR-0022 rule 9: a use point acts only on evidence. Shadow mode acts on nothing, so by default it asks every
+  // one; an active decider defaults to repair-triage alone — coverage answered confidently wrong on laya (ADR).
+  const usesRaw = read("DECIDER_USES")?.trim() || (shadow ? DECIDER_USES.join(",") : "repair-triage");
   const uses = [...new Set(usesRaw.split(",").map((s) => s.trim()).filter(Boolean))];
   for (const u of uses) {
     if (!(DECIDER_USES as readonly string[]).includes(u)) {
@@ -237,6 +248,7 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
     minConfidence: envNumber(read, "DECIDER_MIN_CONFIDENCE", 0.75, (n) => n >= 0 && n <= 1, "Must be a number from 0 to 1."),
     timeoutMs: envNumber(read, "DECIDER_TIMEOUT_MS", 10_000, (n) => Number.isInteger(n) && n > 0, "Must be a positive integer (ms)."),
     maxCalls: envNumber(read, "DECIDER_MAX_CALLS", 200, (n) => Number.isInteger(n) && n >= 0, "Must be a non-negative integer."),
+    shadow,
   };
 }
 

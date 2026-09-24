@@ -23,6 +23,8 @@ export interface ConfigFlags {
    * checks FIRST — so the flag beats `DECIDER` and `CAIRN_DECIDER` alike.
    */
   decider?: string;
+  /** `--decider-shadow` → `CAIRN_DECIDER_SHADOW=1` (same reasoning: the flag beats the environment). */
+  deciderShadow?: boolean;
 }
 
 /**
@@ -37,5 +39,6 @@ export function resolveConfig(flags: ConfigFlags = {}, env: Env = process.env): 
   if (flags.routing) merged.LLM_ROUTING = flags.routing;
   if (flags.channel) merged.BROWSER_CHANNEL = flags.channel;
   if (flags.decider) merged.CAIRN_DECIDER = flags.decider;
+  if (flags.deciderShadow) merged.CAIRN_DECIDER_SHADOW = "1";
   return loadConfig(merged);
 }

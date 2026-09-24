@@ -17,10 +17,20 @@ import { lintSuite, lintHint } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { computeCoverage } from "../eval/coverage.js";
 import { designGapCases } from "../eval/gap-cases.js";
-import { judgeTestCases, judgeChecklistCoverage } from "../eval/judge.js";
+import { judgeTestCases, judgeChecklistCoverage, checklistCoverageScore } from "../eval/judge.js";
+import {
+  deciderReaches,
+  makeDecider,
+  secretValues,
+  writeShadowFile,
+  deciderReportKeys,
+  type Decider,
+  type DeciderSummary,
+} from "../decider/index.js";
+import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
 import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
-import { ingestChecklist, formatChecklist, formatGoal, coverageScore, styleDirective } from "../checklist/index.js";
+import { ingestChecklist, formatChecklist, formatGoal, styleDirective } from "../checklist/index.js";
 import { loadKnowledge } from "../knowledge/index.js";
 import type { InteractionMap } from "../documentarian/index.js";
 import { validateSuite, type ValidationReport } from "../validate/index.js";
@@ -227,6 +237,11 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const checklistFormatted = formatChecklist(checklistItems);
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
+  // ADR-0022: undefined unless DECIDER names a provider AND one of its use points can fire here — without one, every
+  // use point takes today's path.
+  const decider = deciderReaches(cfg.decider, { repair: cfg.maxRepair > 0, checklist: checklistItems.length > 0 })
+    ? makeDecider(cfg.decider, { ledger: router.ledger, telemetry, secrets: secretValues(knowledgeText, process.env), warn: onProgress })
+    : undefined;
   // #93: cross-run page-understanding cache (keyed by url + page fingerprint) — a re-run on the same
   // page reuses it and skips the ground LLM call. Persist the artifact into the run dir too (durability).
   const understandingCacheDir = resolve(input.understandingCacheDir ?? ".cairn-cache/understanding");
@@ -301,6 +316,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // L1-05: a session was supplied → fail fast if the first page is a login screen (expired session).
     expectAuthenticated: Boolean(input.sessionName || input.sessionFile),
     sessionName: input.sessionName,
+    decider,
   };
 
   try {
@@ -367,18 +383,15 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           // the judge is not critical for the run
         }
         if (checklistItems.length > 0) {
-          try {
-            const cov = await judgeChecklistCoverage(
+          // The LLM judge, falling back to token overlap — or, with DECIDER_USES=coverage, the decider first.
+          scores.push(
+            await checklistCoverageScore(
               checklistItems,
               out.testCases,
-              router.invoke("judge", cfg.models.judge),
-              prompts,
-            );
-            scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
-          } catch {
-            // fallback: token-based coverage (offline / judge unavailable)
-            scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
-          }
+              () => judgeChecklistCoverage(checklistItems, out.testCases, router.invoke("judge", cfg.models.judge), prompts),
+              coverageDecider(decider),
+            ),
+          );
         }
         onProgress(`score — ${scores.length} metrics`);
 
@@ -500,6 +513,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             bestPriorGreen: bestPriorGreen ?? null,
             allTimePassing,
           },
+          // ADR-0022: keys that exist only on an opted-in run (no schema bump — rule 10).
+          ...deciderReportKeys(decider, out.notRepaired),
         });
         await runWriter.writeReportMd(
           renderReportMd({
@@ -519,8 +534,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             journeys: out.journeys,
             coverage,
             gapCases,
+            ...deciderReportKeys(decider, out.notRepaired),
           }),
         );
+        await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));
         const green = validation ? `${Math.round(validation.greenRatio * 100)}%` : "—";
         await runWriter.writeLog(
           [...logLines, "", `summary: green=${green} testCases=${out.testCases.length} runId=${runId}`].join("\n"),
@@ -576,6 +593,11 @@ export interface DesignResult {
   scores: Score[];
   /** Per-role cost + tokens for the run (L1-01). */
   cost: CostReport;
+}
+
+/** ADR-0022: the decider for checklist coverage — only when that use is enabled. */
+function coverageDecider(d: Decider | undefined): Decider | undefined {
+  return d?.uses.has("coverage") ? d : undefined;
 }
 
 function suiteFromUrl(url: string): string {
@@ -641,6 +663,10 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
 
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
+  // ADR-0022: design consults the decider only for checklist coverage (there is no repair here).
+  const decider = deciderReaches(cfg.decider, { repair: false, checklist: checklistItems.length > 0 })
+    ? makeDecider(cfg.decider, { ledger: router.ledger, telemetry, secrets: secretValues(knowledgeText, process.env), warn: onProgress })
+    : undefined;
   // #93: cross-run page-understanding cache (keyed by url + page fingerprint) — a re-run on the same
   // page reuses it and skips the ground LLM call. Persist the artifact into the run dir too (durability).
   const understandingCacheDir = resolve(input.understandingCacheDir ?? ".cairn-cache/understanding");
@@ -758,17 +784,14 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           // judge optional
         }
         if (checklistItems.length > 0) {
-          try {
-            const cov = await judgeChecklistCoverage(
+          scores.push(
+            await checklistCoverageScore(
               checklistItems,
               out.testCases,
-              router.invoke("judge", cfg.models.judge),
-              prompts,
-            );
-            scores.push({ name: "checklist_coverage", value: cov.value, comment: cov.comment });
-          } catch {
-            scores.push({ name: "checklist_coverage", value: coverageScore(checklistItems, out.testCases) });
-          }
+              () => judgeChecklistCoverage(checklistItems, out.testCases, router.invoke("judge", cfg.models.judge), prompts),
+              coverageDecider(decider),
+            ),
+          );
         }
 
         await runWriter.writeStudy(out.study);
@@ -825,7 +848,9 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           flow: flowReportPayload(out.flowGraph, out.journeys, out.setupPlans), // #59/#60: graph + journeys + setup
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
+          ...deciderReportKeys(decider), // ADR-0022: only on an opted-in run
         });
+        await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));
         await runWriter.writeLog(
           [...logLines, "", `summary: mode=design testCases=${out.testCases.length} suite=${suite} runId=${runId}`].join("\n"),
         );
@@ -876,6 +901,10 @@ export interface AutomateResult {
   budget: BudgetReport;
   /** The repair loop bailed early because it stopped making progress (L1-04 #40). */
   stoppedEarly: boolean;
+  /** ADR-0022: failures repair-triage kept out of repair (absent unless something was). */
+  notRepaired?: TriageResult[];
+  /** ADR-0022: an active decider's calls and fallbacks (absent without one). */
+  decider?: DeciderSummary;
 }
 
 /**
@@ -922,6 +951,18 @@ export async function runAutomate(input: {
   const baseUrl = rep.url ?? "";
   const pageSemantics = rep.pageSemantics ?? "";
   const isApi = rep.mode === "api"; // API-7 (#144): report.json's mode (API-4) picks the codegen path.
+  // ADR-0022: automate consults the decider for repair-triage only, inside its web validate ⇄ repair loop. A run
+  // that has no such loop builds none: no data notice, no empty shadow file, no report key. It designs nothing, so
+  // knowledge is read here for one reason: to know which values the cases may echo and must never be sent.
+  const decider =
+    deciderReaches(cfg.decider, { repair: Boolean(input.validate) && !isApi && cfg.maxRepair > 0, checklist: false })
+      ? makeDecider(cfg.decider, {
+          ledger: router.ledger,
+          secrets: secretValues(await loadKnowledge(resolve("knowledge"), { url: baseUrl }), process.env),
+          warn: onProgress,
+        })
+      : undefined;
+  let notRepaired: TriageResult[] | undefined;
 
   const tcDir = join(runDir, "testcases");
   const mdFiles = (await readdir(tcDir)).filter((f) => f.endsWith(".md"));
@@ -978,10 +1019,12 @@ export async function runAutomate(input: {
         maxRepair: cfg.maxRepair,
         onProgress,
         lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
+        triage: decider?.uses.has("repair-triage") ? makeTriage(decider) : undefined,
       });
       suite = result.bestSuite;
       validation = result.bestValidation;
       stoppedEarly = result.stoppedEarly;
+      notRepaired = result.notRepaired;
       onProgress(
         `automate — validation: ${Math.round(validation.greenRatio * 100)}% green${stoppedEarly ? " · stopped early (no progress)" : ""}`,
       );
@@ -1008,5 +1051,18 @@ export async function runAutomate(input: {
 
   const cost = router.ledger.report(); // L1-01: per-role cost + tokens for the codegen step(s)
   const budgetReport: BudgetReport = { used: budget.spent, max: budget.max };
-  return { runDir: runWriter.dir, specFiles, projectTestDir: ejected.projectTestDir, validation, stoppedEarly, cost, budget: budgetReport };
+  // Its own name: the run dir may already hold design's decider-shadow.json.
+  await writeShadowFile(runWriter.dir, decider, "decider-shadow-automate.json").catch(() =>
+    onProgress("decider — could not write decider-shadow-automate.json"),
+  );
+  return {
+    runDir: runWriter.dir,
+    specFiles,
+    projectTestDir: ejected.projectTestDir,
+    validation,
+    stoppedEarly,
+    cost,
+    budget: budgetReport,
+    ...deciderReportKeys(decider, notRepaired),
+  };
 }

@@ -21,6 +21,8 @@ import {
 } from "../documentarian/index.js";
 import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
 import { runRepairLoop } from "./repair-loop.js";
+import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
+import type { Decider } from "../decider/types.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
 import type { BrowserGateway, VerifiedElement } from "../browser/index.js";
@@ -96,6 +98,8 @@ export interface ExploreDeps {
   expectAuthenticated?: boolean;
   /** Session name (for the expired-session message). */
   sessionName?: string;
+  /** ADR-0022: the opt-in decision layer. Absent → every use point takes today's path. */
+  decider?: Decider;
 }
 
 export interface ExploreOutcome {
@@ -119,6 +123,8 @@ export interface ExploreOutcome {
   journeys?: JourneyCase[];
   /** #60: per-journey structured setup plans (undefined unless `setup` ran). */
   setupPlans?: SetupPlan[];
+  /** ADR-0022: failures repair-triage kept out of repair (absent unless something was). */
+  notRepaired?: TriageResult[];
 }
 
 /** Sprint 3: observe → identify → design → generateCode → validate ⇄ repair (bounded by maxRepair). */
@@ -388,7 +394,7 @@ export async function runExploreGraph(
     return suite;
   };
 
-  const { bestSuite, bestValidation, stoppedEarly, attempts } = await runRepairLoop({
+  const { bestSuite, bestValidation, stoppedEarly, attempts, notRepaired } = await runRepairLoop({
     generate: async (hint) => {
       const suite = await genAndWrite(hint);
       deps.onProgress?.(`generateCode — ${suite.files.length} spec files written`);
@@ -402,6 +408,7 @@ export async function runExploreGraph(
     },
     maxRepair: deps.maxRepair,
     onProgress: deps.onProgress,
+    triage: deps.decider?.uses.has("repair-triage") ? makeTriage(deps.decider) : undefined,
   });
 
   return {
@@ -420,5 +427,6 @@ export async function runExploreGraph(
     flowGraph,
     journeys,
     setupPlans,
+    ...(notRepaired ? { notRepaired } : {}),
   };
 }

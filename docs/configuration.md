@@ -33,10 +33,11 @@
   | `TYPESAFE_API_KEY` | — | **jev only** (required) |
   | `LAYA_API_KEY` | — | **laya only** — the bearer token `laya-serve` was started with |
   | `DECIDER_API_KEY` | — | **compat only** |
-  | `DECIDER_USES` | `repair-triage,coverage` | use points to enable; an unknown name is an error, not a silent no-op |
+  | `DECIDER_USES` | `repair-triage` (shadow mode: every use point) | use points to enable; `coverage` acts only when named here; an unknown name is an error, not a silent no-op |
   | `DECIDER_MIN_CONFIDENCE` | `0.75` | below it an answer is ignored and the current path runs |
   | `DECIDER_TIMEOUT_MS` | `10000` | per call, one retry on 429/5xx included |
   | `DECIDER_MAX_CALLS` | `200` | per-run ceiling on decisions — a retry on 429/5xx belongs to its decision (separate from the LLM call budget) |
+  | `DECIDER_SHADOW` | `0` | `1` = shadow mode: ask, record the answers in `runs/<id>/decider-shadow.json`, act on none (`--decider-shadow`); needs a provider |
 
   Each provider reads only its own address and key — jev the TypeSafe pair (`TYPESAFE_BASE_URL` + `TYPESAFE_API_KEY`), laya and compat `DECIDER_BASE_URL` + their own key — so a TypeSafe key is never sent to a laya or compat address, even one left in `.env`; and jev refuses any address outside `https://*.typesafe.ai` — a `TYPESAFE_BASE_URL` pointing at a laya-serve means `DECIDER=laya`. To reach TypeSafe on such a machine, set `CAIRN_TYPESAFE_BASE_URL` and `CAIRN_TYPESAFE_API_KEY` together: the `CAIRN_` names win, and the address without its key is an error, so the SDK's local token never travels to TypeSafe. `cairn doctor` shows the provider, **where the data goes**, and the latency of one real call. A misconfiguration (`jev` without a key, `laya`/`compat` without a URL, an unknown use) fails at start.
 - **Domain knowledge:** put `*.md` files in `./knowledge/` with a `url:` front-matter to inject credentials/validation rules into design.

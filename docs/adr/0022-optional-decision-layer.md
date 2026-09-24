@@ -42,6 +42,13 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    never softer: downgrade, never upgrade; exclude, never unblock. Below `DECIDER_MIN_CONFIDENCE` the answer is
    ignored and the current path runs. Safety rules (`guardrails.ts`, the crawler's destructive-link filter) are
    not optional and do not consult it. Each such guard has a test that goes red when the guard is removed.
+   **One exception, by design (spec §6.2): coverage.** `checklist_coverage` is a metric, not a gate — nothing
+   is blocked or unblocked by it — and there a deciding decider *replaces* the LLM judge's number, which can come
+   out higher. Its guard is different: the decider's number stands only when every checklist item is decided —
+   some case confidently covers it, or every case confidently does not. An item that no case confidently covers
+   and some case is unsure about, an unavailable call or an answer that is not a yes/no hands the whole score back
+   to the judge; and the score's comment names its source (`decider (laya): …`), so a reader never mistakes it
+   for the judge's.
 4. **It never sinks a run.** Every failure — network, timeout, 4xx/5xx, a state over the provider's limit, an
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.
@@ -86,8 +93,10 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    call is a Langfuse span `decider.<use>` under the active stage — provider, model, latency, questions, answers
    with their distributions, `fallback` and its reason — plus a `decider.<use>.confidence` score.
 9. **Evidence before defaults.** A use point enters in **shadow mode** first (`--decider-shadow`): the decider is
-   asked, its answer is recorded beside the current path's decision in `runs/<id>/decider-shadow.json` and
-   Langfuse, and *nothing* else in the run changes. A use point leaves shadow only on pilot evidence (agreement
+   asked, its answer is recorded beside the current path's decision in `runs/<id>/decider-shadow.json`
+   (`decider-shadow-automate.json` for `automate`, which reuses a design run's folder) and in Langfuse
+   (`decider.<use>.agreement`), and *nothing* else in the run changes — its calls are metered into a private
+   ledger, so even `report.json`'s cost is untouched. A use point leaves shadow only on pilot evidence (agreement
    ≥ 90 %, or ≥ 85 % hand-labelled precision for repair triage; fallbacks < 10 %). Use points that fail are
    removed from the default `DECIDER_USES`, or deleted.
 10. **No artifact-schema bump.** New `report.json` keys appear only under the opt-in flag. Bumping
@@ -128,17 +137,29 @@ changed the design.
     into fallbacks, but these figures are not a calibration.
 - **An unknown `model` id on laya auto-routes by detected language**, per its source. So the default model is
   `jev-latest` for every provider; `DECIDER_MODEL=multilingual` pins laya's multilingual checkpoint.
+- **Coverage on laya is not ready to act.** Five Ukrainian checklist items × three Ukrainian cases, truth known
+  (each of three cases covers one item): with the shipped question the multilingual checkpoint got 2 of 15 right
+  and answered **5 wrong at confidence ≥ 0.75** — the case about a wrong password "covered" password recovery
+  and log-out at 0.97–0.98, so the score came out 1.00 against a true 0.60. Three other shapes (the item in the
+  state, the question in Ukrainian, both) did no better: 3–4 of 15, up to 7 confident errors, or no confident
+  answer at all. The English checkpoint was never confident on these texts (every answer a fallback). Repair
+  triage on twelve labelled Playwright failures: 5–6 of 12 right, one confident answer — right — so nothing was
+  wrongly kept out of repair. Hence an active decider defaults to `repair-triage` alone; shadow mode asks every
+  use point, and `coverage` acts only when named in `DECIDER_USES`.
 
 ## Consequences
 
 - **A run without the flag is the run it was.** Same prompts, same calls, same files — pinned by tests.
-- **The decider is only ever a narrower gate.** At worst it costs time and fallbacks; it cannot turn a failure into
+- **The decider is only ever a narrower gate** — coverage aside, where it replaces a metric and says so (rule 3).
+  At worst it costs time and fallbacks; it cannot turn a failure into
   a pass, unblock a destructive action, or keep a failing test out of repair without a confident answer.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.
 - **The protocol has a single owner**, so a Jev wire change is one file and one test file.
-- **Configuration grows by eleven variables and one flag** (`--decider`) — seven `DECIDER*` settings, three
-  provider keys and TypeSafe's own `TYPESAFE_BASE_URL` — all `CAIRN_`-prefixable, all inert when `DECIDER` is off.
+- **Configuration grows by twelve variables and two flags** (`--decider`, `--decider-shadow`) — eight `DECIDER*`
+  settings, three provider keys and TypeSafe's own `TYPESAFE_BASE_URL` — all `CAIRN_`-prefixable, all inert when
+  `DECIDER` is off. `DECIDER_SHADOW` without a provider is an error: a pilot that silently collected nothing is
+  worse than a refusal.
   The `--help` snapshot changed on purpose.
 - **Confidence is a shape, not a promise.** Documentation never presents it as a probability of being right.
 - **Jev stays out of `docs/cost.md` and `npm run bench`** until the repository owner has read TypeSafe's terms on

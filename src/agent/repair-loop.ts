@@ -1,5 +1,6 @@
 import type { GeneratedSuite } from "../codegen/index.js";
 import type { ValidationReport } from "../validate/index.js";
+import type { TriageResult } from "../decider/uses/repair-triage.js";
 import { progressSnapshot, madeProgress } from "./progress.js";
 
 /** Clip a failure message so the repair hint stays compact (the cause is in the first lines). */
@@ -10,10 +11,15 @@ const clip = (s: string, n = 500): string => (s.length > n ? `${s.slice(0, n)}�
  * e.g. a strict-mode "resolved to N elements"). Feeding the cause, not just the name, is what lets
  * codegen actually fix it (add exact:true/.first()). Shared by the automate loop and the explore graph.
  */
-export function failedTestsHint(results: ValidationReport["results"]): string {
+export function failedTestsHint(results: ValidationReport["results"], triage?: ReadonlyMap<string, TriageResult>): string {
   return results
-    .filter((r) => r.status !== "passed")
-    .map((r) => (r.error ? `- ${r.test}: ${clip(r.error.trim())}` : `- ${r.test}`))
+    .filter((r) => r.status !== "passed" && !triage?.get(r.test)?.exclude)
+    .map((r) => {
+      // ADR-0022: a confident triage category travels with the test as a hint; absent → today's line.
+      const t = triage?.get(r.test);
+      const name = t ? `${r.test} [triage: ${t.category}]` : r.test;
+      return r.error ? `- ${name}: ${clip(r.error.trim())}` : `- ${name}`;
+    })
     .join("\n");
 }
 
@@ -27,6 +33,11 @@ export interface RepairLoopDeps {
   onProgress?: (event: string) => void;
   /** Optional: extra repair guidance from linting the FAILED suite (flaky-hardening, #57). Absent → no-op. */
   lint?: (suite: GeneratedSuite) => string;
+  /**
+   * Optional (ADR-0022 repair-triage): classify failing tests. A confident app-bug / env-or-session answer
+   * keeps the test out of the hint while it keeps failing that way; absent → the loop is exactly what it was.
+   */
+  triage?: (failed: ValidationReport["results"]) => Promise<TriageResult[]>;
 }
 
 export interface RepairLoopResult {
@@ -36,6 +47,8 @@ export interface RepairLoopResult {
   attempts: number;
   /** Stopped before maxRepair because an attempt made no progress (Box 2). */
   stoppedEarly: boolean;
+  /** Tests triage kept out of repair (likely an app bug or a broken environment). Absent when none. */
+  notRepaired?: TriageResult[];
 }
 
 /**
@@ -54,10 +67,47 @@ export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopRes
   let prevSnapshot = progressSnapshot(validation);
   let attempts = 0;
   let stoppedEarly = false;
+  // ADR-0022: a verdict holds while the test fails THE SAME WAY. Every repair regenerates the whole suite, so a
+  // test can pass, or fail for another reason — then it is asked about again. Keyed by test + error, and each
+  // failure is asked ONCE whatever came back: a confident verdict is kept, a doubt or a fallback leaves it to repair.
+  const asked = new Set<string>();
+  const verdicts = new Map<string, TriageResult>();
+  const excludedTests = new Set<string>();
+  const failure = (r: ValidationReport["results"][number]): string => `${r.test}\n${r.error ?? ""}`;
+  const failingIn = (v: ValidationReport): ValidationReport["results"] => v.results.filter((r) => r.status !== "passed");
+  const verdictsFor = (failing: ValidationReport["results"]): TriageResult[] => failing.flatMap((r) => verdicts.get(failure(r)) ?? []);
+  /** Ask about the failures not asked yet and remember the confident verdicts; returns the new exclusions. */
+  const ask = async (failing: ValidationReport["results"]): Promise<TriageResult[]> => {
+    const fresh = failing.filter((r) => !asked.has(failure(r)));
+    if (!deps.triage || fresh.length === 0) return [];
+    for (const r of fresh) asked.add(failure(r));
+    const answered = await deps.triage(fresh);
+    for (const t of answered) {
+      const r = fresh.find((f) => f.test === t.test);
+      if (r) verdicts.set(failure(r), t);
+      if (t.exclude) excludedTests.add(t.test);
+    }
+    return answered.filter((t) => t.exclude);
+  };
 
   while (bestGreen < 1 && attempts < deps.maxRepair) {
+    let triage: Map<string, TriageResult> | undefined;
+    if (deps.triage) {
+      const failing = failingIn(validation);
+      const newlyExcluded = await ask(failing);
+      if (newlyExcluded.length > 0) {
+        const names = newlyExcluded.map((t) => `${t.test} (${t.category})`).join(", ");
+        deps.onProgress?.(`repair — triage: left out of repair as a likely app bug / broken environment: ${names}`);
+      }
+      const known = verdictsFor(failing);
+      if (failing.length > 0 && known.filter((t) => t.exclude).length === failing.length) {
+        deps.onProgress?.(`repair — skipped: all ${failing.length} failing test(s) look like an app bug or a broken environment.`);
+        break; // before attempts += 1: nothing is left that repairing the code could fix
+      }
+      triage = new Map(known.map((t) => [t.test, t] as const));
+    }
     attempts += 1;
-    const failed = failedTestsHint(validation.results);
+    const failed = failedTestsHint(validation.results, triage);
     const lintFindings = deps.lint?.(suite) ?? ""; // lint the suite that produced this failing validation
     const hint = [failed, lintFindings].filter(Boolean).join("\n");
     deps.onProgress?.(`repair — attempt ${attempts}`);
@@ -80,5 +130,11 @@ export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopRes
     prevSnapshot = snap;
   }
 
-  return { bestSuite, bestValidation, attempts, stoppedEarly };
+  // The kept suite can be the last validation, which no loop head triaged: a test excluded earlier that still fails
+  // there — its error reworded by the regenerated suite — is asked once more, so it does not drop out of the report.
+  // A failure asked before is never asked again: a test that went into repair on a doubt is not reported as excluded.
+  await ask(failingIn(bestValidation).filter((r) => excludedTests.has(r.test)));
+  // Not repaired = the KEPT suite's failures that a confident triage excluded — a test that passed is not listed.
+  const notRepaired = verdictsFor(failingIn(bestValidation)).filter((t) => t.exclude);
+  return { bestSuite, bestValidation, attempts, stoppedEarly, ...(notRepaired.length ? { notRepaired } : {}) };
 }

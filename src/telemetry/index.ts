@@ -40,6 +40,8 @@ export interface Telemetry {
    * score (the lowest confidence among its answers). Absent when tracing is off.
    */
   recordDecision?: (d: DecisionTrace) => void;
+  /** ADR-0022 shadow mode: a numeric score on the active trace (`decider.<use>.agreement`). Absent when tracing is off. */
+  recordScore?: (name: string, value: number) => void;
   /**
    * Wraps `fn` in a root Langfuse span so that all nested LangChain callback-handler
    * generations are collected under ONE trace (rather than N separate traces). When
@@ -149,5 +151,14 @@ export async function initTelemetry(cfg: AppConfig): Promise<Telemetry> {
     }
   };
 
-  return { enabled: true, callbackHandler, client, shutdown, runInTrace, recordDecision };
+  const recordScore = (name: string, value: number): void => {
+    try {
+      const traceId = lfTracing.getActiveTraceId();
+      if (traceId) client.score.create({ traceId, name, value, dataType: "NUMERIC" });
+    } catch {
+      // tracing is best-effort — it must never touch the run
+    }
+  };
+
+  return { enabled: true, callbackHandler, client, shutdown, runInTrace, recordDecision, recordScore };
 }

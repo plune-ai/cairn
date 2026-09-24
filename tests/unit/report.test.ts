@@ -135,6 +135,56 @@ describe("renderReportMd", () => {
   });
 });
 
+describe("renderReportMd — decision layer sections (ADR-0022)", () => {
+  const base = {
+    runId: "r1",
+    url: "http://x/login",
+    backend: "lib",
+    profile: "anthropic",
+    pageSemantics: "Login form",
+    elements: [btn],
+    testCases: [],
+    validation: { results: [{ test: "TC-3", status: "failed" as const, error: "500" }], greenRatio: 0, flakyCount: 0 },
+  };
+
+  it("without a decider the report is byte-identical: no section, no mention", () => {
+    const md = renderReportMd(base);
+    expect(renderReportMd({ ...base, notRepaired: undefined, decider: undefined })).toBe(md);
+    expect(renderReportMd({ ...base, notRepaired: [] })).toBe(md);
+    expect(md).not.toMatch(/decision layer|not repaired/i);
+  });
+
+  it("lists the tests triage kept out of repair, so nobody mistakes them for a test problem", () => {
+    const md = renderReportMd({
+      ...base,
+      notRepaired: [{ test: "TC-3", category: "app-bug", confidence: 0.912, exclude: true }],
+    });
+    expect(md).toContain("## Not repaired — likely an app bug or a broken environment (1)");
+    expect(md).toContain("| TC-3 | app-bug | 0.91 |");
+  });
+
+  it("summarises the decider: provider, calls, and fallbacks grouped by use and reason", () => {
+    const md = renderReportMd({
+      ...base,
+      decider: {
+        provider: "laya",
+        model: "jev-latest",
+        calls: 5,
+        fallbacks: [
+          { use: "repair-triage", reason: "HTTP 500" },
+          { use: "repair-triage", reason: "HTTP 500" },
+          { use: "coverage", reason: "state is 1500 chars > 1200" },
+        ],
+      },
+    });
+    expect(md).toContain("## Decision layer");
+    expect(md).toContain("- **Provider:** laya · model jev-latest");
+    expect(md).toContain("- **Decisions:** 5 · **answered:** 2 · **fallbacks:** 3 (the current path ran instead)");
+    expect(md).toContain("  - repair-triage — HTTP 500 (×2)");
+    expect(md).toContain("  - coverage — state is 1500 chars > 1200 (×1)");
+  });
+});
+
 describe("renderApiReportMd (C1-04 / API-4, #134)", () => {
   const results: ApiCaseResult[] = [
     {
