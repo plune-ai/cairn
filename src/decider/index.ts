@@ -1,7 +1,7 @@
 import type { CostLedger } from "../llm/cost.js";
 import type { DecisionTrace, Telemetry } from "../telemetry/index.js";
 import { createEnvReader } from "../config/env.js";
-import { parseDeciderConfig } from "../config/index.js";
+import { parseDeciderConfig, TYPESAFE_HOST } from "../config/index.js";
 import { CAPS, checkCaps } from "./capabilities.js";
 import { postSystemOne, type HttpTarget } from "./client-http.js";
 import { guarded } from "./guarded.js";
@@ -32,7 +32,7 @@ export function dataDestination(baseUrl: string): { local: boolean; label: strin
   const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
   // A dotted quad only: `127.evil.com` is a DNS name like any other.
   if (host === "localhost" || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host)) return { local: true, label: "this machine (localhost)" };
-  if (host === "api.typesafe.ai") return { local: false, label: "TypeSafe cloud (api.typesafe.ai)" };
+  if (TYPESAFE_HOST.test(host)) return { local: false, label: `TypeSafe cloud (${host})` };
   return { local: false, label: `a remote server (${host})` };
 }
 
@@ -67,14 +67,8 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
     uses: new Set(cfg.uses),
     minConfidence: cfg.minConfidence,
     async decide(use, rawState, rawQuestions) {
-      const secrets = deps.secrets ?? [];
-      const state = redact(rawState, secrets);
-      const questions = (
-        secrets.length
-          ? Object.fromEntries(Object.entries<Question>(rawQuestions).map(([k, q]) => [k, redactQuestion(q, secrets)]))
-          : rawQuestions
-      ) as typeof rawQuestions;
-      const trace = { use, provider: cfg.provider, startTime: new Date(), state, questions, minConfidence: cfg.minConfidence };
+      // state/questions are filled only once scrubbed: a trace never carries the raw text.
+      const trace = { use, provider: cfg.provider, startTime: new Date(), state: "", questions: {} as unknown, minConfidence: cfg.minConfidence };
       const record = (t: DecisionTrace): void => {
         try {
           deps.telemetry?.recordDecision?.(t);
@@ -83,6 +77,15 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
         }
       };
       try {
+        // Inside the try: a scrubbing failure is a fallback like any other.
+        const secrets = deps.secrets ?? [];
+        const state = redact(rawState, secrets);
+        const questions = (
+          secrets.length
+            ? Object.fromEntries(Object.entries<Question>(rawQuestions).map(([k, q]) => [k, redactQuestion(q, secrets)]))
+            : rawQuestions
+        ) as typeof rawQuestions;
+        Object.assign(trace, { state, questions });
         checkCaps(caps, state, questions);
         const res = await guard.run((signal) => postSystemOne(target, state, questions, signal, deps.fetchFn));
         deps.ledger.record("decider", cfg.model, res.usage ?? estimateUsage(state, questions), caps.price);

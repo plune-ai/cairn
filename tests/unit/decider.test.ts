@@ -183,6 +183,24 @@ describe("makeDecider", () => {
     expect(JSON.stringify(traces[0]!.questions)).not.toContain("Sup3rS3cret!");
   });
 
+  it("a scrubbing failure is a recorded fallback (DeciderUnavailable) — and its trace carries no raw text", async () => {
+    const fetchFn = jevOk();
+    const traces: DecisionTrace[] = [];
+    const d = makeDecider(cfg(), {
+      ledger: new CostLedger(),
+      fetchFn,
+      secrets: ["Sup3rS3cret!"],
+      telemetry: { recordDecision: (t) => void traces.push(t) },
+    })!;
+    // A use-point bug: an option description that is not a string at runtime.
+    const broken = { type: "choice", instructions: "pick", options: { c1: undefined, c2: null } } as unknown as Question;
+    await expect(d.decide("coverage", "type Sup3rS3cret! into Password", { q: broken })).rejects.toBeInstanceOf(
+      DeciderUnavailable,
+    );
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(traces).toEqual([expect.objectContaining({ fallback: true, state: "", questions: {} })]);
+  });
+
   it("a tracer that throws never turns an answer into a fallback, nor escapes as another error", async () => {
     const ledger = new CostLedger();
     const boom = (): void => {
@@ -225,17 +243,38 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["Credentials: admin / Sup3rS3cret!", ["Sup3rS3cret!"]],
     ["Password: `Sup3rS3cret!` (the admin's)", ["Sup3rS3cret!"]],
     ["- Password (admin): Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["Password: Sup3rS3cret! for every test user", ["Sup3rS3cret!"]],
+    ["Password: Sup3rS3cret! - same on staging", ["Sup3rS3cret!"]],
+    ["Password: Sup3rS3cret! # admin", ["Sup3rS3cret!"]],
+    ["Password for the admin: Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["Stripe key: sk_test_4eC39HqLyjWD", ["sk_test_4eC39HqLyjWD"]],
+    ["Key: abcd-1234", ["abcd-1234"]],
+    ["License key: ABCD-EFGH-1234", ["ABCD-EFGH-1234"]],
+    ["Пароль адміністратора: Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["Тестовий пароль: Sup3rS3cret!", ["Sup3rS3cret!"]],
+    ["Токен доступу: tok-123456", ["tok-123456"]],
   ])("knowledge %j yields a scrubbable secret", (line, expected) => {
     const s = secretValues(line, {});
     for (const e of expected) expect(redact(`type ${e} into the field`, s)).toBe("type ‹redacted› into the field");
   });
 
   it.each([
-    ["Key pages: /checkout, /cart", "/checkout"],
-    ["Pass criteria: every field is filled", "every"],
-    ["Password rules: must contain a digit", "must"],
-  ])("knowledge %j does not damage ordinary text", (line, word) => {
-    expect(redact(`the ${word} step`, secretValues(line, {}))).toBe(`the ${word} step`);
+    "Key pages: /checkout, /cart",
+    "Pass criteria: every field is filled",
+    "Password rules: must contain a digit",
+    "OTP delivery: SMS, email",
+    "Admin login (see the password manager): open /login",
+    "Token lifetime: 3600 seconds",
+    "Правила пароля: мінімум 8 символів",
+    "Password: none",
+  ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
+    expect(secretValues(line, {})).toEqual([]);
+  });
+
+  it("a prose value keeps its words: only the value as a whole is scrubbed", () => {
+    const s = secretValues("Password: from env E2E_PASSWORD", {});
+    expect(s).toEqual(["from env E2E_PASSWORD"]);
+    expect(redact("the value from the form", s)).toBe("the value from the form");
   });
 
   it("env: short secrets count, the working directory and flags do not", () => {
@@ -248,9 +287,26 @@ describe("secretValues / redact (spec §3.7)", () => {
       ENABLE_TOKEN: "true",
       TOKEN_TTL: "3600",
       LANGFUSE_PUBLIC_KEY: "pk-lf-123456",
+      STRIPE_PUBLISHABLE_KEY: "pk_test_123456",
+      KEYBOARD_LAYOUT: "dvorak-uk",
     });
     expect(s).toEqual(expect.arrayContaining(["Test123", "hunter2x"]));
-    for (const v of ["/home/qa/project", "/home/qa", "enabled", "true", "3600", "pk-lf-123456"]) expect(s).not.toContain(v);
+    for (const v of ["/home/qa/project", "/home/qa", "enabled", "true", "3600", "pk-lf-123456", "pk_test_123456", "dvorak-uk"]) {
+      expect(s).not.toContain(v);
+    }
+  });
+
+  it("env: any *_KEY and any name carrying SECRET or PASSWORD", () => {
+    const env = {
+      STRIPE_KEY: "sk_live_111111",
+      APP_KEY: "base64:222222",
+      ENCRYPTION_KEY: "enc-333333",
+      SERVICE_ROLE_KEY: "srk-444444",
+      OPENAI_KEY: "sk-555555",
+      SECRET_KEY_BASE: "skb-666666",
+      PASSWORD_HASH_PEPPER: "pepper-777777",
+    };
+    expect(secretValues("", env).sort()).toEqual(Object.values(env).sort());
   });
 
   it("redacts every occurrence, longest secret first", () => {

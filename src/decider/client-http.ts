@@ -76,7 +76,9 @@ function fromWire(provider: DeciderProvider, key: string, q: Question, raw: unkn
   if (q.type === "noul" && NOUL_AS_CHOICE.has(provider)) {
     const a = WireChoice.safeParse(raw);
     const p = a.success && (a.data.choice === "a" || a.data.choice === "b") ? a.data.probabilities.a : undefined;
-    if (p === undefined) return bad("expected the two-option choice between 'a' and 'b'");
+    if (!a.success || p === undefined) return bad("expected the two-option choice between 'a' and 'b'");
+    // The pick and its probability must agree: {choice: "b", probabilities: {a: 0.9}} is a broken answer.
+    if (p !== 0.5 && p > 0.5 !== (a.data.choice === "a")) return bad(`the pick '${a.data.choice}' contradicts p(a) = ${p}`);
     return { type: "noul", value: p >= 0.5, p, confidence: noulConfidence(p) };
   }
   switch (q.type) {

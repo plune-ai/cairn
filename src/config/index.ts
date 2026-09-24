@@ -163,6 +163,9 @@ function envNumber(
   return n;
 }
 
+/** TypeSafe's own hosts — the only addresses `DECIDER=jev` (and its key) may go to. */
+export const TYPESAFE_HOST = /(?:^|\.)typesafe\.ai$/;
+
 /**
  * ADR-0022: the opt-in decision layer. undefined unless DECIDER names a provider — a key alone enables
  * nothing (spec §3.2). Each provider reads ONLY its own key, so a TypeSafe cloud key is never sent to a
@@ -188,12 +191,21 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
     );
   }
   if (!/^https?:\/\//i.test(baseUrl) || !URL.canParse(baseUrl)) {
-    throw new Error(`Invalid ${urlVar}='${baseUrl}' — expected an http(s) URL.`);
+    // Echoed for typos, but never a credential: an unparsable `https://u:p#ss@host` still carries one.
+    throw new Error(`Invalid ${urlVar}='${baseUrl.replace(/^([^:]*:\/*).*@/, "$1***@")}' — expected an http(s) URL.`);
   }
   const url = new URL(baseUrl);
   if (url.username || url.password) {
     // Not echoed: the URL carries a credential.
     throw new Error(`Invalid ${urlVar}: a user:password in the URL is not supported — put the key in ${keyVar}.`);
+  }
+  // jev means TypeSafe's cloud: its key and its caps. Any other address — a laya-serve the TypeSafe SDK was
+  // pointed at, a proxy — would receive the TypeSafe key and be read with Jev's 60k caps, which laya cuts silently.
+  if (provider === "jev" && (url.protocol !== "https:" || !TYPESAFE_HOST.test(url.hostname))) {
+    throw new Error(
+      `DECIDER=jev talks only to TypeSafe (https://*.typesafe.ai), but ${urlVar} points to ${url.host}. ` +
+        "For a Laya server use DECIDER=laya with DECIDER_BASE_URL; for another Jev-compatible server, DECIDER=compat.",
+    );
   }
 
   const apiKey = read(keyVar)?.trim() || undefined;

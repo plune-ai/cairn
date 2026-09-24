@@ -29,6 +29,19 @@ describe("checkCaps — refuse what a provider cannot answer faithfully, before 
     expect(() => checkCaps(CAPS.jev, "s", { q })).not.toThrow();
   });
 
+  it("laya: one option over 100 chars is refused even inside a short question (laya cuts each option at 48 tokens)", () => {
+    const at = (n: number): Question => ({ type: "noul", instructions: "Is it?", criteria: { true: "t".repeat(n), false: "no" } });
+    expect(() => checkCaps(CAPS.laya, "s", { q: at(100) })).not.toThrow();
+    expect(() => checkCaps(CAPS.laya, "s", { q: at(101) })).toThrow("question 'q': an option is 101 chars > 100");
+    expect(() => checkCaps(CAPS.compat, "s", { q: at(101) })).toThrow(DeciderUnavailable);
+    expect(() => checkCaps(CAPS.jev, "s", { q: at(370) })).not.toThrow();
+    // A choice option counts as laya renders it — "label: description"; a score level on its own.
+    const choice: Question = { type: "choice", instructions: "pick", options: { label: "d".repeat(94), other: null } };
+    expect(() => checkCaps(CAPS.laya, "s", { q: choice })).toThrow("an option is 101 chars > 100");
+    const score: Question = { type: "score", instructions: "rate", levels: ["low", "h".repeat(101)] };
+    expect(() => checkCaps(CAPS.laya, "s", { q: score })).toThrow("an option is 101 chars > 100");
+  });
+
   it("jev: 60k chars of input pass, more is refused", () => {
     expect(() => checkCaps(CAPS.jev, "x".repeat(60_000 - 11), { q: yesNo })).not.toThrow();
     expect(() => checkCaps(CAPS.jev, "x".repeat(60_001 - 11), { q: yesNo })).toThrow(DeciderUnavailable);
@@ -63,7 +76,13 @@ describe("checkCaps — refuse what a provider cannot answer faithfully, before 
   });
 
   it("compat gets laya's conservative caps (unknown server) and no price", () => {
-    expect(CAPS.compat).toMatchObject({ maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 });
+    expect(CAPS.compat).toMatchObject({
+      maxInputChars: 1200,
+      maxQuestionChars: 400,
+      maxOptionChars: 100,
+      maxOptions: 20,
+      maxQuestionsPerCall: 16,
+    });
     expect(CAPS.compat.price).toBeUndefined();
     expect(CAPS.laya.price).toEqual({ inputPer1M: 0, outputPer1M: 0 });
     expect(CAPS.jev.price).toEqual({ inputPer1M: 0.042, outputPer1M: 0 });

@@ -69,8 +69,18 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     // The .env still holds a laya setup; switching to jev must not send the TypeSafe key there.
     const env = { DECIDER: "jev", TYPESAFE_API_KEY: "cloud", DECIDER_BASE_URL: "http://127.0.0.1:8000" };
     expect(parse(env)?.baseUrl).toBe("https://api.typesafe.ai");
-    expect(parse({ ...env, TYPESAFE_BASE_URL: "https://eu.typesafe.example" })?.baseUrl).toBe("https://eu.typesafe.example");
-    expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "http://127.0.0.1:9000" })?.baseUrl).toBe("http://127.0.0.1:9000");
+    expect(parse({ ...env, TYPESAFE_BASE_URL: "https://eu.api.typesafe.ai" })?.baseUrl).toBe("https://eu.api.typesafe.ai");
+    expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://typesafe.ai" })?.baseUrl).toBe("https://typesafe.ai");
+  });
+
+  it("jev refuses any address that is not https://*.typesafe.ai — the TypeSafe key never reaches another server", () => {
+    // This machine's TypeSafe SDK setup points TYPESAFE_BASE_URL at laya-serve, while the real key sits in .env.
+    const env = { DECIDER: "jev", CAIRN_TYPESAFE_API_KEY: "cloud-key", TYPESAFE_BASE_URL: "http://127.0.0.1:8000" };
+    expect(() => parse(env)).toThrow(/DECIDER=jev talks only to TypeSafe.*127\.0\.0\.1:8000.*DECIDER=laya/);
+    for (const u of ["http://api.typesafe.ai", "https://typesafe.ai.evil.test", "https://evil-typesafe.ai", "https://gpu-box.lan"]) {
+      expect(() => parse({ ...env, CAIRN_TYPESAFE_BASE_URL: u }), u).toThrow(/talks only to TypeSafe/);
+    }
+    expect(() => parse(env)).not.toThrow(/cloud-key/);
   });
 
   it("laya and compat never read TYPESAFE_BASE_URL", () => {
@@ -86,6 +96,15 @@ describe("decider config — opt-in only (ADR-0022)", () => {
       /TYPESAFE_BASE_URL/,
     );
   });
+
+  it.each(["https://qa:p#ss@gpu-box:8000", "ftp://u:p4ss@host", "http:/u:p4ss@host"])(
+    "an invalid URL %j is echoed with its credential masked",
+    (u) => {
+      const run = () => parse({ DECIDER: "compat", DECIDER_BASE_URL: u });
+      expect(run).toThrow(/Invalid DECIDER_BASE_URL='.*\*\*\*@/);
+      expect(run).not.toThrow(/p#ss|p4ss/);
+    },
+  );
 
   it("every variable reads with the CAIRN_ prefix too", () => {
     const d = parse({

@@ -142,6 +142,11 @@ describe("postSystemOne — response mapping", () => {
       { n: { type: "choice", choice: "zzz", probabilities: { a: 0.9 }, confidence: 0.8 } },
       { n: noul },
     ],
+    [
+      "laya's two-option form picking 'b' while p(a) = 0.9",
+      { n: { type: "choice", choice: "b", probabilities: { a: 0.9, b: 0.1 }, confidence: 0.8 } },
+      { n: noul },
+    ],
   ])("rejects %s → DeciderUnavailable (an untrusted answer is never acted on)", async (_label, answers, qs) => {
     const target = "n" in qs && _label.startsWith("laya") ? laya : jev;
     await expect(

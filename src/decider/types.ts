@@ -48,6 +48,8 @@ export interface DeciderCaps {
   maxInputChars: number;
   /** One question's own text (instructions + options): laya cuts that part of its input separately. */
   maxQuestionChars: number;
+  /** One option as laya renders it (`label: description`, a criterion, a level): laya cuts each at 48 tokens. */
+  maxOptionChars: number;
   maxOptions: number;
   maxQuestionsPerCall: number;
   /** USD per 1M tokens; undefined → unknown, the cost line shows n/a. */

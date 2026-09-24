@@ -13,15 +13,36 @@ export const CAPS: Record<DeciderProvider, DeciderCaps> = {
   jev: {
     maxInputChars: 60_000,
     maxQuestionChars: 60_000,
+    maxOptionChars: 60_000,
     maxOptions: 255,
     maxQuestionsPerCall: 64,
     price: { inputPer1M: 0.042, outputPer1M: 0 },
   },
-  // 1 200 chars stay under 512 tokens even at 2.5 chars/token; a 400-char question under its 192-token part.
+  // 1 200 chars stay under 512 tokens even at 2.5 chars/token; a 400-char question under its 192-token part;
+  // a 100-char option under its 48 tokens.
   // ponytail: one cap for both laya checkpoints (the 512-token english one binds); split per checkpoint if the pilot needs room.
-  laya: { maxInputChars: 1_200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16, price: { inputPer1M: 0, outputPer1M: 0 } },
-  compat: { maxInputChars: 1_200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
+  laya: {
+    maxInputChars: 1_200,
+    maxQuestionChars: 400,
+    maxOptionChars: 100,
+    maxOptions: 20,
+    maxQuestionsPerCall: 16,
+    price: { inputPer1M: 0, outputPer1M: 0 },
+  },
+  compat: { maxInputChars: 1_200, maxQuestionChars: 400, maxOptionChars: 100, maxOptions: 20, maxQuestionsPerCall: 16 },
 };
+
+/** Each option as laya renders it into its input: `label: description`, a noul criterion, a score level. */
+function optionTexts(q: Question): string[] {
+  switch (q.type) {
+    case "noul":
+      return [q.criteria.true, q.criteria.false];
+    case "choice":
+      return Object.entries(q.options).map(([label, d]) => (d ? `${label}: ${d}` : label));
+    case "score":
+      return q.levels;
+  }
+}
 
 /** The text a question adds to the model's input: instructions plus every option's label and description. */
 export function questionChars(q: Question): number {
@@ -44,6 +65,10 @@ export function checkCaps(caps: DeciderCaps, state: string, questions: Record<st
   for (const [key, q] of Object.entries(questions)) {
     const chars = questionChars(q);
     if (chars > caps.maxQuestionChars) throw new DeciderUnavailable(`question '${key}' is ${chars} chars > ${caps.maxQuestionChars}`);
+    const option = optionTexts(q).find((t) => t.length > caps.maxOptionChars);
+    if (option !== undefined) {
+      throw new DeciderUnavailable(`question '${key}': an option is ${option.length} chars > ${caps.maxOptionChars}`);
+    }
     longest = Math.max(longest, chars);
     if (q.type === "choice") {
       const k = Object.keys(q.options).length;

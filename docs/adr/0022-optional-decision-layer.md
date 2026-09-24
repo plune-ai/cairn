@@ -46,7 +46,7 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.
 5. **Bounded before it is sent.** Caps — the state together with its longest question, one question's own text,
-   options per choice, questions per call — are checked *before* any request; one timeout covers the whole call;
+   one option's text, options per choice, questions per call — are checked *before* any request; one timeout covers the whole call;
    exactly one retry on 429/5xx; a per-run ceiling on decisions (`DECIDER_MAX_CALLS`; a retry belongs to its
    decision). Decider calls are not charged to the LLM `CallBudget` — they have their own ceiling.
 6. **The data stays where the user put it.**
@@ -54,13 +54,19 @@ only make a result stricter, falls back silently on any failure, and is bounded 
      `TYPESAFE_BASE_URL` (default `https://api.typesafe.ai`) + `TYPESAFE_API_KEY` (required); `laya` →
      `DECIDER_BASE_URL` + `LAYA_API_KEY` (the server's own variable); `compat` → `DECIDER_BASE_URL` +
      `DECIDER_API_KEY`. A TypeSafe key is never sent to a laya or compat address — not even one left in `.env`
-     when `--decider jev` is tried for a single run. A URL carrying `user:password` is refused.
+     when `--decider jev` is tried for a single run. And `jev` accepts only an `https://*.typesafe.ai` address:
+     the TypeSafe SDK's variable may point at a laya-serve (this project's own machine does), and `jev` there
+     would hand it the TypeSafe key and read it with Jev's caps, which laya cuts silently. A URL carrying
+     `user:password` is refused, and an invalid URL is echoed with its credential masked.
    - The first decider of a process whose base URL is not loopback prints one line saying where the data goes
      and recommending `laya` for apps behind a login; `cairn doctor` prints the destination explicitly.
    - A state never contains knowledge files, `storageState`, screenshots or env values — Cairn never puts them
      there — and every state and question text is additionally **scrubbed**, best-effort, of the values the run's
      knowledge labels as secrets and of secret environment variables, because a designed case can *echo* a
-     credential it read in a knowledge file. Option labels are the answer contract and are not rewritten.
+     credential it read in a knowledge file. Option labels are the answer contract and are not rewritten. The
+     heuristic takes a label's *head* word ("Admin password", "Stripe key", "Пароль адміністратора" hold a
+     secret; "Password rules", "OTP delivery", "Правила пароля" only talk about one), because what it scrubs by
+     mistake still goes out, damaged. A scrubbing failure is a fallback like any other.
    - A failed request is reported by its error name and cause code, never by its message: `fetch` quotes header
      values and URLs in its messages.
 7. **The wire format lives in one file.** `client-http.ts` is the only code that knows Jev's JSON. Cairn's own
@@ -101,8 +107,9 @@ changed the design.
     answers, from the part it read, wrongly. Its source shows why: each question is encoded on its own as
     `[question + options] [state]`, the question part is cut at 192 tokens (each option at 48), and the state
     gets what is left. Hence Cairn enforces the caps before the request: `laya` and `compat` take at most
-    1 200 characters of state + question (under 512 tokens even at 2.5 characters per token) and 400 characters
-    of question text;
+    1 200 characters of state + question (under 512 tokens even at 2.5 characters per token), 400 characters
+    of question text and 100 characters per option (`label: description`, a criterion, a level) — a 370-character
+    criterion measured 79 tokens and was cut to 48;
   - `noul` is **confidently wrong** on some phrasings (p = 0.89–0.94 on the wrong side, even with descriptive
     criteria) — a confident error passes any threshold;
   - the same judgment asked as a two-option `choice` with descriptive criteria errs with **low confidence**

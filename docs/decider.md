@@ -22,21 +22,25 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 | | `jev` | `laya` | `compat` |
 |---|---|---|---|
 | What | TypeSafe's cloud API | Convai's open model, on your machine | any other server speaking Jev's `POST /v1/systemone` |
-| Data goes to | TypeSafe (`api.typesafe.ai`, or where `TYPESAFE_BASE_URL` points) | this machine | wherever `DECIDER_BASE_URL` points |
-| Address | `TYPESAFE_BASE_URL` (default `https://api.typesafe.ai`) | `DECIDER_BASE_URL` (required) | `DECIDER_BASE_URL` (required) |
+| Data goes to | TypeSafe (`api.typesafe.ai`) | this machine | wherever `DECIDER_BASE_URL` points |
+| Address | `TYPESAFE_BASE_URL` (default `https://api.typesafe.ai`; only an `https://*.typesafe.ai` address) | `DECIDER_BASE_URL` (required) | `DECIDER_BASE_URL` (required) |
 | Key | `TYPESAFE_API_KEY` (required) | `LAYA_API_KEY` (if the server wants one) | `DECIDER_API_KEY` (optional) |
-| Input Cairn sends at most | 60 000 characters: the state + one question | 1 200 characters: the state + one question (a question alone ≤ 400) | as laya |
+| Input Cairn sends at most | 60 000 characters: the state + one question | 1 200 characters: the state + one question (a question alone ≤ 400, one answer option ≤ 100) | as laya |
 
 **Where the data goes matters.** With `jev`, fragments of the page's accessibility tree, the text of test cases
 and the error messages of failing tests leave your machine. For an application behind a login, prefer `laya`.
 Cairn prints one line when a decider's data leaves the machine, and `cairn doctor` spells out the destination.
 Each provider reads only its own address and key, so switching `--decider laya` to `--decider jev` never sends
-your TypeSafe key to the laya address in your `.env`.
+your TypeSafe key to the laya address in your `.env`. And `jev` talks to TypeSafe only: if your `TYPESAFE_BASE_URL`
+points at a laya-serve (the TypeSafe SDK can be set up that way), `--decider jev` stops with an error — use
+`--decider laya` for that server.
 
 Cairn never sends knowledge files, session state, screenshots or environment values. On top of that it scrubs,
-**best-effort**, the values your knowledge files label as secrets (`Password:`, `Token:`, `API key:`, `Пароль:`, …)
-and your secret environment variables (`*_PASSWORD`, `*_TOKEN`, `*_API_KEY`, …) out of every state and question it
-sends. A secret that nothing labels cannot be recognised — keep such values out of case texts.
+**best-effort**, the values your knowledge files label as secrets and your secret environment variables
+(`*_PASSWORD`, `*_TOKEN`, `*_KEY` except public keys, anything with `SECRET`, …) out of every state and question it
+sends. A label counts when it names the secret itself — `Password:`, `Admin password:`, `Stripe key:`, `Пароль
+адміністратора:` — not when it talks about one (`Password rules:`, `Правила пароля:`). A secret that nothing labels
+cannot be recognised — keep such values out of case texts, or write each alone after its label.
 
 ## Running Laya locally
 
@@ -56,9 +60,10 @@ DECIDER=laya DECIDER_BASE_URL=http://127.0.0.1:8000 LAYA_API_KEY=<same token> ca
 
 Cairn never starts Laya or downloads its weights. Laya picks a checkpoint by the language of the text unless you
 pin one: for an application whose texts are not English, set `DECIDER_MODEL=multilingual`. Laya's context is
-short: it reads each question together with the state, cuts the question part at 192 tokens and the whole at 512
-(English checkpoint) or 1 024 (multilingual) — silently, answering from what it read. So Cairn counts the state
-and the question together and refuses what would not fit: a longer input is a fallback, never a truncation.
+short: it reads each question together with the state, cuts each answer option at 48 tokens, the question part
+at 192 and the whole at 512 (English checkpoint) or 1 024 (multilingual) — silently, answering from what it read.
+So Cairn counts the state and the question together, checks every option on its own, and refuses what would not
+fit: a longer input is a fallback, never a truncation.
 
 ## Configuration
 
