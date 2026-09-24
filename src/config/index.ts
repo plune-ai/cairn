@@ -238,6 +238,10 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
       throw new Error(`Unknown DECIDER_USES entry '${u}' (supported in this version: ${DECIDER_USES.join(", ")}).`);
     }
   }
+  // Spec §6.6 step 1: healing starts from triage's locator verdict — without triage it could never fire.
+  if (uses.includes("locator-heal") && !uses.includes("repair-triage")) {
+    throw new Error("DECIDER_USES: locator-heal needs repair-triage — it heals only what triage calls a locator failure.");
+  }
 
   return {
     provider,

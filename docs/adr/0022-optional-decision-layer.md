@@ -49,6 +49,15 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    and some case is unsure about, an unavailable call or an answer that is not a yes/no hands the whole score back
    to the judge; and the score's comment names its source (`decider (laya): …`), so a reader never mistakes it
    for the judge's.
+   **A second, bounded one (spec §6.6): `locator-heal` proposes.** For a failure triage confidently called a
+   locator failure, it offers the repair a replacement locator. Code chooses the candidates first: the start page's
+   elements of the same or a compatible role, never one the crawler's destructive-link filter or `isDeletionIntent`
+   refuses (both match English words only), so the decider picks among what those filters let through or answers
+   `none-of-these`. A pick counts only when the
+   browser matches it exactly once, and it is a hint: the repair still writes the code and the next validation
+   judges it. A wrong pick can still let a test pass while it checks another element. So `locator-heal` is off
+   unless named, and every proposal behind the kept suite is listed in the report (*Locators healed*): no replacement
+   is silent.
 4. **It never sinks a run.** Every failure — network, timeout, 4xx/5xx, a state over the provider's limit, an
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.
@@ -146,6 +155,20 @@ changed the design.
   triage on twelve labelled Playwright failures: 5–6 of 12 right, one confident answer — right — so nothing was
   wrongly kept out of repair. Hence an active decider defaults to `repair-triage` alone; shadow mode asks every
   use point, and `coverage` acts only when named in `DECIDER_USES`.
+- **Locator healing on laya is not ready to act either.** This is one case, not a pilot: a login button renamed from
+  `Log in` to `Sign In`, with the test's locator still asking for `Log in`.
+  - **Triage.** Until the runner kept every error (#184), triage read only `Test timeout of 30000ms exceeded.`
+    The multilingual checkpoint answered `timing` at 0.92 (English: 0.14), which is what that line says. `timing`
+    is repairable, so nothing was kept out of repair. The heal, which needs a locator category and the locator
+    from the error, had nothing to work with. With the call log in the error, both checkpoints answer
+    `locator-missing`, at 0.30 (multilingual) and 0.05 (English): right, and below the default 0.75.
+  - **The pick.** Offered the page's `Sign In` button, the shipped question got `none-of-these` from both
+    checkpoints: 0.66 (multilingual) and 0.01 (English), and 0.87 and 0.38 with a `Create account` button beside
+    it. Two other wordings found the button once each, at 0.03 and 0.15.
+  - **What it never did** was pick the other button. With the element gone (a locator for a button the page does
+    not have), all three wordings on both checkpoints answered `none-of-these`, at 0.57–1.00. Here laya declined
+    rather than guessed. A decline is today's behaviour, and a pick still has to match exactly once on the page.
+  - Hence `locator-heal`, like `coverage`, acts only when named in `DECIDER_USES`.
 - **Latency on a CPU** (no GPU; the same twelve triage questions, sent together as a failing suite sends them, so
   each waits for the others): the multilingual checkpoint 0.7 s at the median and 1.2 s at p95, the English one
   2.2 s and 3.6 s; one question alone, 0.1 s (multilingual) and 0.3 s (English). An earlier run on the same machine took 3.3 s and 4.6 s,
@@ -156,9 +179,11 @@ changed the design.
 ## Consequences
 
 - **A run without the flag is the run it was.** Same prompts, same calls, same files — pinned by tests.
-- **The decider is only ever a narrower gate** — coverage aside, where it replaces a metric and says so (rule 3).
-  At worst it costs time and fallbacks; it cannot turn a failure into
-  a pass, unblock a destructive action, or keep a failing test out of repair without a confident answer.
+- **The decider is only ever a narrower gate**, with two exceptions (rule 3). Coverage replaces a metric and says
+  so. `locator-heal` hands the repair a verified locator and lists it, because a wrong pick can let a test pass
+  while it checks another element. Otherwise the decider's worst case is time and fallbacks. It cannot turn a
+  failure into a pass by itself: every pass is a validation's. It cannot unblock a destructive action,
+  and it cannot keep a failing test out of repair without a confident answer.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.
 - **The protocol has a single owner**, so a Jev wire change is one file and one test file.
@@ -193,5 +218,10 @@ changed the design.
 1. *Wire format* — verified, above. 2. *A ready laya server* — `laya-serve`, above. 3. *Decider tokens* — from
 `usage`; a length-based estimate only when a server omits it. 4. *`--decider` in the GitHub Action* — not in v1;
 env is enough (`action.yml` unchanged). 5. *Publishing Jev results* — the owner's call; nothing is published.
-6. *Failure-time page snapshot for `locator-heal`* — to be checked when that use point lands. 7. *POM stability
-for deterministic patches* — a `locator-heal` v2 question; v1 only proposes.
+6. *Failure-time page snapshot for `locator-heal`* — it exists (checked on Playwright 1.61). The JSON reporter
+attaches `error-context` (`text/markdown`) to a failed result. The file holds the error and a `# Page snapshot`: the
+ARIA snapshot at the moment of failure, in the form `parseAriaSnapshot` reads. v1 re-observes the start page
+instead. The v2 path is to take the candidates from that snapshot, which also reaches a locator met mid-scenario;
+it is filed, not built. v2 must also set `outputDir`: `runSpecs` sets none, so the file lands in `test-results/`
+beside the nearest `package.json`, and every run shares and clears that folder. 7. *POM stability for
+deterministic patches* — a `locator-heal` v2 question; v1 only proposes.

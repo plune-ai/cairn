@@ -133,15 +133,17 @@ describe("MCP explore/design tools (#49)", () => {
     const { deps } = makeDeps();
     const decider = { provider: "laya", model: "multilingual", calls: 2, fallbacks: [] };
     const notRepaired = [{ test: "x", category: "app-bug", confidence: 0.9, exclude: true }];
+    const healed = [{ test: "y", from: "getByRole('button', { name: 'Sign' })", to: "getByRole('button', { name: 'Sign in', exact: true })", confidence: 0.9 }];
     const base = deps.runAutomate;
-    deps.runAutomate = async (input) => ({ ...(await base(input)), decider, notRepaired }) as unknown as AutomateResult;
-    expect(await automateTool({ run: "runs/r1", validate: true, decider: "laya" }, deps)).toMatchObject({ decider, notRepaired });
+    deps.runAutomate = async (input) => ({ ...(await base(input)), decider, notRepaired, healed }) as unknown as AutomateResult;
+    expect(await automateTool({ run: "runs/r1", validate: true, decider: "laya" }, deps)).toMatchObject({ decider, notRepaired, healed });
   });
 
-  it("without a decider the automate result has neither key", async () => {
+  it("without a decider the automate result has none of its keys", async () => {
     const r = await automateTool({ run: "runs/r1" }, makeDeps().deps);
     expect(r).not.toHaveProperty("decider");
     expect(r).not.toHaveProperty("notRepaired");
+    expect(r).not.toHaveProperty("healed");
   });
 
   it("invalid input (missing url) → clean validation failure", () => {

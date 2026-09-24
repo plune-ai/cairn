@@ -160,15 +160,19 @@ describe("decider config — opt-in only (ADR-0022)", () => {
   it("DECIDER_USES default: repair-triage alone when active, every use point in shadow mode (it acts on nothing)", () => {
     const env = { DECIDER: "laya", DECIDER_BASE_URL: "http://127.0.0.1:8000" };
     expect(parse(env)?.uses).toEqual(["repair-triage"]);
-    expect(parse({ ...env, DECIDER_SHADOW: "1" })?.uses).toEqual(["repair-triage", "coverage"]);
+    expect(parse({ ...env, DECIDER_SHADOW: "1" })?.uses).toEqual(["repair-triage", "coverage", "locator-heal"]);
     expect(parse({ ...env, DECIDER_USES: "coverage" })?.uses).toEqual(["coverage"]); // an explicit list is the list
     expect(parse({ ...env, DECIDER_SHADOW: "1", DECIDER_USES: "coverage" })?.uses).toEqual(["coverage"]);
+    expect(parse({ ...env, DECIDER_USES: "repair-triage,locator-heal" })?.uses).toEqual(["repair-triage", "locator-heal"]);
   });
 
   it.each([
     [{ DECIDER: "gpt" }, /Invalid DECIDER='gpt'/],
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_USES: "repair-traige" }, /Unknown DECIDER_USES entry 'repair-traige'/],
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_USES: "judge" }, /supported in this version/],
+    // spec §6.6 step 1: healing starts from triage's locator verdict — alone it could never fire
+    [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_USES: "locator-heal" }, /locator-heal needs repair-triage/],
+    [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_USES: "coverage,locator-heal" }, /locator-heal needs repair-triage/],
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_MIN_CONFIDENCE: "1.5" }, /DECIDER_MIN_CONFIDENCE/],
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_MIN_CONFIDENCE: "high" }, /DECIDER_MIN_CONFIDENCE/],
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_TIMEOUT_MS: "0" }, /DECIDER_TIMEOUT_MS/],

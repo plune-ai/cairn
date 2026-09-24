@@ -10,7 +10,7 @@ export const DECIDER_PROVIDERS = ["jev", "laya", "compat"] as const;
 export type DeciderProvider = (typeof DECIDER_PROVIDERS)[number];
 
 /** Use points `DECIDER_USES` accepts — nothing else (a typo must not look enabled). */
-export const DECIDER_USES = ["repair-triage", "coverage"] as const;
+export const DECIDER_USES = ["repair-triage", "coverage", "locator-heal"] as const;
 export type DeciderUse = (typeof DECIDER_USES)[number];
 
 export type Question =

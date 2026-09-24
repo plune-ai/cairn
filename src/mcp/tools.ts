@@ -178,6 +178,7 @@ export interface AutomateToolResult {
   /** ADR-0022: automate writes no report, so its result carries the decision layer (absent without one). */
   decider?: AutomateResult["decider"];
   notRepaired?: AutomateResult["notRepaired"];
+  healed?: AutomateResult["healed"];
 }
 
 export async function automateTool(input: AutomateInput, deps: ToolDeps = defaultDeps): Promise<AutomateToolResult> {
@@ -198,5 +199,6 @@ export async function automateTool(input: AutomateInput, deps: ToolDeps = defaul
     cost: r.cost,
     ...(r.decider ? { decider: r.decider } : {}),
     ...(r.notRepaired?.length ? { notRepaired: r.notRepaired } : {}),
+    ...(r.healed?.length ? { healed: r.healed } : {}),
   };
 }

@@ -33,7 +33,7 @@
   | `TYPESAFE_API_KEY` | — | **jev only** (required) |
   | `LAYA_API_KEY` | — | **laya only** — the bearer token `laya-serve` was started with |
   | `DECIDER_API_KEY` | — | **compat only** |
-  | `DECIDER_USES` | `repair-triage` (shadow mode: every use point) | use points to enable; `coverage` acts only when named here; an unknown name is an error, not a silent no-op |
+  | `DECIDER_USES` | `repair-triage` (shadow mode: every use point) | use points to enable: `repair-triage`, `coverage`, `locator-heal`; `coverage` and `locator-heal` act only when named here, and `locator-heal` needs `repair-triage`; an unknown name is an error, not a silent no-op |
   | `DECIDER_MIN_CONFIDENCE` | `0.75` | below it an answer is ignored and the current path runs |
   | `DECIDER_TIMEOUT_MS` | `10000` | per call, one retry on 429/5xx included |
   | `DECIDER_MAX_CALLS` | `200` | per-run ceiling on decisions — a retry on 429/5xx belongs to its decision (separate from the LLM call budget) |

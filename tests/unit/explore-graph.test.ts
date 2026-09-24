@@ -7,7 +7,8 @@ import type { BrowserGateway, Observation, Action } from "../../src/browser/inde
 import type { ValidationReport } from "../../src/validate/index.js";
 import type { PageStudy } from "../../src/observe/index.js";
 import type { TestCase } from "../../src/design/index.js";
-import type { Answer, Decider, DeciderUse } from "../../src/decider/types.js";
+import type { Answer, Decider, DeciderUse, ShadowEntry } from "../../src/decider/types.js";
+import { CAPS } from "../../src/decider/capabilities.js";
 
 /** A StructuredInvoke that ignores its args and yields a fixed value (no LLM). */
 const fixed = (value: unknown): StructuredInvoke =>
@@ -332,5 +333,73 @@ describe("runExploreGraph — decision layer (ADR-0022)", () => {
       runId: "r",
     });
     expect("notRepaired" in out).toBe(false);
+  });
+
+  // locator-heal (spec §6.6): triage calls the failure a missing locator, heal picks c1 = "Sign in" on the page.
+  const locatorDecider = (uses: DeciderUse[], shadow = false) => {
+    const calls: string[] = [];
+    const entries: ShadowEntry[] = [];
+    const decider: Decider = {
+      provider: "laya",
+      model: "multilingual",
+      caps: CAPS.laya,
+      uses: new Set(uses),
+      minConfidence: 0.75,
+      scrub: (t: string) => t,
+      ...(shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
+      summary: () => ({ provider: "laya", model: "multilingual", calls: calls.length, fallbacks: [] }),
+      async decide(use, _state, questions) {
+        calls.push(use);
+        const value = use === "repair-triage" ? "locator-missing" : "c1";
+        const a: Answer = { type: "choice", value, dist: { [value]: 0.9 }, confidence: 0.9 };
+        return Object.fromEntries(Object.keys(questions).map((k) => [k, a])) as never;
+      },
+    };
+    return { decider, calls, entries };
+  };
+  const brokenThenGreen = () => {
+    let n = 0;
+    return async (): Promise<ValidationReport> =>
+      n++ === 0
+        ? { results: [{ test: "A", status: "failed", error: "waiting for getByRole('button', { name: 'Sign' })" }], greenRatio: 0, flakyCount: 0 }
+        : { results: [{ test: "A", status: "passed" }], greenRatio: 1, flakyCount: 0 };
+  };
+
+  it("locator-heal on: the verified replacement goes into repair and the outcome", async () => {
+    const { gateway, state } = fakeGateway(() => obs('- button "Sign in"\n- button "Create account"'));
+    const { decider, calls } = locatorDecider(["repair-triage", "locator-heal"]);
+    const out = await runExploreGraph(makeDeps({ gateway, decider, maxRepair: 2, validate: brokenThenGreen() }), {
+      url: "https://app.test/page",
+      runId: "r",
+    });
+    expect(calls).toEqual(["repair-triage", "locator-heal"]);
+    expect(out.healed).toEqual([
+      { test: "A", from: "getByRole('button', { name: 'Sign' })", to: "getByRole('button', { name: 'Sign in', exact: true })", confidence: 0.9 },
+    ]);
+    expect(state.observe).toBeGreaterThan(1); // the heal re-observed the start page
+  });
+
+  it("a decider whose uses leave out locator-heal never heals", async () => {
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const { decider, calls } = locatorDecider(["repair-triage"]);
+    const out = await runExploreGraph(makeDeps({ gateway, decider, maxRepair: 2, validate: brokenThenGreen() }), {
+      url: "https://app.test/page",
+      runId: "r",
+    });
+    expect(calls).toEqual(["repair-triage"]);
+    expect("healed" in out).toBe(false);
+  });
+
+  it("shadow: heal is asked on triage's would-be verdict and recorded; repair runs as it would have", async () => {
+    const { gateway } = fakeGateway(() => obs('- button "Sign in"'));
+    const { decider, calls, entries } = locatorDecider(["repair-triage", "locator-heal"], true);
+    const out = await runExploreGraph(makeDeps({ gateway, decider, maxRepair: 2, validate: brokenThenGreen() }), {
+      url: "https://app.test/page",
+      runId: "r",
+    });
+    expect(calls).toEqual(["repair-triage", "locator-heal"]);
+    expect(entries.map((e) => e.use)).toEqual(["repair-triage", "locator-heal"]);
+    expect("healed" in out).toBe(false);
+    expect(out.attempts).toBe(1);
   });
 });

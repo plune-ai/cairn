@@ -1,7 +1,8 @@
 # Decision layer (`DECIDER`)
 
 Some of Cairn's steps do not generate anything — they pick from a finite list: *why did this test fail*, *does
-this case cover that checklist item*. The decision layer lets a **System One** model answer those picks. Such a
+this case cover that checklist item*, *which element on the page did a broken locator mean*. The decision layer
+lets a **System One** model answer those picks. Such a
 model never writes text; it answers typed questions (`noul` yes/no, `choice`, `score`) with probabilities.
 
 It is **off by default** and changes nothing until you name a provider. Design decisions and the measurements
@@ -11,9 +12,12 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 
 - It **never** writes cases, code or repairs, and never gives the Pilot verdict. Those stay on the LLM.
 - Its answers are **untrusted input**. It can make a result stricter (keep an app bug out of repair), never
-  softer; below `DECIDER_MIN_CONFIDENCE` its answer is ignored and Cairn does what it always did. The one
-  exception is `coverage`, a metric rather than a gate: once you name it, its number replaces the judge's and can
-  come out higher. That is why it is off unless named.
+  softer; below `DECIDER_MIN_CONFIDENCE` its answer is ignored and Cairn does what it always did. Two use points
+  go further, so both are off until you name them. `coverage` is a metric rather than a gate: its number replaces
+  the judge's and can come out higher. `locator-heal` offers the repair a replacement locator. The replacement is
+  never a different kind of control, nor one Cairn's destructive-action filters refuse (they match English words
+  only). It matches exactly one element on the page, and the report lists it. A wrong pick can still let a test
+  pass while it checks another element; that is what the report is for.
 - It **never sinks a run**. Timeout, server error, an input too long for the model, an invalid answer — each is
   a silent fallback to the current behaviour, recorded in the trace.
 - `confidence` describes the shape of an answer's distribution, **not** the chance that it is right. Each
@@ -21,10 +25,12 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 
 ## Use points
 
-`DECIDER_USES` picks them. By default an active decider consults `repair-triage` alone, and shadow mode asks both
-— a use point acts only on evidence, and `coverage` has none yet: on laya's multilingual checkpoint it answered
-confidently wrong ([ADR-0022](adr/0022-optional-decision-layer.md#measured-facts-this-rests-on-2026-09-24)). Name
-it to turn it on: `DECIDER_USES=repair-triage,coverage`. An unknown name is an error, not a silent no-op. A run in
+`DECIDER_USES` picks them. By default an active decider consults `repair-triage` alone, and shadow mode asks every
+use point. A use point acts only on evidence, and the other two have none yet: on laya's multilingual checkpoint
+`coverage` answered confidently wrong ([ADR-0022](adr/0022-optional-decision-layer.md#measured-facts-this-rests-on-2026-09-24)),
+and `locator-heal` has not been piloted. Name one to turn it on: `DECIDER_USES=repair-triage,coverage` or
+`DECIDER_USES=repair-triage,locator-heal`. `locator-heal` without `repair-triage` is an error, since it heals only
+what triage calls a locator failure. An unknown name is an error, not a silent no-op. A run in
 which none of the enabled use points can fire — `design` without `--checklist`, `automate` without `--validate`,
 `MAX_REPAIR=0` — does not start the layer at all: no data notice, no report key, no `decider-shadow.json`.
 
@@ -32,18 +38,47 @@ which none of the enabled use points can fire — `design` without `--checklist`
 |---|---|---|---|
 | `repair-triage` | the validate ⇄ repair loop (`explore`, `automate --validate`) | one six-way choice per failing test, over its name and error: `app-bug` / `env-or-session` keep the test **out of the repair hint** and list it under *Not repaired*; `locator-ambiguous` / `locator-missing` / `timing` / `wrong-assertion` only tag its hint line | the test goes into the hint exactly as today |
 | `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case confidently says yes, uncovered when every case confidently says no. Its number **replaces** the judge's, and the score's comment says so (`decider (laya): …`) | an item no case confidently covers and some case is unsure about, or an unavailable call → the LLM judge decides, as today |
+| `locator-heal` | the validate ⇄ repair loop, after triage (`explore`, `automate --validate`) | for a failure triage confidently called `locator-missing` or `locator-ambiguous`, whose error names a `getByRole(…)`: a pick among the page's elements of the same or a compatible role, never one the destructive-action filters refuse, or `none-of-these`. A pick the browser matches exactly once joins the test's hint line: `→ replace <the broken locator> with getByRole('button', { name: 'Sign In', exact: true }) (verified: 1 match)` | no proposal: the test goes into the hint as triage left it |
 
 When every failing test is excluded, the loop stops without spending a repair attempt. An exclusion holds while
 the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as
 *Not repaired*, and one that fails with a different error is asked about again.
 
+`locator-heal` proposes; the repair still writes the code, and the next validation judges it. It works like this:
+
+- **Candidates.** Cairn reopens the run's start page and reads its ARIA snapshot. A locator that exists only
+  mid-scenario (after a click or a navigation) finds no candidate, and the test is repaired as today. A CSS locator,
+  a regex name or a chained scope (`getByRole('dialog').getByRole(…)`) is not healed.
+- **Compatible roles.** A textbox, searchbox and combobox count as one kind of control; so do a checkbox and a
+  switch, and the three menu-item roles. Any other role must match exactly.
+- **Only what the destructive-action filters let through.** An element the crawler's destructive-link filter or the
+  deletion-intent check refuses is never offered: log out, delete, remove, reset and the like. Both match English words only
+  ([#185](https://github.com/plune-ai/cairn/issues/185)), so a control named `Видалити` or `Вийти` is offered like
+  any other.
+- **The question.** It is one choice among all candidates. When that does not fit the provider's limits (laya:
+  twenty options, 400 characters), each candidate is scored first, and one choice follows among the best ten that
+  fit.
+- **Shared when it cannot depend on the test.** A named element that went missing (renamed, say) is the same
+  element for every test that asked for it, so those tests share one heal: one question, one check, one answer. A
+  renamed login button can fail every test. Which of several matches a test meant, or which unnamed element, is
+  asked per test. Whether a locator matched several elements is read from Playwright's error, not from triage's
+  verdict.
+- **Backend.** It needs the `lib` browser backend, the default: the `cli` one cannot count matches, so there a heal
+  asks nothing. `automate` opens a browser for it only when a heal is asked, with the run's session, and closes
+  it at the end.
+
 An active run reports the layer, and where depends on the command:
 
-- `explore` writes it to `report.json` and `report.md`. In `report.json`, `decider` holds the provider, `calls` (the
-  number of decisions asked) and each fallback with its reason, and `notRepaired` lists the tests kept out of
-  repair. `report.md` has the *Decision layer* and *Not repaired* sections.
+- `explore` writes it to `report.json` and `report.md`. In `report.json`:
+  - `decider` holds the provider, `calls` (the number of decisions asked) and each fallback with its reason;
+  - `notRepaired` lists the tests kept out of repair;
+  - `healed` lists the replacements offered to the repair that produced the kept suite, each with its test, the
+    broken locator, the replacement and the confidence.
+
+  `report.md` has the *Decision layer*, *Not repaired* and *Locators healed* sections. Check each healed test: it
+  now targets the element the decider picked.
 - `design` writes it to `report.json`.
-- `automate` writes no report. It prints both sections, and its MCP result carries both keys.
+- `automate` writes no report. It prints those sections, and its MCP result carries the keys.
 
 The `decider` row of the cost summary counts the answered decisions only. Cairn records no usage for a fallback,
 whether it was refused before sending (its length, `DECIDER_MAX_CALLS`) or failed on the way (a timeout, an HTTP
@@ -153,12 +188,24 @@ for `automate`, which reuses a design run's folder) next to what the run actuall
 ```
 
 `asked` keeps every (case, item) answer with its confidence — in shadow mode the whole matrix, nothing pruned —
-which is what a per-use threshold is tuned on. Every text in
-the file is scrubbed exactly like the input that was sent. `agreement` (also a Langfuse score,
-`decider.<use>.agreement`) is 1 when the decider's coverage is within 0.1 of the LLM judge's; it is absent when
-the judge failed and the token-overlap fallback scored the run, and absent for repair triage: today's path does
-not classify failures, so its answers must be checked by hand. A use point is worth turning on when the pilot shows agreement ≥ 90 % (hand-checked precision ≥ 85 % for
-triage) with fewer than 10 % fallbacks — and the confidence threshold is tuned per use point and per provider.
+which is what a per-use threshold is tuned on.
+
+`locator-heal` in shadow mode is asked on every verdict triage would have given: `locator-missing` or
+`locator-ambiguous`, at any confidence. It verifies whatever it picks, whatever the confidence. Its entry holds what
+was sent (`input`: the state and the candidates) and what it would have proposed:
+`{ "to": "getByRole('button', { name: 'Sign In', exact: true })", "confidence": 0.91, "verified": true }`, or
+`"to": null` for `none-of-these`.
+
+Every text in the file is scrubbed exactly like the input that was sent. `agreement` (also a Langfuse score,
+`decider.<use>.agreement`) is 1 when the decider's coverage is within 0.1 of the LLM judge's. It is absent in
+three cases:
+- the judge failed and the token-overlap fallback scored the run;
+- repair triage: today's path does not classify failures;
+- locator heal: today's path proposes nothing.
+
+Triage and heal answers must be checked by hand. A use point is worth turning on when the pilot shows agreement
+≥ 90 % (hand-checked precision ≥ 85 % for triage) with fewer than 10 % fallbacks. The confidence threshold is tuned
+per use point and per provider.
 
 ## Configuration
 

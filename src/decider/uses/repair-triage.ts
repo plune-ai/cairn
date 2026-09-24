@@ -73,8 +73,16 @@ function asCategory(a: Answer | undefined): { category: FailureCategory; confide
  * not one per test; the per-run ceiling still holds). Only a confident answer counts; a failure or a doubt
  * leaves the test in the hint exactly as today. Shadow mode records each answer next to "repair" and
  * returns nothing — so the loop runs as it would have without a decider.
+ *
+ * `next` — shadow mode only: the use point that acts on triage's verdict (locator-heal). Returning nothing,
+ * triage leaves the loop no verdict to hand on, so it asks `next` itself on every verdict it would have given,
+ * at any confidence (the pilot calibrates the threshold), one at a time (they share one browser page). An
+ * active loop asks `next` itself.
  */
-export function makeTriage(decider: Decider): (failed: TestResult[]) => Promise<TriageResult[]> {
+export function makeTriage(
+  decider: Decider,
+  next?: (failure: TestResult, verdict: TriageResult) => Promise<unknown>,
+): (failed: TestResult[]) => Promise<TriageResult[]> {
   // The provider reads the state together with the question: the error gets what the question leaves.
   const maxChars = Math.min(decider.caps.maxInputChars - questionChars(TRIAGE_QUESTION), MAX_STATE_CHARS);
   return async (failed) => {
@@ -105,6 +113,11 @@ export function makeTriage(decider: Decider): (failed: TestResult[]) => Promise<
           ...(a.c ? { confidence: a.c.confidence } : {}),
           latencyMs: a.latencyMs,
         });
+      }
+      for (const a of asked) {
+        if (!a.c || !next) continue;
+        const verdict = { test: a.r.test, ...a.c, exclude: confident(a.c) && NOT_REPAIRABLE.has(a.c.category) };
+        await next(a.r, verdict).catch(() => undefined); // shadow bookkeeping never throws into the run
       }
       return [];
     }

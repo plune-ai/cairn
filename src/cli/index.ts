@@ -387,6 +387,13 @@ export function buildProgram(): Command {
             process.stdout.write(`  ${t.test} — ${t.category} (confidence ${t.confidence.toFixed(2)})\n`);
           }
         }
+        // ADR-0022: no silent replacement — the reviewer sees which tests may now target another element.
+        if (result.healed?.length) {
+          process.stdout.write("\nLocators healed — offered to the repair, matched exactly once on the page:\n");
+          for (const h of result.healed) {
+            process.stdout.write(`  ${h.test}: ${h.from} → ${h.to} (confidence ${h.confidence.toFixed(2)})\n`);
+          }
+        }
         if (result.decider) {
           const d = result.decider;
           process.stdout.write(
