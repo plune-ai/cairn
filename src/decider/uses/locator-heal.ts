@@ -188,8 +188,10 @@ export function makeHeal(opts: {
     if (!HEALABLE.has(triage.category)) return undefined;
     const broken = parseBrokenLocator(failure.error ?? "");
     if (!broken) return undefined;
-    const t0 = Date.now();
     const input = { state: "", candidates: [] as string[] };
+    // The decider's time alone, as the other use points record it: opening the page and the check are not in it.
+    let asked = 0;
+    let answered = 0;
     // A no-op for an active decider, so every path below returns through it.
     const record = (d: unknown, confidence?: number): undefined => {
       decider.shadow?.record({
@@ -198,7 +200,7 @@ export function makeHeal(opts: {
         current: "repair",
         decider: d,
         ...(confidence !== undefined ? { confidence } : {}),
-        latencyMs: Date.now() - t0,
+        latencyMs: asked ? (answered || Date.now()) - asked : 0,
       });
       return undefined;
     };
@@ -212,8 +214,10 @@ export function makeHeal(opts: {
       );
       if (offered.length === 0) return undefined; // nothing to ask about
       input.candidates = offered.map((o) => o.text);
+      asked = Date.now();
       const finalists = fits(input.state, choice(offered)) ? offered : await shortlist(input.state, offered);
       const a = (await decider.decide("locator-heal", input.state, { pick: choice(finalists) })).pick;
+      answered = Date.now();
       if (a?.type !== "choice") throw new Error("an answer of the wrong type");
       if (a.value === NONE) return record({ to: null, confidence: a.confidence }, a.confidence);
       const chosen = finalists.find((o) => o.label === a.value);

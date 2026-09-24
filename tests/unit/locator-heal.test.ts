@@ -394,6 +394,28 @@ describe("makeHeal (spec §6.6)", () => {
     expect(stray.entries[0]).toMatchObject({ decider: { unavailable: expect.stringMatching(/outside the offered candidates/) } });
   });
 
+  it("shadow: its latency is the decider's alone, as at the other use points — not the page's opening, not the check", async () => {
+    vi.useFakeTimers();
+    try {
+      const { decider, entries } = healDecider(
+        (q) => (vi.advanceTimersByTime(120), pick(optionFor(q, '"Sign in"'))),
+        { shadow: true },
+      );
+      const { gateway } = fakeGateway();
+      const slow = {
+        observe: async (o: { url: string }) => (vi.advanceTimersByTime(1_400), gateway.observe(o)), // a browser starts
+        verify: async (els: ElementRef[]) => (vi.advanceTimersByTime(300), gateway.verify(els)),
+      } as unknown as BrowserGateway;
+      await makeHeal({ decider, gateway: slow, url: "u" })(failure(), triage());
+      expect(entries[0]).toMatchObject({ decider: { verified: true }, latencyMs: 120 });
+      const down = { observe: async () => Promise.reject(new Error("net::ERR_CONNECTION_REFUSED")) } as unknown as BrowserGateway;
+      await makeHeal({ decider, gateway: down, url: "u" })(failure(), triage());
+      expect(entries[1]).toMatchObject({ decider: { unavailable: "net::ERR_CONNECTION_REFUSED" }, latencyMs: 0 }); // never asked
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shadow: nothing to heal → nothing recorded (another verdict, no getByRole, no candidate)", async () => {
     const { decider, entries } = healDecider(() => pick("c1"), { shadow: true });
     await makeHeal({ decider, gateway: fakeGateway().gateway, url: "u" })(failure(), triage("timing"));
