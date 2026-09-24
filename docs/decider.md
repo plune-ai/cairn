@@ -37,8 +37,8 @@ When every failing test is excluded, the loop stops without spending a repair at
 the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as
 *Not repaired*, and one that fails with a different error is asked about again.
 
-An active run reports the layer in `report.json` (`decider`: `calls`, every decision asked, and each fallback with
-its reason) and in `report.md` (*Decision layer*: decisions, answered, fallbacks). The `decider` row of the cost
+An active run reports the layer in `report.json` (`decider`: the provider, `calls` — the number of decisions asked —
+and each fallback with its reason) and in `report.md` (*Decision layer*: decisions, answered, fallbacks). The `decider` row of the cost
 summary counts the answered ones only: a decision refused for its length or past `DECIDER_MAX_CALLS` never reached
 the server.
 
@@ -106,10 +106,19 @@ So Cairn counts the state and the question together, checks every option on its 
 fit: a longer input is a fallback, never a truncation.
 
 `LAYA_MODELS` (a comma list of `english`, `multilingual`, `typed-decisions`) limits the checkpoints laya-serve
-loads at start; by default it loads all of them. Without a GPU a decision takes seconds: on the machine behind
-ADR-0022's measurements, the multilingual checkpoint answered a triage question in 3.3 s at the median and 4.6 s
-at p95, the English one in 9.5 s and 13.5 s. `DECIDER_TIMEOUT_MS` (default 10 000) bounds every call and a call
-past it is a fallback, so on a slow machine raise it or expect fallbacks — `cairn doctor` shows one call's latency.
+loads at start; by default it loads all of them. Without a GPU the latency depends on how many questions arrive
+at once. Cairn sends a failing suite's triage questions together, and laya-serve answers them in turn. The figures
+below are for the machine behind ADR-0022's measurements.
+
+| Checkpoint | One question alone | Twelve sent together (median · p95) |
+|---|---|---|
+| multilingual | 0.1 s | 0.7 s · 1.2 s |
+| English | 0.3 s | 2.2 s · 3.6 s |
+
+An earlier run on the same machine, with twelve sent together, took 3.3 s · 4.6 s and 9.5 s · 13.5 s: what else the
+machine is doing counts as much as the checkpoint. `DECIDER_TIMEOUT_MS` (default 10 000) bounds every call, and a
+call past it is a fallback. With many failing tests on a busy machine, raise it or expect fallbacks. `cairn
+doctor` shows the latency of one call.
 
 ## Shadow mode — judge it before you trust it
 

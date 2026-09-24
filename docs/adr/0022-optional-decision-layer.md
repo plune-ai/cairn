@@ -146,9 +146,12 @@ changed the design.
   triage on twelve labelled Playwright failures: 5–6 of 12 right, one confident answer — right — so nothing was
   wrongly kept out of repair. Hence an active decider defaults to `repair-triage` alone; shadow mode asks every
   use point, and `coverage` acts only when named in `DECIDER_USES`.
-- **Latency on a CPU** (the same twelve triage questions, one at a time, no GPU): the multilingual checkpoint
-  3.3 s at the median and 4.6 s at p95, the English one 9.5 s and 13.5 s. The default `DECIDER_TIMEOUT_MS` of
-  10 000 covers the first; with the second, the slowest calls become fallbacks.
+- **Latency on a CPU** (no GPU; the same twelve triage questions, sent together as a failing suite sends them, so
+  each waits for the others): the multilingual checkpoint 0.7 s at the median and 1.2 s at p95, the English one
+  2.2 s and 3.6 s; one question alone, 0.1 s and 0.3 s. An earlier run on the same machine took 3.3 s and 4.6 s,
+  and 9.5 s and 13.5 s: the load on the machine and the number of failing tests set the latency more than the
+  checkpoint. The default `DECIDER_TIMEOUT_MS` of 10 000 covers every multilingual measurement. On the busier run
+  the English checkpoint's slowest calls (13.5 s) would pass it and become fallbacks.
 
 ## Consequences
 
