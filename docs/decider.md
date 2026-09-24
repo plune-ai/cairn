@@ -51,15 +51,17 @@ the test fails the same way: every repair regenerates the suite, so a test that 
   a regex name or a chained scope (`getByRole('dialog').getByRole(…)`) is not healed.
 - **Compatible roles.** A textbox, searchbox and combobox count as one kind of control; so do a checkbox and a
   switch, and the three menu-item roles. Any other role must match exactly.
-- **Never a destructive control, by name.** An element the crawler's destructive-link filter or the deletion-intent
-  check refuses is never offered: log out, delete, remove, reset and the like. Both match English words only
+- **Only what the destructive-action filters let through.** An element the crawler's destructive-link filter or the
+  deletion-intent check refuses is never offered: log out, delete, remove, reset and the like. Both match English words only
   ([#185](https://github.com/plune-ai/cairn/issues/185)), so a control named `Видалити` or `Вийти` is offered like
   any other.
 - **The question.** It is one choice among all candidates. When that does not fit the provider's limits (laya:
   twenty options, 400 characters), each candidate is scored first, and one choice follows among the best ten that
   fit.
-- **Once per locator.** Tests that fail the same way on the same locator share one heal: one question, one check,
-  one answer. A renamed login button can fail every test.
+- **Shared when it cannot depend on the test.** A named element that went missing (renamed, say) is the same
+  element for every test that asked for it, so those tests share one heal: one question, one check, one answer. A
+  renamed login button can fail every test. Which of several matches a test meant, or which unnamed element, is
+  asked per test.
 - **Backend.** It needs the `lib` browser backend, the default: the `cli` one cannot count matches, so there a heal
   asks nothing. `automate` opens a browser for it only when a heal is asked, with the run's session, and closes
   it at the end.

@@ -447,6 +447,31 @@ describe("makeHeal (spec §6.6)", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("which of several matches a test meant, or which unnamed element, is asked per test — never shared", async () => {
+    // Real strict-mode text: 'Sign' resolved to both buttons. Each test's name says which one it meant.
+    const strict =
+      "Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'Sign' }) resolved to 2 elements:\n" +
+      "    1) <button>Sign in</button> aka getByRole('button', { name: 'Sign in' })\n" +
+      "    2) <button>Sign up</button> aka getByRole('button', { name: 'Sign up' })\n\nCall log:\n  - waiting for getByRole('button', { name: 'Sign' })";
+    const { decider, calls } = healDecider((q) => pick(optionFor(q, calls.at(-1)!.state.includes("signs up") ? '"Sign up"' : '"Sign in"')));
+    const heal = makeHeal({ decider, gateway: fakeGateway('- button "Sign in"\n- button "Sign up"').gateway, url: "u" });
+    const a = await heal(failure(strict, "tc-1: signs in"), triage("locator-ambiguous"));
+    const b = await heal(failure(strict, "tc-2: signs up"), triage("locator-ambiguous"));
+    expect([a?.to, b?.to]).toEqual([
+      "getByRole('button', { name: 'Sign in', exact: true })",
+      "getByRole('button', { name: 'Sign up', exact: true })",
+    ]);
+    const unnamed = "Error: locator.fill: Test timeout of 30000ms exceeded.\nCall log:\n  - waiting for getByRole('textbox')";
+    const page = '- textbox "Email"\n- textbox "Password"';
+    const u = healDecider(() => pick("c1"));
+    const healUnnamed = makeHeal({ decider: u.decider, gateway: fakeGateway(page).gateway, url: "u" });
+    await healUnnamed(failure(unnamed, "tc-1: types the email"), triage());
+    await healUnnamed(failure(unnamed, "tc-2: types the password"), triage());
+    expect(u.calls).toHaveLength(2);
+    await healUnnamed(failure(unnamed, "tc-1: types the email"), triage("locator-ambiguous")); // failing another way
+    expect(u.calls).toHaveLength(3);
+  });
+
   it("shadow: a heal several tests share is recorded once", async () => {
     const { decider, entries } = healDecider((q) => pick(optionFor(q, '"Sign in"')), { shadow: true });
     const heal = makeHeal({ decider, gateway: fakeGateway().gateway, url: "u" });

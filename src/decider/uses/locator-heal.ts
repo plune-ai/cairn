@@ -240,15 +240,18 @@ export function makeHeal(opts: {
     }
   };
 
-  // Tests that fail on one locator share one heal: the same page, question, check and answer, asked once (a renamed
-  // login button can fail every test). ponytail: a single heal still costs ceil(candidates / maxQuestionsPerCall) + 1
-  // calls on a page too big for one choice; DECIDER_MAX_CALLS bounds the run, cap the candidates if pilots meet such pages.
+  // A named element that went missing (renamed, say) is the same element for every test that asked for it, so those
+  // tests share one heal: one question, check and answer (a renamed login button can fail every test). Which of
+  // several matches a test meant, or which unnamed element, depends on the test: asked per test.
+  // ponytail: a single heal still costs ceil(candidates / maxQuestionsPerCall) + 1 calls on a page too big for one
+  // choice; DECIDER_MAX_CALLS bounds the run, cap the candidates if pilots meet such pages.
   const heals = new Map<string, ReturnType<typeof heal>>();
   return async (failure, triage) => {
     if (!HEALABLE.has(triage.category)) return undefined;
     const broken = parseBrokenLocator(failure.error ?? "");
     if (!broken) return undefined;
-    const key = `${triage.category}\n${broken.source}`;
+    const shared = triage.category === "locator-missing" && broken.name !== undefined;
+    const key = `${triage.category}\n${broken.source}${shared ? "" : `\n${failure.test}`}`;
     let proposal = heals.get(key);
     if (!proposal) heals.set(key, (proposal = heal(failure, triage.category, broken)));
     const p = await proposal;

@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     refuse. Those filters match English words only (#185).
   - A pick the browser matches exactly once joins the test's repair hint:
     `→ replace <old> with getByRole(…, exact: true) (verified: 1 match)`. The repair still writes the code. Tests
-    that fail the same way on the same locator share one heal.
+    that miss the same named element share one heal. Which of several matches a test meant is asked per test.
   - Every proposal behind the kept suite is listed: `report.json` `healed`, a *Locators healed* section in
     `report.md`, the `automate` output, its MCP result and the TUI summary. The TUI summary now also lists what the
     decider kept out of repair, which it did not show for an `automate` run.
