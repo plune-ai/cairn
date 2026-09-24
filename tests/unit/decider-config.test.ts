@@ -181,7 +181,7 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     [{ DECIDER: "laya", DECIDER_BASE_URL: "not a url" }, /DECIDER_BASE_URL/],
     [{ DECIDER: "laya", DECIDER_BASE_URL: "ftp://127.0.0.1" }, /DECIDER_BASE_URL/],
     [{ DECIDER: "jev", TYPESAFE_API_KEY: "k", TYPESAFE_BASE_URL: "not a url" }, /Invalid TYPESAFE_BASE_URL/],
-  ])("rejects %o", (env, msg) => {
+  ])("rejects %j", (env, msg) => {
     expect(() => parse(env)).toThrow(msg);
   });
 
