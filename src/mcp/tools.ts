@@ -175,6 +175,9 @@ export interface AutomateToolResult {
   projectTestDir?: string;
   validation?: ReturnType<typeof compactValidation>;
   cost: AutomateResult["cost"];
+  /** ADR-0022: automate writes no report, so its result carries the decision layer (absent without one). */
+  decider?: AutomateResult["decider"];
+  notRepaired?: AutomateResult["notRepaired"];
 }
 
 export async function automateTool(input: AutomateInput, deps: ToolDeps = defaultDeps): Promise<AutomateToolResult> {
@@ -193,5 +196,7 @@ export async function automateTool(input: AutomateInput, deps: ToolDeps = defaul
     projectTestDir: r.projectTestDir,
     validation: compactValidation(r.validation),
     cost: r.cost,
+    ...(r.decider ? { decider: r.decider } : {}),
+    ...(r.notRepaired?.length ? { notRepaired: r.notRepaired } : {}),
   };
 }

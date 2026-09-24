@@ -129,6 +129,21 @@ describe("MCP explore/design tools (#49)", () => {
     expect(r.validation).toEqual({ greenRatio: 1, passed: 1, failed: 0, flaky: 0 });
   });
 
+  it("automateTool returns the decision layer and the tests it kept out of repair — automate writes no report", async () => {
+    const { deps } = makeDeps();
+    const decider = { provider: "laya", model: "multilingual", calls: 2, fallbacks: [] };
+    const notRepaired = [{ test: "x", category: "app-bug", confidence: 0.9, exclude: true }];
+    const base = deps.runAutomate;
+    deps.runAutomate = async (input) => ({ ...(await base(input)), decider, notRepaired }) as unknown as AutomateResult;
+    expect(await automateTool({ run: "runs/r1", validate: true, decider: "laya" }, deps)).toMatchObject({ decider, notRepaired });
+  });
+
+  it("without a decider the automate result has neither key", async () => {
+    const r = await automateTool({ run: "runs/r1" }, makeDeps().deps);
+    expect(r).not.toHaveProperty("decider");
+    expect(r).not.toHaveProperty("notRepaired");
+  });
+
   it("invalid input (missing url) → clean validation failure", () => {
     expect(ToolInputSchema.safeParse({}).success).toBe(false);
     expect(ToolInputSchema.safeParse({ url: "http://x" }).success).toBe(true);
