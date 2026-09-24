@@ -5,6 +5,7 @@ import {
   healCandidates,
   locatorText,
   makeHeal,
+  lazyGateway,
 } from "../../src/decider/uses/locator-heal.js";
 import { CAPS, checkCaps } from "../../src/decider/capabilities.js";
 import { DeciderUnavailable, type Answer, type Decider, type Question, type ShadowEntry } from "../../src/decider/types.js";
@@ -399,5 +400,29 @@ describe("makeHeal (spec §6.6)", () => {
     await makeHeal({ decider, gateway: fakeGateway().gateway, url: "u" })(failure("Error: page.goto: net::ERR_ABORTED"), triage());
     await makeHeal({ decider, gateway: fakeGateway('- textbox "Email"').gateway, url: "u" })(failure(), triage());
     expect(entries).toEqual([]);
+  });
+});
+
+describe("lazyGateway — automate opens a browser only when a heal needs one", () => {
+  it("opens nothing until used, once however often used, and closes what it opened", async () => {
+    const { gateway, observe, verify } = fakeGateway();
+    const close = vi.fn(async () => undefined);
+    const open = vi.fn(async () => ({ ...gateway, close }) as BrowserGateway);
+    const lazy = lazyGateway(open);
+    await lazy.close();
+    expect(open).not.toHaveBeenCalled(); // never used: no browser, nothing to close
+    await lazy.observe({ url: "u" });
+    await lazy.verify([]);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(observe).toHaveBeenCalledWith({ url: "u" });
+    expect(verify).toHaveBeenCalledWith([]);
+    await lazy.close();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("a browser that fails to open fails the heal — never the close at the end of the run", async () => {
+    const lazy = lazyGateway(async () => Promise.reject(new Error("no chromium")));
+    await expect(lazy.observe({ url: "u" })).rejects.toThrow("no chromium");
+    await expect(lazy.close()).resolves.toBeUndefined();
   });
 });

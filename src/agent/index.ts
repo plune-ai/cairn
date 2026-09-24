@@ -28,6 +28,7 @@ import {
   type DeciderSummary,
 } from "../decider/index.js";
 import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
+import { lazyGateway, makeHeal, type HealRecord } from "../decider/uses/locator-heal.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
 import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
 import { ingestChecklist, formatChecklist, formatGoal, styleDirective } from "../checklist/index.js";
@@ -514,7 +515,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             allTimePassing,
           },
           // ADR-0022: keys that exist only on an opted-in run (no schema bump — rule 10).
-          ...deciderReportKeys(decider, out.notRepaired),
+          ...deciderReportKeys(decider, out.notRepaired, out.healed),
         });
         await runWriter.writeReportMd(
           renderReportMd({
@@ -534,7 +535,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             journeys: out.journeys,
             coverage,
             gapCases,
-            ...deciderReportKeys(decider, out.notRepaired),
+            ...deciderReportKeys(decider, out.notRepaired, out.healed),
           }),
         );
         await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));
@@ -903,6 +904,8 @@ export interface AutomateResult {
   stoppedEarly: boolean;
   /** ADR-0022: failures repair-triage kept out of repair (absent unless something was). */
   notRepaired?: TriageResult[];
+  /** ADR-0022: locator replacements proposed in the kept suite's repair hint (absent unless one was). */
+  healed?: HealRecord[];
   /** ADR-0022: an active decider's calls and fallbacks (absent without one). */
   decider?: DeciderSummary;
 }
@@ -963,6 +966,7 @@ export async function runAutomate(input: {
         })
       : undefined;
   let notRepaired: TriageResult[] | undefined;
+  let healed: HealRecord[] | undefined;
 
   const tcDir = join(runDir, "testcases");
   const mdFiles = (await readdir(tcDir)).filter((f) => f.endsWith(".md"));
@@ -1007,24 +1011,42 @@ export async function runAutomate(input: {
       // before spending LLM calls on codegen. FIX B (0.3.3): pass the channel — skipped when a system
       // browser is configured (the bug: `automate --validate` fired this even with BROWSER_CHANNEL=chrome).
       ensureBrowsersInstalled({ channel: cfg.browser.channel });
-      // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
-      // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
-      const result = await runRepairLoop({
-        generate: async (hint) => {
-          const s = await buildSuite(hint);
-          await runWriter.writeSuite(s);
-          return s;
-        },
-        validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
-        maxRepair: cfg.maxRepair,
-        onProgress,
-        lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
-        triage: decider?.uses.has("repair-triage") ? makeTriage(decider) : undefined,
-      });
-      suite = result.bestSuite;
-      validation = result.bestValidation;
-      stoppedEarly = result.stoppedEarly;
-      notRepaired = result.notRepaired;
+      // ADR-0022 locator-heal: automate has no browser of its own. One opens only when a heal needs it — the lib
+      // backend (it counts matches), with the run's session, on the design run's start page — and closes with the loop.
+      const healBrowser = decider?.uses.has("locator-heal")
+        ? lazyGateway(async () =>
+            makeGateway({
+              backend: "lib",
+              storageState: sessionPath ? await new SessionStore(resolve(input.sessionsDir ?? ".auth")).loadFile(sessionPath) : undefined,
+              channel: cfg.browser.channel,
+            }),
+          )
+        : undefined;
+      const heal = decider && healBrowser ? makeHeal({ decider, gateway: healBrowser, url: baseUrl }) : undefined;
+      try {
+        // #40: validate ⇄ repair ⇄ keep-best (+ no-progress early-stop) — the SAME convergence the explore
+        // graph uses, instead of a single one-shot generation. Lifts the decoupled flow to explore-grade green.
+        const result = await runRepairLoop({
+          generate: async (hint) => {
+            const s = await buildSuite(hint);
+            await runWriter.writeSuite(s);
+            return s;
+          },
+          validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
+          maxRepair: cfg.maxRepair,
+          onProgress,
+          lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
+          triage: decider?.uses.has("repair-triage") ? makeTriage(decider, heal) : undefined,
+          heal,
+        });
+        suite = result.bestSuite;
+        validation = result.bestValidation;
+        stoppedEarly = result.stoppedEarly;
+        notRepaired = result.notRepaired;
+        healed = result.healed;
+      } finally {
+        await healBrowser?.close();
+      }
       onProgress(
         `automate — validation: ${Math.round(validation.greenRatio * 100)}% green${stoppedEarly ? " · stopped early (no progress)" : ""}`,
       );
@@ -1063,6 +1085,6 @@ export async function runAutomate(input: {
     stoppedEarly,
     cost,
     budget: budgetReport,
-    ...deciderReportKeys(decider, notRepaired),
+    ...deciderReportKeys(decider, notRepaired, healed),
   };
 }

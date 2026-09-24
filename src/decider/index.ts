@@ -9,6 +9,7 @@ import { postSystemOne, type HttpTarget } from "./client-http.js";
 import { guarded } from "./guarded.js";
 import { redact, redactQuestion } from "./redact.js";
 import type { TriageResult } from "./uses/repair-triage.js";
+import type { HealRecord } from "./uses/locator-heal.js";
 import {
   DeciderUnavailable,
   type Decider,
@@ -174,10 +175,12 @@ function shadowLog(telemetry: Pick<Telemetry, "recordScore"> | undefined, secret
 export function deciderReportKeys(
   d: Decider | undefined,
   notRepaired?: TriageResult[],
-): { decider?: DeciderSummary; notRepaired?: TriageResult[] } {
+  healed?: HealRecord[],
+): { decider?: DeciderSummary; notRepaired?: TriageResult[]; healed?: HealRecord[] } {
   return {
     ...(d && !d.shadow ? { decider: d.summary() } : {}),
     ...(notRepaired?.length ? { notRepaired } : {}),
+    ...(healed?.length ? { healed } : {}),
   };
 }
 

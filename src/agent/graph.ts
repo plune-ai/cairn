@@ -22,6 +22,7 @@ import {
 import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
 import { runRepairLoop } from "./repair-loop.js";
 import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
+import { makeHeal, type HealRecord } from "../decider/uses/locator-heal.js";
 import type { Decider } from "../decider/types.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
@@ -125,6 +126,8 @@ export interface ExploreOutcome {
   setupPlans?: SetupPlan[];
   /** ADR-0022: failures repair-triage kept out of repair (absent unless something was). */
   notRepaired?: TriageResult[];
+  /** ADR-0022: locator replacements proposed in the kept suite's repair hint (absent unless one was). */
+  healed?: HealRecord[];
 }
 
 /** Sprint 3: observe → identify → design → generateCode → validate ⇄ repair (bounded by maxRepair). */
@@ -394,7 +397,9 @@ export async function runExploreGraph(
     return suite;
   };
 
-  const { bestSuite, bestValidation, stoppedEarly, attempts, notRepaired } = await runRepairLoop({
+  // locator-heal re-observes the start page on the run's own browser; nothing reads the page after this loop.
+  const heal = deps.decider?.uses.has("locator-heal") ? makeHeal({ decider: deps.decider, gateway: deps.gateway, url }) : undefined;
+  const { bestSuite, bestValidation, stoppedEarly, attempts, notRepaired, healed } = await runRepairLoop({
     generate: async (hint) => {
       const suite = await genAndWrite(hint);
       deps.onProgress?.(`generateCode — ${suite.files.length} spec files written`);
@@ -408,7 +413,8 @@ export async function runExploreGraph(
     },
     maxRepair: deps.maxRepair,
     onProgress: deps.onProgress,
-    triage: deps.decider?.uses.has("repair-triage") ? makeTriage(deps.decider) : undefined,
+    triage: deps.decider?.uses.has("repair-triage") ? makeTriage(deps.decider, heal) : undefined,
+    heal,
   });
 
   return {
@@ -428,5 +434,6 @@ export async function runExploreGraph(
     journeys,
     setupPlans,
     ...(notRepaired ? { notRepaired } : {}),
+    ...(healed ? { healed } : {}),
   };
 }

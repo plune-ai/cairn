@@ -198,4 +198,38 @@ describe("repair-triage (spec §6.1)", () => {
     await makeTriage(slow)([failed("A", "x"), failed("B", "y"), failed("C", "z")]);
     expect(peak).toBe(3);
   });
+
+  it("shadow (spec §7): the next use point is asked on every would-be verdict, at any confidence, one at a time", async () => {
+    const { decider } = fakeDecider((s) => (s.includes('"A"') ? choice("locator-missing", 0.9) : choice("timing", 0.3)), { shadow: true });
+    let inFlight = 0;
+    let peak = 0;
+    const next = vi.fn(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+    });
+    expect(await makeTriage(decider, next)([failed("A", "x"), failed("B", "y")])).toEqual([]);
+    expect(next.mock.calls).toEqual([
+      [failed("A", "x"), { test: "A", category: "locator-missing", confidence: 0.9, exclude: false }],
+      [failed("B", "y"), { test: "B", category: "timing", confidence: 0.3, exclude: false }],
+    ]);
+    expect(peak).toBe(1);
+  });
+
+  it("shadow: no verdict, no next; a next that throws never reaches the run", async () => {
+    const { decider } = fakeDecider(() => new DeciderUnavailable("down"), { shadow: true });
+    const next = vi.fn(async () => undefined);
+    await makeTriage(decider, next)([failed("A", "x")]);
+    expect(next).not.toHaveBeenCalled();
+    const answered = fakeDecider(() => choice("locator-missing", 0.9), { shadow: true }).decider;
+    await expect(makeTriage(answered, async () => Promise.reject(new Error("boom")))([failed("A", "x")])).resolves.toEqual([]);
+  });
+
+  it("active: next is never called — the repair loop asks the next use point itself", async () => {
+    const { decider } = fakeDecider(() => choice("locator-missing", 0.9));
+    const next = vi.fn(async () => undefined);
+    expect(await makeTriage(decider, next)([failed("A", "x")])).toEqual([{ test: "A", category: "locator-missing", confidence: 0.9, exclude: false }]);
+    expect(next).not.toHaveBeenCalled();
+  });
 });

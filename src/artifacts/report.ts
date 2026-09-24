@@ -11,6 +11,7 @@ import type { ApiCoverageReport } from "../api/coverage.js";
 import type { ApiScenarioResult } from "../api/scenario-runner.js";
 import type { DeciderSummary } from "../decider/types.js";
 import type { TriageResult } from "../decider/uses/repair-triage.js";
+import type { HealRecord } from "../decider/uses/locator-heal.js";
 import { displayPath } from "../agent/summary.js";
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
@@ -44,6 +45,8 @@ export interface ReportInput {
   gapCases?: TestCase[];
   /** ADR-0022: tests repair-triage kept out of repair — rendered only when non-empty. */
   notRepaired?: TriageResult[];
+  /** ADR-0022: locator replacements proposed to the repair that produced the kept suite — rendered only when non-empty. */
+  healed?: HealRecord[];
   /** ADR-0022: an active decider's calls and fallbacks — rendered only when present. */
   decider?: DeciderSummary;
 }
@@ -83,6 +86,20 @@ export function renderReportMd(r: ReportInput): string {
       "|---|---|---|",
     );
     for (const t of r.notRepaired) lines.push(`| ${t.test} | ${t.category} | ${t.confidence.toFixed(2)} |`);
+    lines.push("");
+  }
+
+  if (r.healed && r.healed.length > 0) {
+    const cell = (s: string): string => s.replace(/\|/g, "\\|"); // a pipe in an element's name must not split the row
+    lines.push(
+      `## Locators healed (${r.healed.length})`,
+      "",
+      "The repair was offered these replacements: picked by the decision layer, matched exactly once on the page. Check that each test still targets what its case means.",
+      "",
+      "| test | was | now | confidence |",
+      "|---|---|---|---|",
+    );
+    for (const h of r.healed) lines.push(`| ${cell(h.test)} | \`${cell(h.from)}\` | \`${cell(h.to)}\` | ${h.confidence.toFixed(2)} |`);
     lines.push("");
   }
 

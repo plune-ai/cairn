@@ -305,6 +305,9 @@ describe("shadow mode (spec §7) and the run summary", () => {
       decider: { provider: "laya", model: "jev-latest", calls: 0, fallbacks: [] },
       notRepaired: [tr],
     });
+    const h = { test: "B", from: "getByRole('button', { name: 'Sign' })", to: "getByRole('button', { name: 'Sign in', exact: true })", confidence: 0.9 };
+    expect(deciderReportKeys(active, [], [h])).toEqual({ decider: expect.anything(), healed: [h] });
+    expect(deciderReportKeys(active, [], [])).not.toHaveProperty("healed");
   });
 
   it("writeShadowFile writes nothing without a decider or for an active one", async () => {

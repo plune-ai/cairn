@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { runRepairLoop, failedTestsHint } from "../../src/agent/repair-loop.js";
 import type { TriageResult } from "../../src/decider/uses/repair-triage.js";
+import type { HealRecord } from "../../src/decider/uses/locator-heal.js";
 import type { GeneratedSuite } from "../../src/codegen/index.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 
@@ -313,5 +314,91 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
     expect(r.bestValidation.greenRatio).toBe(0.67); // the last validation is the kept one
     expect(triage.mock.calls.at(-1)![0]).toEqual([expect.objectContaining({ test: "a", error: "500 Internal Server Error (7 × retried)" })]);
     expect(r.notRepaired).toEqual([expect.objectContaining({ test: "a", category: "app-bug" })]);
+  });
+});
+
+describe("runRepairLoop with locator-heal (ADR-0022, spec §6.6)", () => {
+  const ERR = "waiting for getByRole('button', { name: 'Sign' })";
+  const verdict = (test: string): TriageResult => ({ test, category: "locator-missing", confidence: 0.9, exclude: false });
+  const proposal = (test: string): HealRecord => ({
+    test,
+    from: "getByRole('button', { name: 'Sign' })",
+    to: "getByRole('button', { name: 'Sign in', exact: true })",
+    confidence: 0.9,
+  });
+  const LINE = " → replace getByRole('button', { name: 'Sign' }) with getByRole('button', { name: 'Sign in', exact: true }) (verified: 1 match)";
+  /** Triage calls every failure of the named tests a locator failure. */
+  const locatorTriage = (...tests: string[]) =>
+    vi.fn(async (failed: ValidationReport["results"]) => failed.filter((r) => tests.includes(r.test)).map((r) => verdict(r.test)));
+
+  it("a verified proposal travels with its test in the hint, and the kept suite reports it", async () => {
+    const h = harness([report([{ test: "a", status: "failed", error: ERR }], 0), report([{ test: "a", status: "passed" }], 1)]);
+    const heal = vi.fn(async (r: ValidationReport["results"][number]) => proposal(r.test));
+    const progress: string[] = [];
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage: locatorTriage("a"), heal, onProgress: (e) => progress.push(e) });
+    expect(heal).toHaveBeenCalledWith({ test: "a", status: "failed", error: ERR }, verdict("a"));
+    expect(h.hints[1]).toBe(`- a [triage: locator-missing]: ${ERR}\n ${LINE}`);
+    expect(r.healed).toEqual([proposal("a")]);
+    expect(progress.join("\n")).toMatch(/repair — locator-heal: a verified replacement for 1 test/);
+  });
+
+  it("no proposal → the hint is exactly triage's, and nothing is reported healed", async () => {
+    const h = harness([report([{ test: "a", status: "failed", error: ERR }], 0), report([{ test: "a", status: "passed" }], 1)]);
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage: locatorTriage("a"), heal: async () => undefined });
+    expect(h.hints[1]).toBe(`- a [triage: locator-missing]: ${ERR}`);
+    expect("healed" in r).toBe(false);
+  });
+
+  it("without a triage verdict heal is never asked", async () => {
+    const h = harness([report([{ test: "a", status: "failed", error: ERR }], 0), report([{ test: "a", status: "passed" }], 1)]);
+    const heal = vi.fn(async () => proposal("a"));
+    await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage: async () => [], heal });
+    expect(heal).not.toHaveBeenCalled();
+  });
+
+  it("a failure is healed once while it fails the same way; a changed failure is asked again", async () => {
+    const ERR2 = "waiting for getByRole('button', { name: 'Sign-in' })";
+    const h = harness([
+      report([{ test: "a", status: "failed", error: ERR }, { test: "b", status: "failed", error: "x" }, { test: "c", status: "failed", error: "y" }], 0),
+      report([{ test: "a", status: "failed", error: ERR }, { test: "b", status: "passed" }, { test: "c", status: "failed", error: "y" }], 0.33),
+      report([{ test: "a", status: "failed", error: ERR2 }, { test: "b", status: "passed" }, { test: "c", status: "passed" }], 0.67),
+      report([{ test: "a", status: "passed" }, { test: "b", status: "passed" }, { test: "c", status: "passed" }], 1),
+    ]);
+    const heal = vi.fn(async (r: ValidationReport["results"][number]) => proposal(r.test));
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3, triage: locatorTriage("a"), heal });
+    expect(heal.mock.calls.map(([f]) => f.error)).toEqual([ERR, ERR2]);
+    expect(h.hints[2]).toContain(LINE); // the same failure keeps its proposal without asking again
+    expect(r.healed).toEqual([proposal("a")]);
+  });
+
+  it("healed lists only the proposals in the kept suite's hint: a repair that made things worse proposed nothing kept", async () => {
+    const h = harness([
+      report([{ test: "a", status: "failed", error: ERR }, { test: "b", status: "passed" }], 0.5),
+      report([{ test: "a", status: "failed", error: ERR }, { test: "b", status: "failed", error: "boom" }], 0),
+    ]);
+    const heal = vi.fn(async (r: ValidationReport["results"][number]) => proposal(r.test));
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 1, triage: locatorTriage("a"), heal });
+    expect(heal).toHaveBeenCalledTimes(1);
+    expect(r.bestValidation.greenRatio).toBe(0.5); // the initial suite is kept
+    expect("healed" in r).toBe(false);
+  });
+
+  it("heals one failure at a time — they share one browser page", async () => {
+    const h = harness([
+      report([{ test: "a", status: "failed", error: ERR }, { test: "b", status: "failed", error: ERR }], 0),
+      report([{ test: "a", status: "passed" }, { test: "b", status: "passed" }], 1),
+    ]);
+    let inFlight = 0;
+    let peak = 0;
+    const heal = vi.fn(async (): Promise<HealRecord | undefined> => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((res) => setTimeout(res, 5));
+      inFlight -= 1;
+      return undefined;
+    });
+    await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 1, triage: locatorTriage("a", "b"), heal });
+    expect(heal).toHaveBeenCalledTimes(2);
+    expect(peak).toBe(1);
   });
 });

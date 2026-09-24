@@ -78,6 +78,28 @@ export function locatorText(el: { role: string; name: string }): string {
   return `getByRole(${quote(el.role)}, { name: ${quote(el.name)}, exact: true })`;
 }
 
+/** All a healer does with a browser: load the page, count matches. */
+export type HealGateway = Pick<BrowserGateway, "observe" | "verify">;
+
+/**
+ * A gateway opened on first use and closed with the run: `automate` has no browser of its own, and most runs never
+ * heal anything. A browser that fails to open fails that heal (a fallback), never the run's final `close`.
+ */
+export function lazyGateway(open: () => Promise<BrowserGateway>): HealGateway & { close(): Promise<void> } {
+  let gw: Promise<BrowserGateway> | undefined;
+  const get = (): Promise<BrowserGateway> => (gw ??= open());
+  return {
+    observe: async (o) => (await get()).observe(o),
+    verify: async (els) => (await get()).verify(els),
+    close: async () => {
+      await gw?.then(
+        (g) => g.close(),
+        () => undefined,
+      );
+    },
+  };
+}
+
 /** A proposal for the repair hint: the broken locator and a replacement verified to match one element. */
 export interface HealRecord {
   test: string;
@@ -87,7 +109,7 @@ export interface HealRecord {
   confidence: number;
 }
 
-/** Only a locator failure is healed — and only on triage's confident word (spec §6.6 step 1). */
+/** Only what triage called a locator failure is healed (spec §6.6 step 1). */
 const HEALABLE: ReadonlySet<FailureCategory> = new Set(["locator-missing", "locator-ambiguous"]);
 const NONE = "none-of-these";
 const PICK_INSTRUCTIONS = "Which element on the page did the failing locator mean?";
@@ -115,7 +137,8 @@ interface Offered {
  */
 export function makeHeal(opts: {
   decider: Decider;
-  gateway: BrowserGateway;
+  /** The lib backend's: the cli one counts no matches (`count -1`), so every pick would be refused. */
+  gateway: HealGateway;
   url: string;
 }): (failure: TestResult, triage: TriageResult) => Promise<HealRecord | undefined> {
   const { decider, gateway, url } = opts;

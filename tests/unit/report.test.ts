@@ -163,6 +163,16 @@ describe("renderReportMd — decision layer sections (ADR-0022)", () => {
     expect(md).toContain("| TC-3 | app-bug | 0.91 |");
   });
 
+  it("names every healed locator, was → now, so a reviewer sees the test now targets another element", () => {
+    const md = renderReportMd({
+      ...base,
+      healed: [{ test: "TC-3", from: "getByRole('button', { name: 'A|B' })", to: "getByRole('button', { name: 'A|B!', exact: true })", confidence: 0.904 }],
+    });
+    expect(md).toContain("## Locators healed (1)");
+    expect(md).toContain("| TC-3 | `getByRole('button', { name: 'A\\|B' })` | `getByRole('button', { name: 'A\\|B!', exact: true })` | 0.90 |");
+    expect(renderReportMd({ ...base, healed: [] })).toBe(renderReportMd(base));
+  });
+
   it("summarises the decider: provider, calls, and fallbacks grouped by use and reason", () => {
     const md = renderReportMd({
       ...base,
