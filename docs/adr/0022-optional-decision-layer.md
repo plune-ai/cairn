@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-09-24
 - **Decision in code:** `src/decider/` (`types.ts`, `capabilities.ts`, `client-http.ts`, `guarded.ts`, `redact.ts`, `index.ts`), `src/config/index.ts` (`parseDeciderConfig`), `src/core/config.ts`, `src/llm/cost.ts`, `src/telemetry/index.ts`, `src/cli/index.ts` (`--decider`, `doctor`), `src/mcp/tools.ts`
-- **Applies from:** the next minor after 0.7.0
+- **Applies from:** 0.8.0
 - **Relationship to prior ADRs:** a new pass under [ADR-0017](0017-opt-in-pipeline-passes.md) (opt-in, byte-identical when off); its answers are untrusted per [ADR-0020](0020-untrusted-llm-verdicts-and-data-protection.md); deliberately **not** a role under [ADR-0011](0011-per-role-model-routing.md); traced per [ADR-0006](0006-observability-langfuse-v5-otel.md); fits the plain pipeline of [ADR-0013](0013-drop-langgraph.md).
 
 ## Context
