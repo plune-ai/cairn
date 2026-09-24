@@ -69,7 +69,8 @@ only make a result stricter, falls back silently on any failure, and is bounded 
      heuristic is weighed by what a wrong guess costs — a missed secret leaves the machine, a word scrubbed by
      mistake damages every input it appears in: a secret word on a line points at the values after it, and only
      credential-shaped ones are taken; a plain value only under a label whose *head* word names the secret
-     ("Password: qwerty", not "Password rules: must contain a digit"); a credential-shaped value is replaced
+     ("Password: qwerty", not "Password rules: must contain a digit" nor "Forgot password: /forgot-password");
+     a credential-shaped value is replaced
      wherever it appears (a negative case's `Qwerty123!x` carries it), a plain one or a PIN only as a whole token.
      A scrubbing failure is a fallback like any other.
    - A failed request is reported by its error name and cause code, never by its message: `fetch` quotes header

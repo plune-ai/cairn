@@ -214,8 +214,9 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
   if (provider === "jev" && !apiKey) throw new Error("DECIDER=jev needs TYPESAFE_API_KEY (your TypeSafe API key).");
   // An address given as CAIRN_TYPESAFE_BASE_URL overrides the SDK's own — so its key must be Cairn's too: the bare
   // TYPESAFE_API_KEY belongs to wherever the bare TYPESAFE_BASE_URL points (on some machines, a local laya-serve).
-  // (read("CAIRN_X") finds the literal CAIRN_X variable: the reader falls back to the name as given.)
-  if (provider === "jev" && read("CAIRN_TYPESAFE_BASE_URL")?.trim() && !read("CAIRN_TYPESAFE_API_KEY")?.trim()) {
+  // (read("CAIRN_X") finds the literal CAIRN_X variable: the reader falls back to the name as given.) Set but empty
+  // counts as set: it still overrides the bare address — with the default one.
+  if (provider === "jev" && read("CAIRN_TYPESAFE_BASE_URL") !== undefined && !read("CAIRN_TYPESAFE_API_KEY")?.trim()) {
     throw new Error("CAIRN_TYPESAFE_BASE_URL is set, so DECIDER=jev takes its key from CAIRN_TYPESAFE_API_KEY — set that too.");
   }
 

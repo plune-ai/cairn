@@ -16,15 +16,19 @@ import type { Question } from "./types.js";
 
 // A secret word, anywhere on a line, as a whole word.
 const SECRET_WORD =
-  /(?<![\p{L}\p{N}])(?:pass(?:words?|wd|phrase|code)?|pwd|secrets?|tokens?|(?:api)?keys?|otp|pin|credentials?|creds|парол\p{L}*|токен\p{L}*|секрет\p{L}*|ключ\p{L}*|креденшел\p{L}*|облікові\s+дані|учетные\s+данные)(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:pass(?:words?|wd|phrase|code)?|pwd|secrets?|tokens?|(?:api)?keys?|otp|pin|пін|пин|credentials?|creds|парол\p{L}*|токен\p{L}*|секрет\p{L}*|ключ\p{L}*|креденшел\p{L}*|облікові\s+дані|учетные\s+данные)(?![\p{L}\p{N}])/iu;
 
 // A label whose HEAD word is a secret word names the secret itself. English puts the head last ("Admin
 // password", "Stripe key", "PIN code"); Ukrainian/Russian first or last, in the nominative ("Пароль
-// адміністратора", "Тестовий пароль", "PIN-код") — "Password rules" and "Правила пароля" only talk about one.
+// адміністратора", "Тестовий пароль", "ПІН-код") — "Password rules" and "Правила пароля" only talk about one.
 const EN_SECRET_HEAD =
   /(?:^|[^\p{L}\p{N}])(?:pass(?:words?|wd|phrase|code)?|pwd|secrets?|tokens?|keys?|(?:otp|pin)(?:[\s-]?code)?|credentials?|creds)$/iu;
-const SLAVIC_HEAD = "(?:парол[ьіи]|токен[иы]?|секрет[иы]?|ключ[іи]?|креденшел[иі]|облікові\\s+дані|учетные\\s+данные|(?:otp|pin|пін)-?код)";
+const SLAVIC_HEAD =
+  "(?:парол[ьіи]|токен[иы]?|секрет[иы]?|ключ[іи]?|креденшел[иі]|облікові\\s+дані|учетные\\s+данные|(?:otp|pin|пін|пин)(?:-?код)?)";
 const SLAVIC_SECRET_HEAD = new RegExp(`^${SLAVIC_HEAD}(?![\\p{L}\\p{N}])|(?<![\\p{L}\\p{N}])${SLAVIC_HEAD}$`, "iu");
+/** "Forgot password", "Change password", "Змінити пароль" name a feature or a link, not the secret. */
+const ACTION_HEAD =
+  /(?:^|[^\p{L}\p{N}])(?:forgot(?:ten)?|reset|change|recover|restore|update|show|hide|toggle|remember|manage|edit|забули|змінити|скинути|відновити|показати|сховати|приховати|изменить|сбросить|восстановить|забыли|показать|скрыть)(?:\s+(?:your|the|my|свій|ваш|свой))?\s+\S+$/iu;
 
 type Head = "password" | "passphrase" | "credentials" | "code" | "other";
 
@@ -43,6 +47,10 @@ const strip = (s: string): string => s.trim().replace(/^[\s*_`"'([«“„‘]+|
 
 /** A value written in quotes is meant literally (single quotes excluded: they are apostrophes too). */
 const QUOTED = /[`"«“„]([^`"«»“”„\n]{4,})[`"»”“]/gu;
+/** …and a value that STARTS with a quote is that quote, spaces and all: `Password: "correct horse battery"`. */
+const QUOTED_VALUE = /^[`"«“„]([^`"«»“”„\n]{4,})[`"»”“]/u;
+/** The second column of a key–value table: `| Field | Value |`, `| Поле | Значення |` — not `| Field | Type |`. */
+const VALUE_COLUMN = /value|example|data|значенн|значени|приклад|пример|дані|данные/iu;
 
 /**
  * Shaped like a credential rather than a word: letters mixed with digits (not "6-digit"), or a symbol other
@@ -58,11 +66,12 @@ function credentialShaped(t: string, digitsOnly = false): boolean {
 
 function secretHead(rawLabel: string): Head | undefined {
   const label = strip(rawLabel.replace(/\([^)]*\)/g, " ")).replace(/\s+(?:for|of)\s.*$/i, ""); // "Password (admin)", "… for the admin"
+  if (ACTION_HEAD.test(label)) return undefined; // "Forgot password: /forgot-password", "Change password — Settings"
   const m = EN_SECRET_HEAD.exec(label) ?? SLAVIC_SECRET_HEAD.exec(label);
   if (!m) return undefined;
   const w = m[0].toLowerCase();
   if (/phrase/.test(w)) return "passphrase";
-  if (/otp|pin|пін|код|code/.test(w)) return "code";
+  if (/otp|pin|пін|пин|код|code/.test(w)) return "code";
   if (/pass|pwd|парол/.test(w)) return "password";
   if (/cred|креденшел|дані|данные/.test(w)) return "credentials";
   return "other";
@@ -70,7 +79,9 @@ function secretHead(rawLabel: string): Head | undefined {
 
 /** What a value under a secret head adds, whatever the rest of the line says. */
 function headValues(head: Head, value: string): string[] {
-  const v = strip(value.replace(/\([^)]*\)/g, " ")); // "(the admin's)" is commentary
+  const quoted = QUOTED_VALUE.exec(value.trim())?.[1];
+  const v = quoted ?? strip(value.replace(/\([^)]*\)/g, " ")); // "(the admin's)" is commentary
+  if (head !== "passphrase" && /^\/|:\/\//.test(v)) return []; // a path or a URL names a page, not a secret
   const first = strip(v.split(/[\s,;]+/)[0] ?? "");
   const pair = v.split(/\s*\/\s*/); // "login / password"
   switch (head) {
@@ -80,18 +91,26 @@ function headValues(head: Head, value: string): string[] {
     case "credentials":
       if (pair.length === 2) return [strip(pair[1]!)]; // "Email / password: qa@acme.test / qwerty"
       if (head === "credentials") return [];
-      return /\s/.test(v) ? [] : [v]; // a weak password is still one — but "required, 8-64 characters" is prose
+      return quoted !== undefined || !/\s/.test(v) ? [v] : []; // a weak password is still one — but "required, 8-64 characters" is prose
     case "code":
       return credentialShaped(first, true) ? [first] : []; // "PIN: 4711, same for all" — not "6-digit code…"
     case "other":
-      return credentialShaped(first) ? [first] : []; // "Key: abcd-1234" — not "Sort key: name"
+      // "Key: abcd-1234", "API key = `sk-live-abcdef`" — not "Sort key: name", nor `Sort key: "name"`
+      if (quoted !== undefined && !/\s/.test(v) && /[-_]/.test(v)) return [v];
+      return credentialShaped(first) ? [first] : [];
   }
 }
 
-/** `label: value`, `label = value` or `label — value`; bullets and quotes tolerated. */
-const LINE = /^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?(.{1,60}?)(?:\s*[:=：]|\s+[—–])\s*(.+)$/u;
-/** A login written next to its credential with no label at all: "Test account: qa@acme.test / Qwerty123!". */
-const LOGIN_PAIR = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\s*\/\s*(\S+)/gu;
+/** `label: value`, `label = value` or `label — value` / `label - value`; bullets and quotes tolerated. */
+const LINE = /^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?(.{1,60}?)(?:\s*[:=：]|\s+[—–]|\s+-(?=\s))\s*(.+)$/u;
+/**
+ * A login written next to its credential with no label at all: "Test account: qa@acme.test / Qwerty123!". The
+ * lookbehind starts a match only at a token's first character — without it a long run of word characters is
+ * rescanned from every position.
+ */
+const LOGIN_PAIR = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\s*\/\s*(\S+)/gu;
+/** "Login: admin / Password: qwerty", "User: qa@acme.test, Password: qwerty" — one label per segment. */
+const SEGMENT = /(?:[,;]|\s[/|])\s+(?=[^,;:]{1,40}[:=：])/;
 
 export function secretValues(knowledgeText: string, env: Record<string, string | undefined>): string[] {
   const out = new Set<string>();
@@ -101,54 +120,56 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
   };
   // A Markdown table: the row above its |---| rule is the header; a header cell naming a secret marks a column.
   let above: string[] = [];
-  let columns: { at: number; head: Head | undefined }[] | undefined; // undefined until the rule is seen
+  let columns: { at: number; head: Head | undefined }[] = [];
+  let keyValue = false; // a key–value table: | Password | qwerty | — known only once its rule is seen
   for (const line of knowledgeText.split(/\r?\n/)) {
-    for (const p of line.matchAll(LOGIN_PAIR)) if (credentialShaped(strip(p[1] ?? ""))) add(p[1] ?? "");
+    for (const p of line.matchAll(LOGIN_PAIR)) {
+      const v = strip(p[1] ?? "");
+      // Not a second login ("viewer@… / editor@…"), not a phone number ("qa@… / +380 44 …").
+      if (!v.includes("@") && !/^\+?[\d()-]+$/.test(v) && credentialShaped(v)) add(v);
+    }
     if (/^\s*\|/.test(line)) {
       const cells = line.split("|").slice(1, -1).map((c) => c.trim());
       if (cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c))) {
         columns = above.flatMap((c, at) => (SECRET_WORD.test(c) ? [{ at, head: secretHead(c) }] : []));
+        keyValue = VALUE_COLUMN.test(above[1] ?? "");
         continue;
       }
       above = cells;
-      if (columns) {
-        for (const { at, head } of columns) {
-          const cell = cells[at] ?? ""; // | admin | admin@acme.test | Adm1n!2024 |
-          for (const v of head ? headValues(head, cell) : []) add(v);
-          for (const t of cell.split(/[\s,;/]+/)) if (credentialShaped(strip(t))) add(t);
-        }
-        const rowHead = cells[0] ? secretHead(cells[0]) : undefined; // a key–value row: | Password | qwerty |
-        if (rowHead && cells[1]) for (const v of headValues(rowHead, cells[1])) add(v);
+      for (const { at, head } of columns) {
+        const cell = cells[at] ?? ""; // | admin | admin@acme.test | Adm1n!2024 |
+        for (const v of head ? headValues(head, cell) : []) add(v);
+        for (const t of cell.split(/[\s,;/]+/)) if (credentialShaped(strip(t))) add(t);
       }
+      const rowHead = keyValue && cells[0] ? secretHead(cells[0]) : undefined;
+      if (rowHead && cells[1]) for (const v of headValues(rowHead, cells[1])) add(v);
     } else {
       above = [];
-      columns = undefined;
+      columns = [];
+      keyValue = false;
     }
     const at = line.search(SECRET_WORD);
     if (at < 0) continue;
     // Everything after the secret word may hold it — "(password: Adm1n!2024)" included.
     const after = line.slice(at);
     for (const t of after.split(/[\s,;|/:]+/)) if (credentialShaped(strip(t))) add(t);
-    // Each "label: value" segment of the line: "User: qa@acme.test, Password: qwerty".
-    let headed = false;
-    for (const seg of line.split(/[,;]\s+(?=[^,;:]{1,40}[:=：])/)) {
+    for (const seg of line.split(SEGMENT)) {
       const m = LINE.exec(seg);
       const head = m?.[1] && m[2] ? secretHead(m[1]) : undefined;
-      if (head) {
-        headed = true;
-        for (const v of headValues(head, m![2]!)) add(v);
-      }
+      if (head) for (const v of headValues(head, m![2]!)) add(v);
     }
-    // Quotes are literal — a password in them counts; a button label or a message in them does not.
+    // Any other quote on the line counts only when it looks like a credential — "Forgot password?" does not.
     for (const q of after.matchAll(QUOTED)) {
       const v = q[1] ?? "";
-      if (headed || v.split(/\s+/).some((w) => credentialShaped(strip(w)))) add(v);
+      if (v.split(/\s+/).some((w) => credentialShaped(strip(w)))) add(v);
     }
   }
   for (const [k, v] of Object.entries(env)) {
     // PWD is the working directory, not a password.
     if (!v || k === "PWD" || !SECRET_ENV.test(k) || PUBLIC_ENV.test(k)) continue;
-    if (PASSWORD_ENV.test(k) || credentialShaped(v.trim(), true)) add(v); // not VITE_STORAGE_KEY=user
+    const t = v.trim();
+    // An env value is not prose: API_TOKEN=Welcome! is the token, closing "!" and all — VITE_STORAGE_KEY=user is not.
+    if (PASSWORD_ENV.test(k) || credentialShaped(t, true) || /[?!]$/.test(t)) add(v);
   }
   return [...out].sort((a, b) => b.length - a.length); // longest first: a secret containing another is scrubbed whole
 }

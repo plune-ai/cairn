@@ -43,9 +43,11 @@ Cairn never sends knowledge files, session state, screenshots or environment val
 sends. A secret word on a line (`Password`, `API key`, `Token`, `Пароль`, …, also in a table header) points at the
 values after it, and those that look like credentials are taken — `Qwerty123!`, `sk_live_…`, `admin@acme.test`,
 never a plain word; so is the credential in a login pair such as `qa@acme.test / Qwerty123!`. A label that names
-the secret itself also takes a plain value: `Password: qwerty`, `Login / password: admin / qwerty`, `PIN: 4711`.
-A label that only talks about one takes nothing: `Password rules: must contain a digit`, nor does a quoted UI
-text (`"Forgot password?"`). A credential-shaped value is replaced wherever it appears, so `Qwerty123!x` in a
+the secret itself also takes a plain value: `Password: qwerty`, `Login / password: admin / qwerty`, `PIN: 4711`,
+and in a table whose second column holds values (`| Field | Value |`) so does a `| Password | qwerty |` row — not
+in a field specification (`| Field | Type |`). A label that only talks about one takes no plain value:
+`Password rules: must contain a digit`, `Forgot password: /forgot-password` (a page path or a URL is never taken);
+nor does a quoted UI text (`"Forgot password?"`). A credential-shaped value is replaced wherever it appears, so `Qwerty123!x` in a
 negative case loses it too; a plain value or a PIN only as a whole token, never inside a longer word. A secret
 that nothing labels cannot be recognised — keep such values out of case texts.
 

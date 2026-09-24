@@ -286,6 +286,18 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["PIN-код: 4711", "4711"],
     ["Credentials: admin:Adm1n!2024", "Adm1n!2024"],
     ['Password: "correct horse battery"', "correct horse battery"],
+    ['Password: "correct horse battery" — same on staging', "correct horse battery"],
+    ["ПІН-код: 4711", "4711"],
+    ["ПІН: 4711", "4711"],
+    ["ПИН-код: 4711", "4711"],
+    ["ПИН: 4711", "4711"],
+    ["Password - qwerty", "qwerty"],
+    ["Пароль - qwerty", "qwerty"],
+    ["New password: qwerty", "qwerty"],
+    ["Login: admin / Password: qwerty", "qwerty"],
+    ["Логін: admin / Пароль: qwerty", "qwerty"],
+    ["Email: qa@acme.test | Password: qwerty", "qwerty"],
+    ["| Параметр | Значення |\n|---|---|\n| Пароль | qwerty |", "qwerty"],
   ])("knowledge %j yields a scrubbable secret", (line, secret) => {
     expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
@@ -314,6 +326,19 @@ describe("secretValues / redact (spec §3.7)", () => {
     "| Password | Expected |\n|---|---|",
     "Password: required",
     "Credentials: Bitwarden",
+    "- Forgot password: /forgot-password",
+    "- Change password: /settings/password",
+    "- Password: /account/password",
+    "API key: https://dashboard.stripe.com/apikeys",
+    "Forgot password — broken",
+    "Change password — Settings",
+    "Змінити пароль — Налаштування",
+    "| Field | Type | Required |\n|---|---|---|\n| Password | password | yes |",
+    "| Field | Role |\n|---|---|\n| Password | textbox |",
+    '- Password: required, min 8; error "Password must be at least 8 characters"',
+    'Sort key: "name"',
+    "Accounts: viewer@acme.test / editor@acme.test, password in the vault",
+    "Support: qa@acme.test / +380-44-123-4567",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
   });
@@ -368,8 +393,22 @@ describe("secretValues / redact (spec §3.7)", () => {
       OPENAI_KEY: "sk-555555",
       SECRET_KEY_BASE: "skb-666666",
       PASSWORD_HASH_PEPPER: "pepper-777777",
+      API_TOKEN: "Welcome!", // an env value is not prose: its closing "!" is part of it
+      ADMIN_SECRET: "Secret!",
+      JWT_SECRET: "letmein?",
     };
     expect(secretValues("", env).sort()).toEqual(Object.values(env).sort());
+  });
+
+  it("a long line costs linear time — no pattern rescans a run of word characters from every position", () => {
+    const time = (text: string): number => {
+      const t0 = performance.now();
+      secretValues(text, {});
+      return performance.now() - t0;
+    };
+    time("warm-up password: Qwerty123!");
+    expect(time("a".repeat(80_000))).toBeLessThan(500); // quadratic, this took seconds
+    expect(time(`password: ${"a b, ".repeat(20_000)}`)).toBeLessThan(500);
   });
 
   it("redacts every occurrence, longest secret first", () => {

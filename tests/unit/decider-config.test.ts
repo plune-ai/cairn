@@ -81,6 +81,8 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     const run = () => parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://api.typesafe.ai" });
     expect(run).toThrow(/CAIRN_TYPESAFE_API_KEY — set that too/);
     expect(run).not.toThrow(/laya-token/);
+    // Set but empty still overrides the bare address (with the default one) — so it still needs its own key.
+    expect(() => parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "" })).toThrow(/set that too/);
     expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://api.typesafe.ai", CAIRN_TYPESAFE_API_KEY: "cloud" })?.apiKey).toBe("cloud");
   });
 
