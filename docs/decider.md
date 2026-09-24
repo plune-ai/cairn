@@ -33,17 +33,21 @@ Cairn prints one line when a decider's data leaves the machine, and `cairn docto
 Each provider reads only its own address and key, so switching `--decider laya` to `--decider jev` never sends
 your TypeSafe key to the laya address in your `.env`. And `jev` talks to TypeSafe only: if your `TYPESAFE_BASE_URL`
 points at a laya-serve (the TypeSafe SDK can be set up that way), `--decider jev` stops with an error — use
-`--decider laya` for that server.
+`--decider laya` for that server. To reach TypeSafe from such a machine, set `CAIRN_TYPESAFE_BASE_URL` and
+`CAIRN_TYPESAFE_API_KEY` together: the `CAIRN_` names win, and the address without its key is an error, so the
+local token of the SDK setup never travels to TypeSafe.
 
 Cairn never sends knowledge files, session state, screenshots or environment values. On top of that it scrubs,
 **best-effort**, the values your knowledge files label as secrets and your secret environment variables
 (`*_PASSWORD`, `*_TOKEN`, `*_KEY` except public keys, anything with `SECRET`, …) out of every state and question it
 sends. A secret word on a line (`Password`, `API key`, `Token`, `Пароль`, …, also in a table header) points at the
 values after it, and those that look like credentials are taken — `Qwerty123!`, `sk_live_…`, `admin@acme.test`,
-never a plain word. A label that names the secret itself also takes a plain value: `Password: qwerty`. A label
-that only talks about one takes nothing: `Password rules: must contain a digit`. A value is replaced as a whole
-token, never inside a longer word. A secret that nothing labels cannot be recognised — keep such values out of
-case texts.
+never a plain word; so is the credential in a login pair such as `qa@acme.test / Qwerty123!`. A label that names
+the secret itself also takes a plain value: `Password: qwerty`, `Login / password: admin / qwerty`, `PIN: 4711`.
+A label that only talks about one takes nothing: `Password rules: must contain a digit`, nor does a quoted UI
+text (`"Forgot password?"`). A credential-shaped value is replaced wherever it appears, so `Qwerty123!x` in a
+negative case loses it too; a plain value or a PIN only as a whole token, never inside a longer word. A secret
+that nothing labels cannot be recognised — keep such values out of case texts.
 
 ## Running Laya locally
 

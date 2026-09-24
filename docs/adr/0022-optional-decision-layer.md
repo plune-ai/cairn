@@ -56,8 +56,10 @@ only make a result stricter, falls back silently on any failure, and is bounded 
      `DECIDER_API_KEY`. A TypeSafe key is never sent to a laya or compat address — not even one left in `.env`
      when `--decider jev` is tried for a single run. And `jev` accepts only an `https://*.typesafe.ai` address:
      the TypeSafe SDK's variable may point at a laya-serve (this project's own machine does), and `jev` there
-     would hand it the TypeSafe key and read it with Jev's caps, which laya cuts silently. A URL carrying
-     `user:password` is refused, and an invalid URL is echoed with its credential masked.
+     would hand it the TypeSafe key and read it with Jev's caps, which laya cuts silently. For the same reason
+     `CAIRN_TYPESAFE_BASE_URL` needs `CAIRN_TYPESAFE_API_KEY`: the bare key belongs to the bare address. A URL
+     carrying `user:password` is refused, and an invalid URL is refused without being echoed — a malformed value
+     (`https://u:p#ss@host`, a key pasted by mistake) can still carry a credential that no parser finds.
    - The first decider of a process whose base URL is not loopback prints one line saying where the data goes
      and recommending `laya` for apps behind a login; `cairn doctor` prints the destination explicitly.
    - A state never contains knowledge files, `storageState`, screenshots or env values — Cairn never puts them
@@ -67,7 +69,8 @@ only make a result stricter, falls back silently on any failure, and is bounded 
      heuristic is weighed by what a wrong guess costs — a missed secret leaves the machine, a word scrubbed by
      mistake damages every input it appears in: a secret word on a line points at the values after it, and only
      credential-shaped ones are taken; a plain value only under a label whose *head* word names the secret
-     ("Password: qwerty", not "Password rules: must contain a digit"); and a value is replaced as a whole token.
+     ("Password: qwerty", not "Password rules: must contain a digit"); a credential-shaped value is replaced
+     wherever it appears (a negative case's `Qwerty123!x` carries it), a plain one or a PIN only as a whole token.
      A scrubbing failure is a fallback like any other.
    - A failed request is reported by its error name and cause code, never by its message: `fetch` quotes header
      values and URLs in its messages.

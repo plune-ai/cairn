@@ -191,8 +191,8 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
     );
   }
   if (!/^https?:\/\//i.test(baseUrl) || !URL.canParse(baseUrl)) {
-    // Echoed for typos, but never a credential: an unparsable `https://u:p#ss@host` still carries one.
-    throw new Error(`Invalid ${urlVar}='${baseUrl.replace(/^(\w+:\/*)?.*@/, "$1***@")}' — expected an http(s) URL.`);
+    // Not echoed: a malformed value can still carry a credential (`https://u:p#ss@host`, a key pasted by mistake).
+    throw new Error(`Invalid ${urlVar} — expected an http(s) URL such as http://127.0.0.1:8000 (the value is not shown).`);
   }
   const url = new URL(baseUrl);
   if (url.username || url.password) {
@@ -212,6 +212,12 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
 
   const apiKey = read(keyVar)?.trim() || undefined;
   if (provider === "jev" && !apiKey) throw new Error("DECIDER=jev needs TYPESAFE_API_KEY (your TypeSafe API key).");
+  // An address given as CAIRN_TYPESAFE_BASE_URL overrides the SDK's own — so its key must be Cairn's too: the bare
+  // TYPESAFE_API_KEY belongs to wherever the bare TYPESAFE_BASE_URL points (on some machines, a local laya-serve).
+  // (read("CAIRN_X") finds the literal CAIRN_X variable: the reader falls back to the name as given.)
+  if (provider === "jev" && read("CAIRN_TYPESAFE_BASE_URL")?.trim() && !read("CAIRN_TYPESAFE_API_KEY")?.trim()) {
+    throw new Error("CAIRN_TYPESAFE_BASE_URL is set, so DECIDER=jev takes its key from CAIRN_TYPESAFE_API_KEY — set that too.");
+  }
 
   const usesRaw = read("DECIDER_USES")?.trim() || "repair-triage,coverage";
   const uses = [...new Set(usesRaw.split(",").map((s) => s.trim()).filter(Boolean))];

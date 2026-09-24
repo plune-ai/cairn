@@ -271,6 +271,21 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["| Role | Email | Password |\n|---|---|---|\n| admin | admin@acme.test | Adm1n!2024 |", "Adm1n!2024"],
     ["| Role | Password |\n|---|---|\n| viewer | qwerty |", "qwerty"],
     ["| Field | Value |\n|---|---|\n| Password | qwerty |", "qwerty"],
+    ["Log in as admin@acme.test (password: Adm1n!2024)", "Adm1n!2024"],
+    ["Увійти як admin@acme.test (пароль: Adm1n!2024)", "Adm1n!2024"],
+    ["Email / password: qa@acme.test / qwerty", "qwerty"],
+    ["Login / password: admin / qwerty", "qwerty"],
+    ["Логін і пароль: qa@acme.test / qwerty", "qwerty"],
+    ["Passcode: 4711, same for all", "4711"],
+    ["Test account: qa@acme.test / Qwerty123!", "Qwerty123!"],
+    ["User: qa@acme.test, Password: qwerty", "qwerty"],
+    ["User: qa@acme.test, password:Qwerty123!", "Qwerty123!"],
+    ["Пароль — qwerty", "qwerty"],
+    ["OTP code: 123456", "123456"],
+    ["PIN code: 4711", "4711"],
+    ["PIN-код: 4711", "4711"],
+    ["Credentials: admin:Adm1n!2024", "Adm1n!2024"],
+    ['Password: "correct horse battery"', "correct horse battery"],
   ])("knowledge %j yields a scrubbable secret", (line, secret) => {
     expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
@@ -291,6 +306,14 @@ describe("secretValues / redact (spec §3.7)", () => {
     "Ключові сторінки: кошик, оформлення",
     "Password: none",
     "| Field | Value |\n|---|---|\n| Password | see the vault |\n| Role | admin |",
+    'Login page: "Sign in" heading, "Forgot password?" link',
+    "Форма входу: поле «Email», поле «Пароль», кнопка «Увійти».",
+    'Wrong password shows "Invalid email or password".',
+    "Forgot password? link opens the reset flow",
+    "Password reset page: http://localhost:3000/forgot-password",
+    "| Password | Expected |\n|---|---|",
+    "Password: required",
+    "Credentials: Bitwarden",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
   });
@@ -302,8 +325,15 @@ describe("secretValues / redact (spec §3.7)", () => {
     expect(redact("the value from the form", s)).toBe("the value from the form");
   });
 
-  it("a secret is replaced as a whole token — never inside a longer word", () => {
+  it("a plain secret or a PIN is replaced as a whole token — never inside a longer word", () => {
     expect(redact("Username: name; name-tag; the name", ["name"])).toBe("Username: ‹redacted›; ‹redacted›-tag; the ‹redacted›");
+    expect(redact("qwertyuiop, qwerty", ["qwerty"])).toBe("qwertyuiop, ‹redacted›");
+    expect(redact("order 14711, PIN 4711", ["4711"])).toBe("order 14711, PIN ‹redacted›");
+  });
+
+  it("a credential-shaped secret is replaced wherever it appears — a value derived from it carries it", () => {
+    const s = secretValues("Password: Qwerty123!", {});
+    expect(redact("negative case: type Qwerty123!x, then xQwerty123!", s)).toBe("negative case: type ‹redacted›x, then x‹redacted›");
     expect(redact("fill('Sup3rS3cret!') and Sup3rS3cret!!", ["Sup3rS3cret!"])).toBe("fill('‹redacted›') and ‹redacted›!");
   });
 

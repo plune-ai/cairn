@@ -70,7 +70,18 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     const env = { DECIDER: "jev", TYPESAFE_API_KEY: "cloud", DECIDER_BASE_URL: "http://127.0.0.1:8000" };
     expect(parse(env)?.baseUrl).toBe("https://api.typesafe.ai");
     expect(parse({ ...env, TYPESAFE_BASE_URL: "https://eu.api.typesafe.ai" })?.baseUrl).toBe("https://eu.api.typesafe.ai");
-    expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://typesafe.ai" })?.baseUrl).toBe("https://typesafe.ai");
+    expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://typesafe.ai", CAIRN_TYPESAFE_API_KEY: "cloud" })?.baseUrl).toBe(
+      "https://typesafe.ai",
+    );
+  });
+
+  it("CAIRN_TYPESAFE_BASE_URL needs CAIRN_TYPESAFE_API_KEY — the bare key belongs to wherever the bare address points", () => {
+    // This machine's SDK setup: TYPESAFE_BASE_URL + TYPESAFE_API_KEY serve a local laya-serve.
+    const env = { DECIDER: "jev", TYPESAFE_BASE_URL: "http://127.0.0.1:8000", TYPESAFE_API_KEY: "laya-token" };
+    const run = () => parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://api.typesafe.ai" });
+    expect(run).toThrow(/CAIRN_TYPESAFE_API_KEY — set that too/);
+    expect(run).not.toThrow(/laya-token/);
+    expect(parse({ ...env, CAIRN_TYPESAFE_BASE_URL: "https://api.typesafe.ai", CAIRN_TYPESAFE_API_KEY: "cloud" })?.apiKey).toBe("cloud");
   });
 
   it("jev refuses any address that is not https://*.typesafe.ai — the TypeSafe key never reaches another server", () => {
@@ -97,14 +108,18 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     );
   });
 
-  it.each(["https://qa:p#ss@gpu-box:8000", "ftp://u:p4ss@host", "http:/u:p4ss@host", "https//sk-live-p4ss@host", "sk-live-p4ss@host"])(
-    "an invalid URL %j is echoed with its credential masked",
-    (u) => {
-      const run = () => parse({ DECIDER: "compat", DECIDER_BASE_URL: u });
-      expect(run).toThrow(/Invalid DECIDER_BASE_URL='[^']*\*\*\*@/);
-      expect(run).not.toThrow(/p#ss|p4ss|qa:/);
-    },
-  );
+  it.each([
+    "https://qa:p#ss@gpu-box:8000",
+    "ftp://u:p4ss@host",
+    "http:/u:p4ss@host",
+    "https//sk-live-p4ss@host",
+    "sk-live-p4ss@host",
+    "sk-live-0123456789abcdef", // a key pasted into the address
+  ])("an invalid URL %j is refused without being echoed", (u) => {
+    const run = () => parse({ DECIDER: "compat", DECIDER_BASE_URL: u });
+    expect(run).toThrow(/Invalid DECIDER_BASE_URL — expected an http\(s\) URL/);
+    expect(run).not.toThrow(/p#ss|p4ss|qa:|sk-live/);
+  });
 
   it("every variable reads with the CAIRN_ prefix too", () => {
     const d = parse({
