@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-24
+
 ### Added
 
 - **An optional decision layer (`DECIDER`, [ADR-0022](docs/adr/0022-optional-decision-layer.md)) — the
@@ -61,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failing suite sends them.
 - **The architecture overview no longer calls Cairn single-page:** `--flow` (ADR-0017) follows in-app
   navigation for up to `--max-pages` pages, and the decision layer is listed among the technology pillars.
+- **`.env.example` lists the decision layer's variables**, commented out with the defaults the code uses: an
+  empty `CAIRN_TYPESAFE_BASE_URL=` counts as set, so an uncommented copy would change what `DECIDER=jev` needs.
 
 ### Fixed
 
