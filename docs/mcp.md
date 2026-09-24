@@ -24,7 +24,7 @@ npm i @modelcontextprotocol/sdk
 |------|--------------|---------|
 | `explore`  | Explore a page → methodology-based cases → `@playwright/test` code → validate ⇄ repair | cases, validation summary, metrics, Pilot verdict, cost, run dir |
 | `design`   | Explore a page → cases in ATC/MTC format, **no code** | cases, metrics, cost, run dir |
-| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir; with an active decider, `decider` and `notRepaired` |
+| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir; with an active decider, `decider` and, when any, `notRepaired` |
 
 `explore` and `design` take the same input: `url` (required) plus optional `session`, `flow`, `setup`,
 `gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages`, `decider` —
@@ -39,8 +39,9 @@ back as JSON (run id, the generated cases or spec files, validation / metrics / 
   `LAYA_API_KEY`, `jev` the `TYPESAFE_*` pair);
 - `DECIDER_USES`, `DECIDER_SHADOW` and the limits.
 
-On `design` the parameter changes nothing unless the call passes a `checklist` and `coverage` is enabled. It is
-enabled when `DECIDER_USES` names it, or in shadow mode with `DECIDER_USES` unset, which asks every use point.
+On `design` the parameter changes nothing unless the call passes a `checklist` and `coverage` is enabled; a
+configuration error still fails the call at start. `coverage` is enabled when `DECIDER_USES` names it, or in shadow
+mode with `DECIDER_USES` unset or empty, which asks every use point.
 The default use point, repair triage, lives in the repair loop, which `design` does not run.
 
 An active decider is reported by `explore` and `design` in the run's `report.json`. `automate` writes no report,

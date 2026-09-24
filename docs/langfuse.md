@@ -50,7 +50,7 @@ is a `WARNING` span whose status message is the reason, so filtering a trace by 
 | `decider.<use>.agreement` | the run's trace, shadow mode only | 1 when the decider's coverage is within 0.1 of the LLM judge's, else 0; none when the judge failed or the decider did not decide. Only `coverage` has one: today's path does not classify failures |
 
 A confidence describes the shape of an answer's distribution, not the chance that it is right. Without Langfuse,
-`report.json` keeps the counts (`decider`: calls and fallbacks) and, in `notRepaired`, the confident triage answers
-that kept a test out of repair, but no other answer. In shadow mode `report.json` has no `decider` key;
+`report.json` keeps the counts (`decider`: calls and fallbacks) and what the answers changed: the tests triage kept
+out of repair (`notRepaired`) and a coverage score the decider set. It keeps no per-call answer. In shadow mode `report.json` has no `decider` key;
 `runs/<id>/decider-shadow.json` (`decider-shadow-automate.json` for `automate`) keeps every answer with its
 confidence and latency.

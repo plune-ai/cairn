@@ -47,7 +47,8 @@ An active run reports the layer, and where depends on the command:
 
 The `decider` row of the cost summary counts the answered decisions only. Cairn records no usage for a fallback,
 whether it was refused before sending (its length, `DECIDER_MAX_CALLS`) or failed on the way (a timeout, an HTTP
-error, an invalid answer). A call that reached the provider and came back invalid may still be billed.
+error, an invalid answer). A call that reached the provider may still be billed, even when it timed out or came
+back invalid.
 
 ## Providers
 
