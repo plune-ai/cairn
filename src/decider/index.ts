@@ -8,6 +8,7 @@ import { CAPS, checkCaps } from "./capabilities.js";
 import { postSystemOne, type HttpTarget } from "./client-http.js";
 import { guarded } from "./guarded.js";
 import { redact, redactQuestion } from "./redact.js";
+import type { TriageResult } from "./uses/repair-triage.js";
 import {
   DeciderUnavailable,
   type Decider,
@@ -145,6 +146,20 @@ function shadowLog(telemetry?: Pick<Telemetry, "recordScore">): ShadowLog {
       entries.push(e);
       if (e.agreement !== undefined) telemetry?.recordScore?.(`decider.${e.use}.agreement`, e.agreement);
     },
+  };
+}
+
+/**
+ * The report keys an opted-in run adds — `{}` otherwise, so a run without the flag writes the very same
+ * files. Shadow mode adds nothing here either: its only artifact is decider-shadow.json.
+ */
+export function deciderReportKeys(
+  d: Decider | undefined,
+  notRepaired?: TriageResult[],
+): { decider?: DeciderSummary; notRepaired?: TriageResult[] } {
+  return {
+    ...(d && !d.shadow ? { decider: d.summary() } : {}),
+    ...(notRepaired?.length ? { notRepaired } : {}),
   };
 }
 

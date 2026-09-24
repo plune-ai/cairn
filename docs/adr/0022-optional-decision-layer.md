@@ -86,8 +86,10 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    call is a Langfuse span `decider.<use>` under the active stage — provider, model, latency, questions, answers
    with their distributions, `fallback` and its reason — plus a `decider.<use>.confidence` score.
 9. **Evidence before defaults.** A use point enters in **shadow mode** first (`--decider-shadow`): the decider is
-   asked, its answer is recorded beside the current path's decision in `runs/<id>/decider-shadow.json` and
-   Langfuse, and *nothing* else in the run changes. A use point leaves shadow only on pilot evidence (agreement
+   asked, its answer is recorded beside the current path's decision in `runs/<id>/decider-shadow.json`
+   (`decider-shadow-automate.json` for `automate`, which reuses a design run's folder) and in Langfuse
+   (`decider.<use>.agreement`), and *nothing* else in the run changes — its calls are metered into a private
+   ledger, so even `report.json`'s cost is untouched. A use point leaves shadow only on pilot evidence (agreement
    ≥ 90 %, or ≥ 85 % hand-labelled precision for repair triage; fallbacks < 10 %). Use points that fail are
    removed from the default `DECIDER_USES`, or deleted.
 10. **No artifact-schema bump.** New `report.json` keys appear only under the opt-in flag. Bumping
@@ -137,8 +139,10 @@ changed the design.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.
 - **The protocol has a single owner**, so a Jev wire change is one file and one test file.
-- **Configuration grows by eleven variables and one flag** (`--decider`) — seven `DECIDER*` settings, three
-  provider keys and TypeSafe's own `TYPESAFE_BASE_URL` — all `CAIRN_`-prefixable, all inert when `DECIDER` is off.
+- **Configuration grows by twelve variables and two flags** (`--decider`, `--decider-shadow`) — eight `DECIDER*`
+  settings, three provider keys and TypeSafe's own `TYPESAFE_BASE_URL` — all `CAIRN_`-prefixable, all inert when
+  `DECIDER` is off. `DECIDER_SHADOW` without a provider is an error: a pilot that silently collected nothing is
+  worse than a refusal.
   The `--help` snapshot changed on purpose.
 - **Confidence is a shape, not a promise.** Documentation never presents it as a probability of being right.
 - **Jev stays out of `docs/cost.md` and `npm run bench`** until the repository owner has read TypeSafe's terms on

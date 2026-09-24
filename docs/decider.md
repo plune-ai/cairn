@@ -17,6 +17,18 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 - `confidence` describes the shape of an answer's distribution, **not** the chance that it is right. Each
   provider computes it differently, so a threshold tuned on one does not carry over to another.
 
+## Use points
+
+`DECIDER_USES` picks them (default: both). An unknown name is an error, not a silent no-op.
+
+| Use | Where | What a confident answer does | Otherwise |
+|---|---|---|---|
+| `repair-triage` | the validate ⇄ repair loop (`explore`, `automate --validate`) | one six-way choice per failing test, over its name and error: `app-bug` / `env-or-session` keep the test **out of the repair hint** and list it under *Not repaired*; `locator-ambiguous` / `locator-missing` / `timing` / `wrong-assertion` only tag its hint line | the test goes into the hint exactly as today |
+| `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case says yes | any unsure or unavailable answer → the LLM judge decides, as today |
+
+When every failing test is excluded, the loop stops without spending a repair attempt. A test excluded once is
+not asked about again in that run.
+
 ## Providers
 
 | | `jev` | `laya` | `compat` |
@@ -80,10 +92,36 @@ at 192 and the whole at 512 (English checkpoint) or 1 024 (multilingual) — sil
 So Cairn counts the state and the question together, checks every option on its own, and refuses what would not
 fit: a longer input is a fallback, never a truncation.
 
+## Shadow mode — judge it before you trust it
+
+```bash
+cairn explore --url <url> --checklist checklist.md --decider laya --decider-shadow
+```
+
+In shadow mode the decider is asked at every enabled use point, and **nothing it says is acted on**: the run's
+prompts, tests, `report.json` (cost included — its calls go to a private ledger) and `report.md` are what they
+would have been without it. Its answers land in `runs/<id>/decider-shadow.json` (`decider-shadow-automate.json`
+for `automate`, which reuses a design run's folder) next to what the run actually did:
+
+```json
+{ "provider": "laya", "model": "jev-latest", "minConfidence": 0.75, "calls": 3, "fallbacks": [], "cost": { … },
+  "entries": [
+    { "use": "repair-triage", "input": "Playwright test \"…\" failed.\nError:\n…", "current": "repair",
+      "decider": { "category": "timing", "confidence": 0.82, "wouldExclude": false }, "confidence": 0.82, "latencyMs": 164 },
+    { "use": "coverage", "input": { "items": 5, "cases": 7 }, "current": 0.8,
+      "decider": [{ "item": "…", "covered": true }], "latencyMs": 1210, "agreement": 1 } ] }
+```
+
+`agreement` (also a Langfuse score, `decider.<use>.agreement`) is 1 when the decider's coverage is within 0.1 of
+the judge's. Repair triage has none: today's path does not classify failures, so its answers must be checked by
+hand. A use point is worth turning on when the pilot shows agreement ≥ 90 % (hand-checked precision ≥ 85 % for
+triage) with fewer than 10 % fallbacks — and the confidence threshold is tuned per use point and per provider.
+
 ## Configuration
 
 All variables, their defaults and their `CAIRN_`-prefixed forms: [configuration.md](configuration.md#decision-layer).
-`--decider <off|jev|laya|compat>` on `explore`, `design` and `automate` overrides `DECIDER` for one run.
+`--decider <off|jev|laya|compat>` on `explore`, `design` and `automate` overrides `DECIDER` for one run;
+`--decider-shadow` turns shadow mode on for one run.
 
 ## Checking the setup
 

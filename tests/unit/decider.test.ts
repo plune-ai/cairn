@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeDecider, dataDestination, writeShadowFile } from "../../src/decider/index.js";
+import { makeDecider, dataDestination, writeShadowFile, deciderReportKeys } from "../../src/decider/index.js";
 import { secretValues, redact } from "../../src/decider/redact.js";
 import { CostLedger } from "../../src/llm/cost.js";
 import type { DecisionTrace } from "../../src/telemetry/index.js";
@@ -261,6 +261,18 @@ describe("shadow mode (spec §7) and the run summary", () => {
     expect(d.shadow!.entries).toHaveLength(2);
     expect(recordScore).toHaveBeenCalledTimes(1);
     expect(recordScore).toHaveBeenCalledWith("decider.coverage.agreement", 1);
+  });
+
+  it("deciderReportKeys: nothing without a decider or in shadow mode; the summary and not-repaired tests when active", () => {
+    const tr = { test: "A", category: "app-bug" as const, confidence: 0.9, exclude: true };
+    expect(deciderReportKeys(undefined)).toEqual({});
+    expect(deciderReportKeys(undefined, [])).toEqual({});
+    expect(deciderReportKeys(makeDecider(cfg({ ...localLaya, shadow: true }), { ledger: new CostLedger() }), [])).toEqual({});
+    const active = makeDecider(cfg(localLaya), { ledger: new CostLedger() })!;
+    expect(deciderReportKeys(active, [tr])).toEqual({
+      decider: { provider: "laya", model: "jev-latest", calls: 0, fallbacks: [] },
+      notRepaired: [tr],
+    });
   });
 
   it("writeShadowFile writes nothing without a decider or for an active one", async () => {

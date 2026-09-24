@@ -18,7 +18,14 @@ import { deterministicScores, type Score } from "../eval/scorers.js";
 import { computeCoverage } from "../eval/coverage.js";
 import { designGapCases } from "../eval/gap-cases.js";
 import { judgeTestCases, judgeChecklistCoverage, checklistCoverageScore } from "../eval/judge.js";
-import { makeDecider, secretValues, writeShadowFile, type Decider, type DeciderSummary } from "../decider/index.js";
+import {
+  makeDecider,
+  secretValues,
+  writeShadowFile,
+  deciderReportKeys,
+  type Decider,
+  type DeciderSummary,
+} from "../decider/index.js";
 import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
 import { pilotReview, type PilotVerdict } from "../eval/pilot.js";
 import { collectPriorRuns, unionPassedTitles, experienceForUrl } from "../eval/collect.js";
@@ -589,20 +596,6 @@ export interface DesignResult {
 /** ADR-0022: the decider for checklist coverage — only when that use is enabled. */
 function coverageDecider(d: Decider | undefined): Decider | undefined {
   return d?.uses.has("coverage") ? d : undefined;
-}
-
-/**
- * ADR-0022: the report keys an opted-in run adds — `{}` otherwise, so a run without the flag writes the very
- * same files. Shadow mode adds nothing here either: its only artifact is decider-shadow.json.
- */
-function deciderReportKeys(
-  d: Decider | undefined,
-  notRepaired?: TriageResult[],
-): { decider?: DeciderSummary; notRepaired?: TriageResult[] } {
-  return {
-    ...(d && !d.shadow ? { decider: d.summary() } : {}),
-    ...(notRepaired?.length ? { notRepaired } : {}),
-  };
 }
 
 function suiteFromUrl(url: string): string {
