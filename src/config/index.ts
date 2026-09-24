@@ -192,7 +192,7 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
   }
   if (!/^https?:\/\//i.test(baseUrl) || !URL.canParse(baseUrl)) {
     // Echoed for typos, but never a credential: an unparsable `https://u:p#ss@host` still carries one.
-    throw new Error(`Invalid ${urlVar}='${baseUrl.replace(/^([^:]*:\/*).*@/, "$1***@")}' — expected an http(s) URL.`);
+    throw new Error(`Invalid ${urlVar}='${baseUrl.replace(/^(\w+:\/*)?.*@/, "$1***@")}' — expected an http(s) URL.`);
   }
   const url = new URL(baseUrl);
   if (url.username || url.password) {
@@ -204,7 +204,9 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
   if (provider === "jev" && (url.protocol !== "https:" || !TYPESAFE_HOST.test(url.hostname))) {
     throw new Error(
       `DECIDER=jev talks only to TypeSafe (https://*.typesafe.ai), but ${urlVar} points to ${url.host}. ` +
-        "For a Laya server use DECIDER=laya with DECIDER_BASE_URL; for another Jev-compatible server, DECIDER=compat.",
+        "For a Laya server use DECIDER=laya with DECIDER_BASE_URL; for another Jev-compatible server, DECIDER=compat. " +
+        "To reach TypeSafe while TYPESAFE_BASE_URL serves the SDK elsewhere, set CAIRN_TYPESAFE_BASE_URL=https://api.typesafe.ai " +
+        "and CAIRN_TYPESAFE_API_KEY (the CAIRN_ names win).",
     );
   }
 

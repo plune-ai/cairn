@@ -38,9 +38,12 @@ points at a laya-serve (the TypeSafe SDK can be set up that way), `--decider jev
 Cairn never sends knowledge files, session state, screenshots or environment values. On top of that it scrubs,
 **best-effort**, the values your knowledge files label as secrets and your secret environment variables
 (`*_PASSWORD`, `*_TOKEN`, `*_KEY` except public keys, anything with `SECRET`, …) out of every state and question it
-sends. A label counts when it names the secret itself — `Password:`, `Admin password:`, `Stripe key:`, `Пароль
-адміністратора:` — not when it talks about one (`Password rules:`, `Правила пароля:`). A secret that nothing labels
-cannot be recognised — keep such values out of case texts, or write each alone after its label.
+sends. A secret word on a line (`Password`, `API key`, `Token`, `Пароль`, …, also in a table header) points at the
+values after it, and those that look like credentials are taken — `Qwerty123!`, `sk_live_…`, `admin@acme.test`,
+never a plain word. A label that names the secret itself also takes a plain value: `Password: qwerty`. A label
+that only talks about one takes nothing: `Password rules: must contain a digit`. A value is replaced as a whole
+token, never inside a longer word. A secret that nothing labels cannot be recognised — keep such values out of
+case texts.
 
 ## Running Laya locally
 

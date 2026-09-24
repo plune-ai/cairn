@@ -64,9 +64,11 @@ only make a result stricter, falls back silently on any failure, and is bounded 
      there — and every state and question text is additionally **scrubbed**, best-effort, of the values the run's
      knowledge labels as secrets and of secret environment variables, because a designed case can *echo* a
      credential it read in a knowledge file. Option labels are the answer contract and are not rewritten. The
-     heuristic takes a label's *head* word ("Admin password", "Stripe key", "Пароль адміністратора" hold a
-     secret; "Password rules", "OTP delivery", "Правила пароля" only talk about one), because what it scrubs by
-     mistake still goes out, damaged. A scrubbing failure is a fallback like any other.
+     heuristic is weighed by what a wrong guess costs — a missed secret leaves the machine, a word scrubbed by
+     mistake damages every input it appears in: a secret word on a line points at the values after it, and only
+     credential-shaped ones are taken; a plain value only under a label whose *head* word names the secret
+     ("Password: qwerty", not "Password rules: must contain a digit"); and a value is replaced as a whole token.
+     A scrubbing failure is a fallback like any other.
    - A failed request is reported by its error name and cause code, never by its message: `fetch` quotes header
      values and URLs in its messages.
 7. **The wire format lives in one file.** `client-http.ts` is the only code that knows Jev's JSON. Cairn's own

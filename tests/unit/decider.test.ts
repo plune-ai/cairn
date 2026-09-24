@@ -231,56 +231,87 @@ describe("secretValues / redact (spec §3.7)", () => {
     expect(s).not.toContain("production");
   });
 
+  // Every line a review raised, and the shapes a QA knowledge file really has.
   it.each([
-    ["Креденшели: admin@test / secret", ["secret"]],
-    ["Пароль: Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["**Password:** Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["Passphrase: correct horse battery", ["correct horse battery"]],
-    ["Passcode: 4711", ["4711"]],
-    ["Passwords: a1b2c3d4", ["a1b2c3d4"]],
-    ["Password: Sup3r S3cret!", ["Sup3r S3cret!"]],
-    ["Password: Sup,3rS3cret!", ["Sup,3rS3cret!"]],
-    ["Credentials: admin / Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["Password: `Sup3rS3cret!` (the admin's)", ["Sup3rS3cret!"]],
-    ["- Password (admin): Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["Password: Sup3rS3cret! for every test user", ["Sup3rS3cret!"]],
-    ["Password: Sup3rS3cret! - same on staging", ["Sup3rS3cret!"]],
-    ["Password: Sup3rS3cret! # admin", ["Sup3rS3cret!"]],
-    ["Password for the admin: Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["Stripe key: sk_test_4eC39HqLyjWD", ["sk_test_4eC39HqLyjWD"]],
-    ["Key: abcd-1234", ["abcd-1234"]],
-    ["License key: ABCD-EFGH-1234", ["ABCD-EFGH-1234"]],
-    ["Пароль адміністратора: Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["Тестовий пароль: Sup3rS3cret!", ["Sup3rS3cret!"]],
-    ["Токен доступу: tok-123456", ["tok-123456"]],
-  ])("knowledge %j yields a scrubbable secret", (line, expected) => {
-    const s = secretValues(line, {});
-    for (const e of expected) expect(redact(`type ${e} into the field`, s)).toBe("type ‹redacted› into the field");
+    ["Креденшели: admin@test / secret", "secret"],
+    ["Пароль: Sup3rS3cret!", "Sup3rS3cret!"],
+    ["**Password:** Sup3rS3cret!", "Sup3rS3cret!"],
+    ["Passphrase: correct horse battery", "correct horse battery"],
+    ["Passcode: 4711", "4711"],
+    ["Passwords: a1b2c3d4", "a1b2c3d4"],
+    ["Password: qwerty", "qwerty"],
+    ["Password: Sup,3rS3cret!", "Sup,3rS3cret!"],
+    ["Credentials: admin / Sup3rS3cret!", "Sup3rS3cret!"],
+    ["Password: `Sup3rS3cret!` (the admin's)", "Sup3rS3cret!"],
+    ["- Password (admin): Sup3rS3cret!", "Sup3rS3cret!"],
+    ["Password: Sup3rS3cret! for every test user", "Sup3rS3cret!"],
+    ["Password: Sup3rS3cret! - same on staging", "Sup3rS3cret!"],
+    ["Password: Sup3rS3cret! # admin", "Sup3rS3cret!"],
+    ["**Password:** Sup3rS3cret! for every test user", "Sup3rS3cret!"],
+    ["- **Password:** Sup3rS3cret! - same on staging", "Sup3rS3cret!"],
+    ["Password for the admin: Sup3rS3cret!", "Sup3rS3cret!"],
+    ["Password on staging: Qwerty123!", "Qwerty123!"],
+    ["Password in prod: Qwerty123!", "Qwerty123!"],
+    ["Password used by all test users: Qwerty123!", "Qwerty123!"],
+    ["Password - admin: Qwerty123!", "Qwerty123!"],
+    ["Password is: Qwerty123!", "Qwerty123!"],
+    ["User: qa@acme.test, Password: Qwerty123!", "Qwerty123!"],
+    ["Login/password: admin/Adm1n!2024", "Adm1n!2024"],
+    ["Stripe key: sk_test_4eC39HqLyjWD", "sk_test_4eC39HqLyjWD"],
+    ["Key: abcd-1234", "abcd-1234"],
+    ["License key: ABCD-EFGH-1234", "ABCD-EFGH-1234"],
+    ["PIN: 4711, same for all", "4711"],
+    ["Пароль адміністратора: Sup3rS3cret!", "Sup3rS3cret!"],
+    ["Тестовий пароль: Sup3rS3cret!", "Sup3rS3cret!"],
+    ["Тестовий пароль для всіх: Qwerty123!", "Qwerty123!"],
+    ["Логін і пароль адміна: admin / Adm1n!2024", "Adm1n!2024"],
+    ["Токен доступу: tok-123456", "tok-123456"],
+    ["Пароль: «Qwerty123!»", "Qwerty123!"],
+    ["Password: “Sup3rS3cret!”", "Sup3rS3cret!"],
+    ["| Role | Email | Password |\n|---|---|---|\n| admin | admin@acme.test | Adm1n!2024 |", "Adm1n!2024"],
+    ["| Role | Password |\n|---|---|\n| viewer | qwerty |", "qwerty"],
+    ["| Field | Value |\n|---|---|\n| Password | qwerty |", "qwerty"],
+  ])("knowledge %j yields a scrubbable secret", (line, secret) => {
+    expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
 
   it.each([
     "Key pages: /checkout, /cart",
     "Pass criteria: every field is filled",
     "Password rules: must contain a digit",
+    "Password: required, 8-64 characters",
+    "Password: one-time, sent by e-mail",
+    "OTP: 6-digit code sent by SMS",
     "OTP delivery: SMS, email",
     "Admin login (see the password manager): open /login",
     "Token lifetime: 3600 seconds",
+    "Sort key: name",
+    "Shortcut key: Enter",
     "Правила пароля: мінімум 8 символів",
+    "Ключові сторінки: кошик, оформлення",
     "Password: none",
+    "| Field | Value |\n|---|---|\n| Password | see the vault |\n| Role | admin |",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
   });
 
-  it("a prose value keeps its words: only the value as a whole is scrubbed", () => {
-    const s = secretValues("Password: from env E2E_PASSWORD", {});
-    expect(s).toEqual(["from env E2E_PASSWORD"]);
+  it("a password with a space or prose after it: no fragment of it survives, and no plain word is taken", () => {
+    const s = secretValues("Password: Sup3r S3cret!\nPassword: from env E2E_PASSWORD", {});
+    expect(redact("type Sup3r S3cret! into the field", s)).not.toMatch(/Sup3r|S3cret/);
+    expect(s).not.toContain("from");
     expect(redact("the value from the form", s)).toBe("the value from the form");
+  });
+
+  it("a secret is replaced as a whole token — never inside a longer word", () => {
+    expect(redact("Username: name; name-tag; the name", ["name"])).toBe("Username: ‹redacted›; ‹redacted›-tag; the ‹redacted›");
+    expect(redact("fill('Sup3rS3cret!') and Sup3rS3cret!!", ["Sup3rS3cret!"])).toBe("fill('‹redacted›') and ‹redacted›!");
   });
 
   it("env: short secrets count, the working directory and flags do not", () => {
     const s = secretValues("", {
       TEST_USER_PASSWORD: "Test123",
       DB_PASS: "hunter2x",
+      DB_PASSWORD: "postgres",
       PWD: "/home/qa/project",
       OLDPWD: "/home/qa",
       PASS_THROUGH: "enabled",
@@ -289,14 +320,16 @@ describe("secretValues / redact (spec §3.7)", () => {
       LANGFUSE_PUBLIC_KEY: "pk-lf-123456",
       STRIPE_PUBLISHABLE_KEY: "pk_test_123456",
       KEYBOARD_LAYOUT: "dvorak-uk",
+      VITE_STORAGE_KEY: "user",
+      PASSWORD_POLICY: "strict",
     });
-    expect(s).toEqual(expect.arrayContaining(["Test123", "hunter2x"]));
-    for (const v of ["/home/qa/project", "/home/qa", "enabled", "true", "3600", "pk-lf-123456", "pk_test_123456", "dvorak-uk"]) {
+    expect(s).toEqual(expect.arrayContaining(["Test123", "hunter2x", "postgres"]));
+    for (const v of ["/home/qa/project", "/home/qa", "enabled", "true", "3600", "pk-lf-123456", "pk_test_123456", "dvorak-uk", "user", "strict"]) {
       expect(s).not.toContain(v);
     }
   });
 
-  it("env: any *_KEY and any name carrying SECRET or PASSWORD", () => {
+  it("env: any *_KEY and any name carrying SECRET or PASSWORD, when the value looks like a credential", () => {
     const env = {
       STRIPE_KEY: "sk_live_111111",
       APP_KEY: "base64:222222",
@@ -310,7 +343,7 @@ describe("secretValues / redact (spec §3.7)", () => {
   });
 
   it("redacts every occurrence, longest secret first", () => {
-    expect(redact("a SECRET-LONG b SECRET c", secretValues("token: SECRET\npassword: SECRET-LONG", {}))).toBe(
+    expect(redact("a abc-123-long b abc-123 c", secretValues("token: abc-123\npassword: abc-123-long", {}))).toBe(
       "a ‹redacted› b ‹redacted› c",
     );
     expect(redact("nothing here", [])).toBe("nothing here");

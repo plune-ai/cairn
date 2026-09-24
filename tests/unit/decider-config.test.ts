@@ -97,12 +97,12 @@ describe("decider config — opt-in only (ADR-0022)", () => {
     );
   });
 
-  it.each(["https://qa:p#ss@gpu-box:8000", "ftp://u:p4ss@host", "http:/u:p4ss@host"])(
+  it.each(["https://qa:p#ss@gpu-box:8000", "ftp://u:p4ss@host", "http:/u:p4ss@host", "https//sk-live-p4ss@host", "sk-live-p4ss@host"])(
     "an invalid URL %j is echoed with its credential masked",
     (u) => {
       const run = () => parse({ DECIDER: "compat", DECIDER_BASE_URL: u });
-      expect(run).toThrow(/Invalid DECIDER_BASE_URL='.*\*\*\*@/);
-      expect(run).not.toThrow(/p#ss|p4ss/);
+      expect(run).toThrow(/Invalid DECIDER_BASE_URL='[^']*\*\*\*@/);
+      expect(run).not.toThrow(/p#ss|p4ss|qa:/);
     },
   );
 
