@@ -26,15 +26,20 @@ export interface BrokenLocator {
 const GET_BY_ROLE =
   /getByRole\((['"])([a-z]+)\1(?:,\s*\{\s*name:\s*(['"])((?:\\.|(?!\3)[^\\\n])*)\3(?:,\s*exact:\s*(?:true|false))?\s*\})?\)/;
 
+/** A locator expression. The first one in an error is the one that failed. */
+const ANY_LOCATOR = /\b(?:getBy[A-Z]\w*|locator|frameLocator)\(/;
+
 /**
  * The locator a failing test waited for. Nothing to heal from a CSS locator, a regex name, or a chained scope
  * (`getByRole('dialog').getByRole(…)`): a candidate from the whole page may sit outside the scope, and `verify`
  * counts matches on the whole page. A trailing `.first()`, `.last()` or `.nth(i)` is kept out of `source`.
+ * Only the first locator in the error counts: a strict-mode violation goes on to list each element it resolved to,
+ * with an `aka getByRole(…)` hint that is not the locator that failed.
  */
 export function parseBrokenLocator(error: string): BrokenLocator | undefined {
   const text = error.replace(/\u001b\[[0-9;]*m/g, ""); // Playwright colours its output
   const m = GET_BY_ROLE.exec(text);
-  if (!m) return undefined;
+  if (!m || ANY_LOCATOR.exec(text)?.index !== m.index) return undefined;
   const after = text.slice(m.index + m[0].length);
   if (text[m.index - 1] === "." || /^\.(?!first\(\)|last\(\)|nth\()/.test(after)) return undefined;
   const name = m[4]?.replace(/\\(.)/g, "$1");
@@ -131,13 +136,13 @@ interface Offered {
 /**
  * The healer (spec §6.6). Candidates come from the page as it loads now, not as it was when the test failed: a
  * locator reachable only mid-scenario finds no candidate, or none the decider picks, and goes to repair as today.
- * No verdict, no parse, no candidate, a doubt, a pick that does not match exactly one element, or any failure →
- * undefined, and repair runs as it would have without a decider. Shadow mode asks and verifies, records, and
- * proposes nothing.
+ * No verdict, no parse, the cli backend, no candidate, a doubt, a pick that does not match exactly one element, or
+ * any failure → undefined, and repair runs as it would have without a decider. Shadow mode asks and verifies,
+ * records, and proposes nothing.
  */
 export function makeHeal(opts: {
   decider: Decider;
-  /** The lib backend's: the cli one counts no matches (`count -1`), so every pick would be refused. */
+  /** The lib backend's. The cli one counts no matches (`count -1`), so there a heal asks nothing. */
   gateway: HealGateway;
   url: string;
 }): (failure: TestResult, triage: TriageResult) => Promise<HealRecord | undefined> {
@@ -184,10 +189,12 @@ export function makeHeal(opts: {
     return finalists;
   };
 
-  return async (failure, triage) => {
-    if (!HEALABLE.has(triage.category)) return undefined;
-    const broken = parseBrokenLocator(failure.error ?? "");
-    if (!broken) return undefined;
+  /** One broken locator, asked about for the first test that failed on it. */
+  const heal = async (
+    failure: TestResult,
+    category: FailureCategory,
+    broken: BrokenLocator,
+  ): Promise<{ to: string; confidence: number } | undefined> => {
     const input = { state: "", candidates: [] as string[] };
     // The decider's time alone, as the other use points record it: opening the page and the check are not in it.
     let asked = 0;
@@ -205,10 +212,11 @@ export function makeHeal(opts: {
       return undefined;
     };
     try {
-      const what = triage.category === "locator-ambiguous" ? "matched several elements" : "matched no element";
+      const what = category === "locator-ambiguous" ? "matched several elements" : "matched no element";
       // The locator first: a clip cuts the tail, and a long test name must not cut what the decider picks by.
       input.state = clip(decider.scrub(`Locator ${broken.source} ${what} in Playwright test "${failure.test}".`), MAX_STATE_CHARS);
-      const { ariaSnapshot } = await gateway.observe({ url });
+      const { ariaSnapshot, capturedBy } = await gateway.observe({ url });
+      if (capturedBy !== "lib") return undefined; // the cli backend counts no matches: no pick could be checked
       const offered = healCandidates(ariaSnapshot, broken).map(
         (el, i): Offered => ({ el, label: `c${i + 1}`, text: clip(decider.scrub(`${el.role} "${el.name}"`), room) }),
       );
@@ -226,9 +234,24 @@ export function makeHeal(opts: {
       const [v] = await gateway.verify([chosen.el]);
       const to = locatorText({ role: chosen.el.role, name: chosen.el.name ?? "" });
       if (decider.shadow) return record({ to, confidence: a.confidence, verified: v?.count === 1 }, a.confidence);
-      return v?.count === 1 ? { test: failure.test, from: broken.source, to, confidence: a.confidence } : undefined;
+      return v?.count === 1 ? { to, confidence: a.confidence } : undefined;
     } catch (e) {
       return record({ unavailable: e instanceof Error ? e.message : String(e) });
     }
+  };
+
+  // Tests that fail on one locator share one heal: the same page, question, check and answer, asked once (a renamed
+  // login button can fail every test). ponytail: a single heal still costs ceil(candidates / maxQuestionsPerCall) + 1
+  // calls on a page too big for one choice; DECIDER_MAX_CALLS bounds the run, cap the candidates if pilots meet such pages.
+  const heals = new Map<string, ReturnType<typeof heal>>();
+  return async (failure, triage) => {
+    if (!HEALABLE.has(triage.category)) return undefined;
+    const broken = parseBrokenLocator(failure.error ?? "");
+    if (!broken) return undefined;
+    const key = `${triage.category}\n${broken.source}`;
+    let proposal = heals.get(key);
+    if (!proposal) heals.set(key, (proposal = heal(failure, triage.category, broken)));
+    const p = await proposal;
+    return p && { test: failure.test, from: broken.source, ...p };
   };
 }

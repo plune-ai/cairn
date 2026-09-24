@@ -63,6 +63,22 @@ describe("parseBrokenLocator (spec §6.6)", () => {
   ])("%s → nothing to heal", (_label, error) => {
     expect(parseBrokenLocator(error)).toBeUndefined();
   });
+
+  // Real Playwright 1.61 failures, as cairn's runner returns them (one page, one test each). A strict-mode violation
+  // lists the elements it resolved to, each with an `aka getByRole(…)` hint that is not the locator that failed.
+  const logIn = { role: "button", name: "Log in", source: "getByRole('button', { name: 'Log in' })" };
+  it.each([
+    ["css strict", "Error: locator.click: Error: strict mode violation: locator('button[type=submit]') resolved to 2 elements:\n    1) <button type=\"submit\">Sign in</button> aka getByRole('button', { name: 'Sign in' })\n    2) <button type=\"submit\">Sign up</button> aka getByRole('button', { name: 'Sign up' })\n\nCall log:\n\u001b[2m  - waiting for locator('button[type=submit]')\u001b[22m", undefined],
+    ["getByText strict", "Error: locator.click: Error: strict mode violation: getByText('Sign') resolved to 4 elements:\n    1) <h1>Sign in</h1> aka getByRole('heading', { name: 'Sign in' })\n    2) <button type=\"submit\">Sign in</button> aka getByRole('button', { name: 'Sign in' })\n    3) <button type=\"submit\">Sign up</button> aka getByRole('button', { name: 'Sign up' })\n    4) <a href=\"#x\">Sign in with Google</a> aka getByRole('link', { name: 'Sign in with Google' })\n\nCall log:\n\u001b[2m  - waiting for getByText('Sign')\u001b[22m", undefined],
+    ["regex name strict", "Error: locator.click: Error: strict mode violation: getByRole('button', { name: /Sign/i }) resolved to 2 elements:\n    1) <button type=\"submit\">Sign in</button> aka getByRole('button', { name: 'Sign in' })\n    2) <button type=\"submit\">Sign up</button> aka getByRole('button', { name: 'Sign up' })\n\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: /Sign/i })\u001b[22m", undefined],
+    ["plain name strict", "Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'Sign' }) resolved to 2 elements:\n    1) <button type=\"submit\">Sign in</button> aka getByRole('button', { name: 'Sign in' })\n    2) <button type=\"submit\">Sign up</button> aka getByRole('button', { name: 'Sign up' })\n\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Sign' })\u001b[22m", { role: "button", name: "Sign", source: "getByRole('button', { name: 'Sign' })" }],
+    ["missing, timeout", "\u001b[31mTest timeout of 2000ms exceeded.\u001b[39m\n\nError: locator.click: Test timeout of 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Log in' })\u001b[22m", logIn],
+    ["chained strict", "Error: locator.click: Error: strict mode violation: getByTestId('toolbar').getByRole('button') resolved to 2 elements:\n    1) <button>Save</button> aka getByRole('button', { name: 'Save', exact: true })\n    2) <button>Save draft</button> aka getByRole('button', { name: 'Save draft' })\n\nCall log:\n\u001b[2m  - waiting for getByTestId('toolbar').getByRole('button')\u001b[22m", undefined],
+    ["expect visible, missing", "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: 'Log in' })\nExpected: visible\nTimeout: 500ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 500ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'Log in' })\u001b[22m", logIn],
+    ["getByLabel missing", "\u001b[31mTest timeout of 2000ms exceeded.\u001b[39m\n\nError: locator.fill: Test timeout of 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByLabel('Password')\u001b[22m", undefined],
+  ])("from the runner: %s", (_label, error, expected) => {
+    expect(parseBrokenLocator(error)).toEqual(expected);
+  });
 });
 
 describe("compatibleRoles", () => {
@@ -414,6 +430,40 @@ describe("makeHeal (spec §6.6)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("tests that fail on the same locator share one heal: one question, one check, a proposal each", async () => {
+    const { decider, calls } = healDecider((q) => pick(optionFor(q, '"Sign in"')));
+    const { gateway, observe, verify } = fakeGateway();
+    const heal = makeHeal({ decider, gateway, url: "u" });
+    const a = await heal(failure(), triage());
+    const b = await heal(failure(BROKEN, "tc-2: signs in twice"), triage());
+    expect([calls.length, observe.mock.calls.length, verify.mock.calls.length]).toEqual([1, 1, 1]);
+    expect([a?.test, b?.test]).toEqual(["tc-1: signs in", "tc-2: signs in twice"]);
+    expect(b).toMatchObject({ from: a!.from, to: a!.to, confidence: a!.confidence });
+    // another locator, or the same one called ambiguous rather than missing, is another question
+    await heal(failure(BROKEN.replace("'Sign'", "'Log in'")), triage());
+    await heal(failure(), triage("locator-ambiguous"));
+    expect(calls).toHaveLength(3);
+  });
+
+  it("shadow: a heal several tests share is recorded once", async () => {
+    const { decider, entries } = healDecider((q) => pick(optionFor(q, '"Sign in"')), { shadow: true });
+    const heal = makeHeal({ decider, gateway: fakeGateway().gateway, url: "u" });
+    await heal(failure(), triage());
+    await heal(failure(BROKEN, "tc-2: signs in twice"), triage());
+    expect(entries).toHaveLength(1);
+  });
+
+  it("the cli backend counts no matches, so there a heal asks nothing and records nothing", async () => {
+    const { decider, calls, entries } = healDecider(() => pick("c1"), { shadow: true });
+    const { gateway } = fakeGateway();
+    const cli = {
+      observe: async (o: { url: string }) => ({ ...(await gateway.observe(o)), capturedBy: "cli" as const }),
+      verify: gateway.verify,
+    } as unknown as BrowserGateway;
+    expect(await makeHeal({ decider, gateway: cli, url: "u" })(failure(), triage())).toBeUndefined();
+    expect([calls, entries]).toEqual([[], []]);
   });
 
   it("shadow: nothing to heal → nothing recorded (another verdict, no getByRole, no candidate)", async () => {

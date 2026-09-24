@@ -52,7 +52,8 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    **A second, bounded one (spec §6.6): `locator-heal` proposes.** For a failure triage confidently called a
    locator failure, it offers the repair a replacement locator. Code chooses the candidates first: the start page's
    elements of the same or a compatible role, never one the crawler's destructive-link filter or `isDeletionIntent`
-   refuses, so the decider only picks among safe ones or answers `none-of-these`. A pick counts only when the
+   refuses (both match English words only), so the decider picks among what those filters let through or answers
+   `none-of-these`. A pick counts only when the
    browser matches it exactly once, and it is a hint: the repair still writes the code and the next validation
    judges it. A wrong pick can still let a test pass while it checks another element. So `locator-heal` is off
    unless named, and every proposal behind the kept suite is listed in the report (*Locators healed*): no replacement
@@ -165,8 +166,8 @@ changed the design.
     checkpoints: 0.66 (multilingual) and 0.01 (English), and 0.87 and 0.38 with a `Create account` button beside
     it. Two other wordings found the button once each, at 0.03 and 0.15.
   - **What it never did** was pick the other button. With the element gone (a locator for a button the page does
-    not have), all three wordings on both checkpoints answered `none-of-these`, at 0.57–1.00. Laya declines rather
-    than guesses. A decline is today's behaviour, and a pick still has to match exactly once on the page.
+    not have), all three wordings on both checkpoints answered `none-of-these`, at 0.57–1.00. Here laya declined
+    rather than guessed. A decline is today's behaviour, and a pick still has to match exactly once on the page.
   - Hence `locator-heal`, like `coverage`, acts only when named in `DECIDER_USES`.
 - **Latency on a CPU** (no GPU; the same twelve triage questions, sent together as a failing suite sends them, so
   each waits for the others): the multilingual checkpoint 0.7 s at the median and 1.2 s at p95, the English one
@@ -179,8 +180,9 @@ changed the design.
 
 - **A run without the flag is the run it was.** Same prompts, same calls, same files — pinned by tests.
 - **The decider is only ever a narrower gate**, with two exceptions (rule 3). Coverage replaces a metric and says
-  so. `locator-heal` hands the repair a verified locator and lists it. At worst it costs time and fallbacks. It
-  cannot turn a failure into a pass by itself: every pass is a validation's. It cannot unblock a destructive action,
+  so. `locator-heal` hands the repair a verified locator and lists it, because a wrong pick can let a test pass
+  while it checks another element. Otherwise the decider's worst case is time and fallbacks. It cannot turn a
+  failure into a pass by itself: every pass is a validation's. It cannot unblock a destructive action,
   and it cannot keep a failing test out of repair without a confident answer.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.

@@ -15,9 +15,9 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
   softer; below `DECIDER_MIN_CONFIDENCE` its answer is ignored and Cairn does what it always did. Two use points
   go further, so both are off until you name them. `coverage` is a metric rather than a gate: its number replaces
   the judge's and can come out higher. `locator-heal` offers the repair a replacement locator. The replacement is
-  never a destructive element or a different kind of control, it matches exactly one element on the page, and the
-  report lists it. A wrong pick can still let a test pass while it checks another element; that is what the
-  report is for.
+  never a different kind of control, nor one Cairn's destructive-action filters refuse (they match English words
+  only). It matches exactly one element on the page, and the report lists it. A wrong pick can still let a test
+  pass while it checks another element; that is what the report is for.
 - It **never sinks a run**. Timeout, server error, an input too long for the model, an invalid answer — each is
   a silent fallback to the current behaviour, recorded in the trace.
 - `confidence` describes the shape of an answer's distribution, **not** the chance that it is right. Each
@@ -38,7 +38,7 @@ which none of the enabled use points can fire — `design` without `--checklist`
 |---|---|---|---|
 | `repair-triage` | the validate ⇄ repair loop (`explore`, `automate --validate`) | one six-way choice per failing test, over its name and error: `app-bug` / `env-or-session` keep the test **out of the repair hint** and list it under *Not repaired*; `locator-ambiguous` / `locator-missing` / `timing` / `wrong-assertion` only tag its hint line | the test goes into the hint exactly as today |
 | `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case confidently says yes, uncovered when every case confidently says no. Its number **replaces** the judge's, and the score's comment says so (`decider (laya): …`) | an item no case confidently covers and some case is unsure about, or an unavailable call → the LLM judge decides, as today |
-| `locator-heal` | the validate ⇄ repair loop, after triage (`explore`, `automate --validate`) | for a failure triage confidently called `locator-missing` or `locator-ambiguous`, whose error names a `getByRole(…)`: a pick among the page's elements of the same or a compatible role, never a destructive one, or `none-of-these`. A pick the browser matches exactly once joins the test's hint line: `→ replace <the broken locator> with getByRole('button', { name: 'Sign In', exact: true }) (verified: 1 match)` | no proposal: the test goes into the hint as triage left it |
+| `locator-heal` | the validate ⇄ repair loop, after triage (`explore`, `automate --validate`) | for a failure triage confidently called `locator-missing` or `locator-ambiguous`, whose error names a `getByRole(…)`: a pick among the page's elements of the same or a compatible role, never one the destructive-action filters refuse, or `none-of-these`. A pick the browser matches exactly once joins the test's hint line: `→ replace <the broken locator> with getByRole('button', { name: 'Sign In', exact: true }) (verified: 1 match)` | no proposal: the test goes into the hint as triage left it |
 
 When every failing test is excluded, the loop stops without spending a repair attempt. An exclusion holds while
 the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as
@@ -51,12 +51,17 @@ the test fails the same way: every repair regenerates the suite, so a test that 
   a regex name or a chained scope (`getByRole('dialog').getByRole(…)`) is not healed.
 - **Compatible roles.** A textbox, searchbox and combobox count as one kind of control; so do a checkbox and a
   switch, and the three menu-item roles. Any other role must match exactly.
+- **Never a destructive control, by name.** An element the crawler's destructive-link filter or the deletion-intent
+  check refuses is never offered: log out, delete, remove, reset and the like. Both match English words only
+  ([#185](https://github.com/plune-ai/cairn/issues/185)), so a control named `Видалити` or `Вийти` is offered like
+  any other.
 - **The question.** It is one choice among all candidates. When that does not fit the provider's limits (laya:
   twenty options, 400 characters), each candidate is scored first, and one choice follows among the best ten that
   fit.
-- **Once per failure.** A heal is asked once per failure, like triage.
-- **Backend.** It needs the `lib` browser backend, the default: the `cli` one cannot count matches, so every pick
-  would be refused. `automate` opens a browser for it only when a heal is asked, with the run's session, and closes
+- **Once per locator.** Tests that fail the same way on the same locator share one heal: one question, one check,
+  one answer. A renamed login button can fail every test.
+- **Backend.** It needs the `lib` browser backend, the default: the `cli` one cannot count matches, so there a heal
+  asks nothing. `automate` opens a browser for it only when a heal is asked, with the run's session, and closes
   it at the end.
 
 An active run reports the layer, and where depends on the command:

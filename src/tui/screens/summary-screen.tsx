@@ -5,7 +5,7 @@ import { ScoresTable } from "../components/scores-table.js";
 import { PilotBadge } from "../components/pilot-badge.js";
 import { TestCaseList } from "../components/test-case-list.js";
 import type { Command, AnyResult, FormValues } from "../types.js";
-import type { Score, TestCase, PilotVerdict, ValidationReport, CostReport, BudgetReport } from "../../index.js";
+import type { Score, TestCase, PilotVerdict, ValidationReport, CostReport, BudgetReport, AutomateResult } from "../../index.js";
 
 /** Rebuild form prefill from a finished run so re-run starts with the same target. */
 function rerunInitial(command: Command, result: AnyResult): Partial<FormValues> {
@@ -39,6 +39,13 @@ function budgetOf(r: AnyResult): BudgetReport | undefined {
 function stoppedEarlyOf(r: AnyResult): boolean {
   return "stoppedEarly" in r && Boolean((r as { stoppedEarly?: boolean }).stoppedEarly);
 }
+// ADR-0022: automate writes no report, so what its decider did is shown here (explore's is in report.md).
+function notRepairedOf(r: AnyResult): NonNullable<AutomateResult["notRepaired"]> {
+  return "notRepaired" in r ? (r.notRepaired ?? []) : [];
+}
+function healedOf(r: AnyResult): NonNullable<AutomateResult["healed"]> {
+  return "healed" in r ? (r.healed ?? []) : [];
+}
 
 interface ActionItem {
   label: string;
@@ -55,6 +62,8 @@ export function SummaryScreen({ command, result }: { command: Command; result: A
   const cost = costOf(result);
   const budget = budgetOf(result);
   const stoppedEarly = stoppedEarlyOf(result);
+  const notRepaired = notRepairedOf(result);
+  const healed = healedOf(result);
 
   const actions: ActionItem[] = [
     { label: "View artifacts (cases · report · logs)", value: "artifacts" },
@@ -91,6 +100,28 @@ export function SummaryScreen({ command, result }: { command: Command; result: A
             <Text key={c.test} dimColor>
               {"  "}
               {c.test}: {c.video} ({c.chapters.length} chapters)
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      {notRepaired.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="yellow">Not repaired — likely an app bug or a broken environment:</Text>
+          {notRepaired.map((t) => (
+            <Text key={t.test} dimColor>
+              {"  "}
+              {t.test} — {t.category} (confidence {t.confidence.toFixed(2)})
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      {healed.length ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color="yellow">Locators healed — offered to the repair, matched exactly once on the page:</Text>
+          {healed.map((h) => (
+            <Text key={h.test} dimColor>
+              {"  "}
+              {h.test}: {h.from} → {h.to} (confidence {h.confidence.toFixed(2)})
             </Text>
           ))}
         </Box>
