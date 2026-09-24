@@ -241,6 +241,35 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
     expect(triage).toHaveBeenCalledTimes(2); // the two loop heads; the discarded last suite is never asked about
   });
 
+  it("after the loop only tests excluded earlier are asked: a new failure in the kept suite was never kept out of repair", async () => {
+    const h = harness([
+      report(
+        [
+          { test: "a", status: "failed", error: "500 Internal Server Error" },
+          { test: "b", status: "failed", error: "locator X" },
+          { test: "c", status: "passed" },
+          { test: "d", status: "failed", error: "locator Y" },
+        ],
+        0.25,
+      ),
+      // kept AND last: b now fails with a 500 (it had a locator verdict), c fails for the first time
+      report(
+        [
+          { test: "a", status: "passed" },
+          { test: "b", status: "failed", error: "500 boom" },
+          { test: "c", status: "failed", error: "500 new" },
+          { test: "d", status: "passed" },
+        ],
+        0.5,
+      ),
+    ]);
+    const triage = byError();
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 1, triage });
+    expect(r.bestValidation.greenRatio).toBe(0.5);
+    expect(triage).toHaveBeenCalledTimes(1); // the loop head only
+    expect("notRepaired" in r).toBe(false);
+  });
+
   it("a failure is asked once: a doubt that sent it to repair is not overturned by a later answer", async () => {
     // a's "locator X" gets no confident answer at the first head; any later ask would call it an app bug.
     const seen = new Set<string>();
