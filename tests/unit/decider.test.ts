@@ -298,6 +298,17 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["Логін: admin / Пароль: qwerty", "qwerty"],
     ["Email: qa@acme.test | Password: qwerty", "qwerty"],
     ["| Параметр | Значення |\n|---|---|\n| Пароль | qwerty |", "qwerty"],
+    ["| | |\n|---|---|\n| Login | admin |\n| Password | qwerty |", "qwerty"],
+    ["| Environment | Staging |\n|---|---|\n| Password | qwerty |", "qwerty"],
+    ["| | Staging | Production |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Account | Admin |\n|---|---|\n| Password | qwerty |", "qwerty"],
+    ["| Роль | Адміністратор |\n|---|---|\n| Пароль | qwerty |", "qwerty"],
+    ["Admin - Password: qwerty", "qwerty"],
+    ["Admin — Password: qwerty", "qwerty"],
+    ["Staging - password: qwerty", "qwerty"],
+    ["Адмін - Пароль: qwerty", "qwerty"],
+    ["Reset PIN: 4711", "4711"],
+    ["| Item | Value |\n|---|---|\n| The password for the staging admin account that the nightly regression run uses | qwerty |", "qwerty"],
   ])("knowledge %j yields a scrubbable secret", (line, secret) => {
     expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
@@ -339,6 +350,15 @@ describe("secretValues / redact (spec §3.7)", () => {
     'Sort key: "name"',
     "Accounts: viewer@acme.test / editor@acme.test, password in the vault",
     "Support: qa@acme.test / +380-44-123-4567",
+    "| Field | Data type |\n|---|---|\n| Password | password |",
+    "| Field | Required | Type |\n|---|---|---|\n| Password | yes | password |",
+    "| Field | Rule |\n|---|---|\n| Password | strong |",
+    "| | |\n|---|---|\n| Password | textbox |",
+    "## Passwords - staging",
+    'Empty password: "Password is required"',
+    'Wrong password: "Invalid email or password"',
+    "Порожній пароль: «Пароль обов’язковий»",
+    "Сменить пароль — Настройки",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
   });
@@ -409,6 +429,11 @@ describe("secretValues / redact (spec §3.7)", () => {
     time("warm-up password: Qwerty123!");
     expect(time("a".repeat(80_000))).toBeLessThan(500); // quadratic, this took seconds
     expect(time(`password: ${"a b, ".repeat(20_000)}`)).toBeLessThan(500);
+    expect(time(`password ${"_".repeat(80_000)}x`)).toBeLessThan(500); // a trailing-punctuation strip
+    expect(time(`password ${"?".repeat(80_000)}x`)).toBeLessThan(500); // a closing "?!" trim
+    expect(time(`Password: a${" ".repeat(80_000)}b`)).toBeLessThan(500);
+    expect(time(`Password: ${"(".repeat(80_000)}`)).toBeLessThan(500);
+    expect(time(`| ${"key ".repeat(20_000)}| x |\n|---|---|\n| ${"password ".repeat(10_000)}| qwerty |`)).toBeLessThan(500);
   });
 
   it("redacts every occurrence, longest secret first", () => {

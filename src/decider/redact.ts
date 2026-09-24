@@ -26,9 +26,13 @@ const EN_SECRET_HEAD =
 const SLAVIC_HEAD =
   "(?:парол[ьіи]|токен[иы]?|секрет[иы]?|ключ[іи]?|креденшел[иі]|облікові\\s+дані|учетные\\s+данные|(?:otp|pin|пін|пин)(?:-?код)?)";
 const SLAVIC_SECRET_HEAD = new RegExp(`^${SLAVIC_HEAD}(?![\\p{L}\\p{N}])|(?<![\\p{L}\\p{N}])${SLAVIC_HEAD}$`, "iu");
-/** "Forgot password", "Change password", "Змінити пароль" name a feature or a link, not the secret. */
+/**
+ * "Forgot password", "Change password", "Змінити пароль" name a feature or a link; "Empty password", "Wrong
+ * password", "Порожній пароль" a test condition (`Empty password: "Password is required"` quotes a message) —
+ * none of them the secret.
+ */
 const ACTION_HEAD =
-  /(?:^|[^\p{L}\p{N}])(?:forgot(?:ten)?|reset|change|recover|restore|update|show|hide|toggle|remember|manage|edit|забули|змінити|скинути|відновити|показати|сховати|приховати|изменить|сбросить|восстановить|забыли|показать|скрыть)(?:\s+(?:your|the|my|свій|ваш|свой))?\s+\S+$/iu;
+  /(?:^|[^\p{L}\p{N}])(?:forgot(?:ten)?|reset|change|recover|restore|update|show|hide|toggle|remember|manage|edit|empty|blank|wrong|invalid|incorrect|short|weak|missing|забули|змінити|скинути|відновити|показати|сховати|приховати|порожн\p{L}*|невірн\p{L}*|неправильн\p{L}*|коротк\p{L}*|слаб\p{L}*|изменить|сменить|поменять|сбросить|восстановить|забыли|показать|скрыть|пуст\p{L}*|неверн\p{L}*)(?:\s+(?:your|the|my|свій|ваш|свой))?\s+\S+$/iu;
 
 type Head = "password" | "passphrase" | "credentials" | "code" | "other";
 
@@ -42,15 +46,25 @@ const PUBLIC_ENV = /(?:^|_)(?:PUBLIC|PUBLISHABLE)_KEYS?$/i;
 const TRIVIAL =
   /^(?:true|false|yes|no|on|off|null|none|undefined|enabled|disabled|required|optional|hidden|visible|masked|mandatory|обов['’]язков\p{L}*|необов['’]язков\p{L}*)$/iu;
 
+/** Drops trailing characters of a class — a loop, not a `[…]+$` pattern, which rescans a long run from every position. */
+const trimEnd = (s: string, cls: RegExp): string => {
+  let end = s.length;
+  while (end > 0 && cls.test(s[end - 1]!)) end -= 1;
+  return s.slice(0, end);
+};
 /** Markdown, quotes and punctuation around a label or a value: `**Password:**`, `` `sk-…` ``, `«…»`, `(admin)`. */
-const strip = (s: string): string => s.trim().replace(/^[\s*_`"'([«“„‘]+|[\s*_`"')\].,;:»”’]+$/gu, "");
+const strip = (s: string): string => trimEnd(s.trim().replace(/^[\s*_`"'([«“„‘]+/u, ""), /[\s*_`"')\].,;:»”’]/u);
 
 /** A value written in quotes is meant literally (single quotes excluded: they are apostrophes too). */
 const QUOTED = /[`"«“„]([^`"«»“”„\n]{4,})[`"»”“]/gu;
 /** …and a value that STARTS with a quote is that quote, spaces and all: `Password: "correct horse battery"`. */
 const QUOTED_VALUE = /^[`"«“„]([^`"«»“”„\n]{4,})[`"»”“]/u;
-/** The second column of a key–value table: `| Field | Value |`, `| Поле | Значення |` — not `| Field | Type |`. */
-const VALUE_COLUMN = /value|example|data|значенн|значени|приклад|пример|дані|данные/iu;
+/** A column that describes a field rather than holding its value: `| Field | Type |`, `| Поле | Роль |`. */
+const SPEC_COLUMN =
+  /type|role|kind|format|rule|validat|constraint|selector|locator|element|widget|control|descri|note|comment|behavio|expect|тип|роль|формат|правил|валідац|валидац|опис|примітк|примечан|очікуван|ожидаем|селектор|локатор|елемент|элемент/iu;
+/** …and a type or role word is a description in any column: `| Password | password |`, `| Password | textbox |`. */
+const SPEC_WORD =
+  /^(?:password|text|textbox|textarea|string|email|e-mail|number|numeric|integer|int|boolean|bool|checkbox|radio|input|field|button|select|combobox|secret|date|datetime|tel|url|search|пароль|текст|рядок|строка|число)$/iu;
 
 /**
  * Shaped like a credential rather than a word: letters mixed with digits (not "6-digit"), or a symbol other
@@ -61,29 +75,37 @@ function credentialShaped(t: string, digitsOnly = false): boolean {
   if (t.length < 4 || TRIVIAL.test(t)) return false;
   if (/^\p{N}+$/u.test(t)) return digitsOnly;
   if (/\p{L}/u.test(t) && /\p{N}/u.test(t)) return !/^\p{N}+[-‑–]\p{L}+$/u.test(t);
-  return /[^\p{L}\p{N}\-‑–'’ʼ.]/u.test(t.replace(/[?!]+$/u, ""));
+  return /[^\p{L}\p{N}\-‑–'’ʼ.]/u.test(trimEnd(t, /[?!]/u));
 }
 
+/** Parenthesised commentary out: "Password (admin)", "(the admin's)". `[^()]` keeps an unclosed "(" run linear. */
+const dropParens = (s: string): string => s.replace(/\([^()]*\)/g, " ");
+
 function secretHead(rawLabel: string): Head | undefined {
-  const label = strip(rawLabel.replace(/\([^)]*\)/g, " ")).replace(/\s+(?:for|of)\s.*$/i, ""); // "Password (admin)", "… for the admin"
-  if (ACTION_HEAD.test(label)) return undefined; // "Forgot password: /forgot-password", "Change password — Settings"
+  const label = strip(dropParens(rawLabel)).replace(/\s+(?:for|of)\s.*$/i, ""); // "… for the admin"
   const m = EN_SECRET_HEAD.exec(label) ?? SLAVIC_SECRET_HEAD.exec(label);
   if (!m) return undefined;
   const w = m[0].toLowerCase();
-  if (/phrase/.test(w)) return "passphrase";
-  if (/otp|pin|пін|пин|код|code/.test(w)) return "code";
-  if (/pass|pwd|парол/.test(w)) return "password";
-  if (/cred|креденшел|дані|данные/.test(w)) return "credentials";
-  return "other";
+  const head: Head = /phrase/.test(w)
+    ? "passphrase"
+    : /otp|pin|пін|пин|код|code/.test(w)
+      ? "code"
+      : /pass|pwd|парол/.test(w)
+        ? "password"
+        : /cred|креденшел|дані|данные/.test(w)
+          ? "credentials"
+          : "other";
+  // "Forgot password: /forgot-password", "Empty password: "…"" — but "Reset PIN: 4711" is still a code (digits only)
+  return head !== "code" && ACTION_HEAD.test(label) ? undefined : head;
 }
 
 /** What a value under a secret head adds, whatever the rest of the line says. */
 function headValues(head: Head, value: string): string[] {
   const quoted = QUOTED_VALUE.exec(value.trim())?.[1];
-  const v = quoted ?? strip(value.replace(/\([^)]*\)/g, " ")); // "(the admin's)" is commentary
+  const v = quoted ?? strip(dropParens(value));
   if (head !== "passphrase" && /^\/|:\/\//.test(v)) return []; // a path or a URL names a page, not a secret
   const first = strip(v.split(/[\s,;]+/)[0] ?? "");
-  const pair = v.split(/\s*\/\s*/); // "login / password"
+  const pair = v.split("/").map((p) => p.trim()); // "login / password"
   switch (head) {
     case "passphrase":
       return [v]; // spaces are part of it
@@ -109,8 +131,11 @@ const LINE = /^\s*(?:>\s*)?(?:[-*+]\s+|\d+[.)]\s+)?(.{1,60}?)(?:\s*[:=：]|\s+[�
  * rescanned from every position.
  */
 const LOGIN_PAIR = /(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\s*\/\s*(\S+)/gu;
-/** "Login: admin / Password: qwerty", "User: qa@acme.test, Password: qwerty" — one label per segment. */
-const SEGMENT = /(?:[,;]|\s[/|])\s+(?=[^,;:]{1,40}[:=：])/;
+/**
+ * "Login: admin / Password: qwerty", "User: qa@acme.test, Password: qwerty", "Admin - Password: qwerty" — one label
+ * per segment; a dash only splits before another "label:".
+ */
+const SEGMENT = /(?:[,;]|\s[/|—–-])\s+(?=[^,;:]{1,40}[:=：])/;
 
 export function secretValues(knowledgeText: string, env: Record<string, string | undefined>): string[] {
   const out = new Set<string>();
@@ -120,8 +145,8 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
   };
   // A Markdown table: the row above its |---| rule is the header; a header cell naming a secret marks a column.
   let above: string[] = [];
+  let header: string[] | undefined; // undefined until the rule: a row above it may be the header itself
   let columns: { at: number; head: Head | undefined }[] = [];
-  let keyValue = false; // a key–value table: | Password | qwerty | — known only once its rule is seen
   for (const line of knowledgeText.split(/\r?\n/)) {
     for (const p of line.matchAll(LOGIN_PAIR)) {
       const v = strip(p[1] ?? "");
@@ -132,7 +157,7 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
       const cells = line.split("|").slice(1, -1).map((c) => c.trim());
       if (cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c))) {
         columns = above.flatMap((c, at) => (SECRET_WORD.test(c) ? [{ at, head: secretHead(c) }] : []));
-        keyValue = VALUE_COLUMN.test(above[1] ?? "");
+        header = above;
         continue;
       }
       above = cells;
@@ -141,19 +166,25 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
         for (const v of head ? headValues(head, cell) : []) add(v);
         for (const t of cell.split(/[\s,;/]+/)) if (credentialShaped(strip(t))) add(t);
       }
-      const rowHead = keyValue && cells[0] ? secretHead(cells[0]) : undefined;
-      if (rowHead && cells[1]) for (const v of headValues(rowHead, cells[1])) add(v);
+      // A key–value row — | Password | qwerty |, one value per environment in | | Staging | Production | — but not a
+      // field spec: a column that describes (| Field | Type |) or a cell that names a type or role (| Password | textbox |).
+      const rowHead = header && cells[0] ? secretHead(cells[0]) : undefined;
+      for (const [i, cell] of rowHead ? cells.entries() : []) {
+        if (i === 0 || SPEC_COLUMN.test(header?.[i] ?? "")) continue;
+        for (const v of headValues(rowHead!, cell)) if (!SPEC_WORD.test(v)) add(v);
+      }
     } else {
       above = [];
+      header = undefined;
       columns = [];
-      keyValue = false;
     }
     const at = line.search(SECRET_WORD);
     if (at < 0) continue;
     // Everything after the secret word may hold it — "(password: Adm1n!2024)" included.
     const after = line.slice(at);
     for (const t of after.split(/[\s,;|/:]+/)) if (credentialShaped(strip(t))) add(t);
-    for (const seg of line.split(SEGMENT)) {
+    // A Markdown heading is a title, not "label: value" — "## Passwords - staging" names a section.
+    for (const seg of /^\s*#/.test(line) ? [] : line.split(SEGMENT)) {
       const m = LINE.exec(seg);
       const head = m?.[1] && m[2] ? secretHead(m[1]) : undefined;
       if (head) for (const v of headValues(head, m![2]!)) add(v);

@@ -44,12 +44,13 @@ sends. A secret word on a line (`Password`, `API key`, `Token`, `Пароль`, 
 values after it, and those that look like credentials are taken — `Qwerty123!`, `sk_live_…`, `admin@acme.test`,
 never a plain word; so is the credential in a login pair such as `qa@acme.test / Qwerty123!`. A label that names
 the secret itself also takes a plain value: `Password: qwerty`, `Login / password: admin / qwerty`, `PIN: 4711`,
-and in a table whose second column holds values (`| Field | Value |`) so does a `| Password | qwerty |` row — not
-in a field specification (`| Field | Type |`). A label that only talks about one takes no plain value:
-`Password rules: must contain a digit`, `Forgot password: /forgot-password` (a page path or a URL is never taken);
-nor does a quoted UI text (`"Forgot password?"`). A credential-shaped value is replaced wherever it appears, so `Qwerty123!x` in a
-negative case loses it too; a plain value or a PIN only as a whole token, never inside a longer word. A secret
-that nothing labels cannot be recognised — keep such values out of case texts.
+and so does a table row such as `| Password | qwerty |` — one value per environment in `| | Staging | Production |`
+— except in a field specification: a column like `Type`, `Role` or `Format`, or a cell that names a type
+(`password`, `textbox`). A label that only talks about one takes no plain value: `Password rules: must contain a
+digit`, `Forgot password: /forgot-password` (a page path or a URL is never taken), `Empty password: "Password is
+required"`; nor does a quoted UI text (`"Forgot password?"`). A credential-shaped value is replaced wherever it
+appears, so `Qwerty123!x` in a negative case loses it too; a plain value or a PIN only as a whole token, never
+inside a longer word. A secret that nothing labels cannot be recognised — keep such values out of case texts.
 
 ## Running Laya locally
 
