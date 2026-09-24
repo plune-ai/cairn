@@ -22,12 +22,14 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 `DECIDER_USES` picks them. By default an active decider consults `repair-triage` alone, and shadow mode asks both
 — a use point acts only on evidence, and `coverage` has none yet: on laya's multilingual checkpoint it answered
 confidently wrong ([ADR-0022](adr/0022-optional-decision-layer.md#measured-facts-this-rests-on-2026-09-24)). Name
-it to turn it on: `DECIDER_USES=repair-triage,coverage`. An unknown name is an error, not a silent no-op.
+it to turn it on: `DECIDER_USES=repair-triage,coverage`. An unknown name is an error, not a silent no-op. A run in
+which none of the enabled use points can fire — `design` without `--checklist`, `automate` without `--validate`,
+`MAX_REPAIR=0` — does not start the layer at all: no data notice, no report key, no `decider-shadow.json`.
 
 | Use | Where | What a confident answer does | Otherwise |
 |---|---|---|---|
 | `repair-triage` | the validate ⇄ repair loop (`explore`, `automate --validate`) | one six-way choice per failing test, over its name and error: `app-bug` / `env-or-session` keep the test **out of the repair hint** and list it under *Not repaired*; `locator-ambiguous` / `locator-missing` / `timing` / `wrong-assertion` only tag its hint line | the test goes into the hint exactly as today |
-| `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case says yes. Its number **replaces** the judge's, and the score's comment says so (`decider (laya): …`) | any unsure or unavailable answer → the LLM judge decides, as today |
+| `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case confidently says yes, uncovered when every case confidently says no. Its number **replaces** the judge's, and the score's comment says so (`decider (laya): …`) | an item no case confidently covers and some case is unsure about, or an unavailable call → the LLM judge decides, as today |
 
 When every failing test is excluded, the loop stops without spending a repair attempt. An exclusion holds while
 the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as

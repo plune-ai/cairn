@@ -390,7 +390,7 @@ export function buildProgram(): Command {
         if (result.decider) {
           const d = result.decider;
           process.stdout.write(
-            `\nDecision layer (${d.provider}): ${d.calls} decisions · ${d.fallbacks.length} fallback(s)` +
+            `\nDecision layer (${d.provider}): ${d.calls} decisions · ${d.calls - d.fallbacks.length} answered · ${d.fallbacks.length} fallback(s)` +
               `${d.fallbacks.length ? " — the current path ran instead" : ""}\n`,
           );
         }

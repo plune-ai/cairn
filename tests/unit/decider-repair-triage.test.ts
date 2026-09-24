@@ -1,7 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import { FAILURE_CATEGORIES, TRIAGE_QUESTION, makeTriage, triageState } from "../../src/decider/uses/repair-triage.js";
 import { CAPS, checkCaps, questionChars } from "../../src/decider/capabilities.js";
-import { DeciderUnavailable, type Answer, type Decider, type Question, type ShadowEntry } from "../../src/decider/types.js";
+import { makeDecider } from "../../src/decider/index.js";
+import { secretValues } from "../../src/decider/redact.js";
+import { CostLedger } from "../../src/llm/cost.js";
+import {
+  DeciderUnavailable,
+  type Answer,
+  type Decider,
+  type DeciderConfig,
+  type Question,
+  type ShadowEntry,
+} from "../../src/decider/types.js";
 import type { TestResult } from "../../src/validate/index.js";
 
 /** A scripted decider: `answer(state)` decides per failed test; every call is captured. */
@@ -17,6 +27,7 @@ function fakeDecider(
     caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
     uses: new Set(["repair-triage"]),
     minConfidence: over.minConfidence ?? 0.75,
+    scrub: (t: string) => t,
     ...(over.shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
     summary: () => ({ provider: "laya", model: "jev-latest", calls: calls.length, fallbacks: [] }),
     async decide(use, state, questions) {
@@ -30,6 +41,7 @@ function fakeDecider(
 }
 const choice = (value: string, confidence: number): Answer => ({ type: "choice", value, dist: { [value]: 1 }, confidence });
 const failed = (test: string, error?: string): TestResult => ({ test, status: "failed", ...(error ? { error } : {}) });
+const same = (t: string): string => t;
 
 describe("repair-triage (spec §6.1)", () => {
   it("asks one six-way choice per failed test, each over its own state: the name and the error", async () => {
@@ -80,11 +92,40 @@ describe("repair-triage (spec §6.1)", () => {
   });
 
   it("the state fits the provider's cap: the error is clipped, never the whole call refused", () => {
-    const s = triageState(failed("TC-1", "e".repeat(5000)), 300);
+    const s = triageState(failed("TC-1", "e".repeat(5000)), 300, same);
     expect(s.length).toBeLessThanOrEqual(300);
     expect(s.startsWith('Playwright test "TC-1" failed.\nError:\neee')).toBe(true);
     expect(s.endsWith("…")).toBe(true);
-    expect(triageState(failed("TC-2"), 300)).toBe('Playwright test "TC-2" failed.\nError:\n(no error message)');
+    expect(triageState(failed("TC-2"), 300, same)).toBe('Playwright test "TC-2" failed.\nError:\n(no error message)');
+  });
+
+  it("a secret the clip would cut in half is scrubbed first — no fragment of it is sent or recorded", async () => {
+    const bodies: string[] = [];
+    const fetchFn = (async (_url: unknown, init: { body: string }) => {
+      bodies.push(init.body);
+      const answers = { cause: { type: "choice", choice: "timing", probabilities: { timing: 0.9 }, confidence: 0.9 } };
+      return new Response(JSON.stringify({ answers, usage: { input_tokens: 1, output_tokens: 0 } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const cfg: DeciderConfig = {
+      provider: "compat",
+      baseUrl: "http://127.0.0.1:9",
+      model: "jev-latest",
+      uses: ["repair-triage"],
+      minConfidence: 0.75,
+      timeoutMs: 1000,
+      maxCalls: 10,
+      shadow: true,
+    };
+    const d = makeDecider(cfg, { ledger: new CostLedger(), fetchFn, secrets: secretValues("Admin password: Sup3rS3cret!", {}) })!;
+    const maxChars = CAPS.compat.maxInputChars - questionChars(TRIAGE_QUESTION);
+    const head = 'Playwright test "logs in" failed.\nError:\n';
+    // Clipped raw, the state would end in "Sup3rS3c…" — eight characters of the secret, no longer the secret.
+    const error = `${"x".repeat(maxChars - 1 - head.length - 8)}Sup3rS3cret! was typed into Password`;
+    await makeTriage(d)([failed("logs in", error)]);
+    const sent = (JSON.parse(bodies[0]!) as { state: string }).state;
+    expect(sent).not.toMatch(/Sup3r/);
+    expect(sent.length).toBeLessThanOrEqual(maxChars);
+    expect(String(d.shadow!.entries[0]!.input)).not.toMatch(/Sup3r/);
   });
 
   it("the real question and the longest state it builds pass laya's own caps — a fallback never comes from our own size", async () => {
@@ -105,13 +146,13 @@ describe("repair-triage (spec §6.1)", () => {
   });
 
   it("terminal colour codes in Playwright's error are stripped from the state", () => {
-    expect(triageState(failed("T", "\u001b[31mexpect(locator)\u001b[39m.toBeVisible()"), 300)).toContain(
+    expect(triageState(failed("T", "\u001b[31mexpect(locator)\u001b[39m.toBeVisible()"), 300, same)).toContain(
       "expect(locator).toBeVisible()",
     );
   });
 
   it("the state never exceeds the provider cap even for a long test name", () => {
-    const s = triageState(failed("N".repeat(400), "err"), 300);
+    const s = triageState(failed("N".repeat(400), "err"), 300, same);
     expect(s.length).toBeLessThanOrEqual(300);
   });
 

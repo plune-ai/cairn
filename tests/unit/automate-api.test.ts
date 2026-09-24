@@ -74,7 +74,7 @@ describe("runAutomate — API runs (API-7, #144)", () => {
     }
   });
 
-  it("a run that cannot consult the decider builds none — no notice, no empty shadow file, no report key", async () => {
+  it.each(["0", "1"])("a run that cannot consult the decider builds none — no notice, no empty shadow file, no report key (shadow %s)", async (shadow) => {
     const runDir = await mkdtemp(join(tmpdir(), "qa-automate-api-"));
     try {
       await writeFile(join(runDir, "report.json"), JSON.stringify({ runId: "api-1", url: "https://api.test", mode: "api" }), "utf8");
@@ -85,10 +85,10 @@ describe("runAutomate — API runs (API-7, #144)", () => {
         ANTHROPIC_API_KEY: "test-key",
         DECIDER: "laya",
         DECIDER_BASE_URL: "http://127.0.0.1:9",
-        DECIDER_SHADOW: "1",
+        DECIDER_SHADOW: shadow,
       });
       const result = await runAutomate({ runDir, config, validate: true });
-      expect("decider" in result).toBe(false);
+      expect("decider" in result).toBe(false); // an active decider would add its summary here, even at 0 calls
       await expect(readFile(join(runDir, "decider-shadow-automate.json"), "utf8")).rejects.toThrow(/ENOENT/);
     } finally {
       await rm(runDir, { recursive: true, force: true });

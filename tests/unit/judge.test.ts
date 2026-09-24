@@ -74,6 +74,7 @@ describe("checklistCoverageScore (ADR-0022: decider first when asked, the LLM ju
       caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptionChars: 100, maxOptions: 20, maxQuestionsPerCall: 16 },
       uses: new Set(["coverage"]),
       minConfidence: 0.75,
+      scrub: (t: string) => t,
       ...(shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
       summary: () => ({ provider: "laya", model: "jev-latest", calls, fallbacks: [] }),
       async decide(_use, _state, questions) {

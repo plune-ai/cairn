@@ -44,8 +44,11 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    not optional and do not consult it. Each such guard has a test that goes red when the guard is removed.
    **One exception, by design (spec §6.2): coverage.** `checklist_coverage` is a metric, not a gate — nothing
    is blocked or unblocked by it — and there a deciding decider *replaces* the LLM judge's number, which can come
-   out higher. Its guard is different: any unsure or unavailable answer hands the whole score back to the judge,
-   and the score's comment names its source (`decider (laya): …`), so a reader never mistakes it for the judge's.
+   out higher. Its guard is different: the decider's number stands only when every checklist item is decided —
+   some case confidently covers it, or every case confidently does not. An item that no case confidently covers
+   and some case is unsure about, an unavailable call or an answer that is not a yes/no hands the whole score back
+   to the judge; and the score's comment names its source (`decider (laya): …`), so a reader never mistakes it
+   for the judge's.
 4. **It never sinks a run.** Every failure — network, timeout, 4xx/5xx, a state over the provider's limit, an
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.

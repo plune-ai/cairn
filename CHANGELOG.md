@@ -32,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to
   `report.md`. By default an active decider consults `repair-triage` alone and shadow mode asks both:
   `coverage` answered confidently wrong on laya's multilingual checkpoint, so it acts only when named in
-  `DECIDER_USES`.
+  `DECIDER_USES`. A run in which no enabled use point can fire (no checklist, no repair loop) does not start the
+  layer: no data notice, no report key, no shadow file.
 
 ## [0.7.0] - 2026-07-30
 

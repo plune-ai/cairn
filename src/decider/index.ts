@@ -69,6 +69,14 @@ function estimateUsage(state: string, questions: Record<string, Question>): { in
 }
 
 /**
+ * Whether any enabled use point can fire in this run: repair-triage needs a validate ⇄ repair loop, coverage a
+ * checklist. A run that can use none builds no decider — no data notice, no empty shadow file, no report key.
+ */
+export function deciderReaches(cfg: DeciderConfig | undefined, run: { repair: boolean; checklist: boolean }): cfg is DeciderConfig {
+  return !!cfg && ((run.repair && cfg.uses.includes("repair-triage")) || (run.checklist && cfg.uses.includes("coverage")));
+}
+
+/**
  * The decision layer (ADR-0022) — or `undefined` when DECIDER is off, which is what keeps a run without
  * the flag byte-identical: every use point is gated on this value, and there is no other switch.
  */
@@ -95,6 +103,7 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
     uses: new Set(cfg.uses),
     minConfidence: cfg.minConfidence,
     ...(cfg.shadow ? { shadow: shadowLog(deps.telemetry, deps.secrets ?? []) } : {}),
+    scrub: (text) => redact(text, deps.secrets ?? []),
     summary: () => ({
       provider: cfg.provider,
       model: cfg.model,

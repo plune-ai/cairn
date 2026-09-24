@@ -288,6 +288,7 @@ describe("runExploreGraph — decision layer (ADR-0022)", () => {
       caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
       uses: new Set(uses),
       minConfidence: 0.75,
+      scrub: (t: string) => t,
       summary: () => ({ provider: "laya", model: "jev-latest", calls: calls.length, fallbacks: [] }),
       async decide(use, _state, questions) {
         calls.push(use);

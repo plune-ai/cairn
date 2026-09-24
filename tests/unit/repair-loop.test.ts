@@ -218,9 +218,54 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
     const without = await runRepairLoop({ ...harness(script), maxRepair: 3 });
     expect(r.attempts).toBe(without.attempts); // 3: the same convergence as without a decider
     expect(r.bestValidation.greenRatio).toBe(1);
-    expect(triage.mock.calls[2]![0]).toEqual([expect.objectContaining({ test: "a", error: "locator resolved to 0 elements" })]);
+    // b failed the same way twice: asked once, its verdict still tags the second hint. a's new failure is asked anew.
+    expect(triage.mock.calls.map((c) => c[0].map((t) => `${t.test}|${t.error}`))).toEqual([
+      ["a|500 Internal Server Error", "b|Timeout 5000ms exceeded"],
+      ["a|locator resolved to 0 elements"],
+    ]);
+    expect(withTriage.hints[2]).toBe("- b [triage: locator-missing]: Timeout 5000ms exceeded");
     expect(withTriage.hints[3]).toBe("- a [triage: locator-missing]: locator resolved to 0 elements");
     expect("notRepaired" in r).toBe(false);
+  });
+
+  it("Not repaired comes from the KEPT suite, not the last one: a test passing there is not listed", async () => {
+    const h = harness([
+      report([{ test: "a", status: "failed", error: "500 Internal Server Error" }, { test: "b", status: "failed", error: "locator X" }], 0),
+      report([{ test: "a", status: "passed" }, { test: "b", status: "failed", error: "locator X2" }], 0.5), // kept
+      report([{ test: "a", status: "failed", error: "500 Internal Server Error (2)" }, { test: "b", status: "failed", error: "locator X3" }], 0),
+    ]);
+    const triage = byError();
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage });
+    expect(r.bestValidation.greenRatio).toBe(0.5);
+    expect("notRepaired" in r).toBe(false); // a fails with a 500 in the LAST validation only
+    expect(triage).toHaveBeenCalledTimes(2); // the two loop heads; the discarded last suite is never asked about
+  });
+
+  it("a failure is asked once: a doubt that sent it to repair is not overturned by a later answer", async () => {
+    // a's "locator X" gets no confident answer at the first head; any later ask would call it an app bug.
+    const seen = new Set<string>();
+    const triage = vi.fn(async (failed: ValidationReport["results"]) =>
+      failed.flatMap((r) => {
+        const key = `${r.test}|${r.error}`;
+        const first = !seen.has(key);
+        seen.add(key);
+        if (r.error?.startsWith("500") || (!first && r.test === "a")) return [tr(r.test, "app-bug", true)];
+        return r.test === "a" ? [] : [tr(r.test, "locator-missing", false)];
+      }),
+    );
+    const h = harness([
+      report([{ test: "a", status: "failed", error: "locator X" }, { test: "b", status: "failed", error: "locator Y" }, { test: "c", status: "passed" }], 0.34),
+      report([{ test: "a", status: "failed", error: "500 boom" }, { test: "b", status: "failed", error: "locator Y" }, { test: "c", status: "failed", error: "locator Z" }], 0),
+      report([{ test: "a", status: "failed", error: "500 boom" }, { test: "b", status: "failed", error: "locator Y2" }, { test: "c", status: "failed", error: "locator Z" }], 0),
+    ]);
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage });
+    expect(r.bestValidation.greenRatio).toBe(0.34); // the kept suite is the first: a failed there with "locator X"
+    // b's "locator Y" is not asked twice; after the loop, a's "locator X" (the kept suite's) is not asked again.
+    expect(triage.mock.calls.map((c) => c[0].map((t) => `${t.test}|${t.error}`))).toEqual([
+      ["a|locator X", "b|locator Y"],
+      ["a|500 boom", "c|locator Z"],
+    ]);
+    expect("notRepaired" in r).toBe(false); // a went into repair on "locator X" — it is not reported as excluded
   });
 
   it("the kept suite is the last, never-triaged one: an excluded test failing there with reworded text is asked once more and still reported", async () => {

@@ -126,7 +126,9 @@ export function renderReportMd(r: ReportInput): string {
       "## Decision layer",
       "",
       `- **Provider:** ${d.provider} · model ${d.model}`,
-      `- **Calls:** ${d.calls} · **fallbacks:** ${d.fallbacks.length}${d.fallbacks.length ? " (the current path ran instead)" : ""}`,
+      // Decisions asked = answered + fallbacks; only the answered ones reached the server (DECIDER_MAX_CALLS bounds them).
+      `- **Decisions:** ${d.calls} · **answered:** ${d.calls - d.fallbacks.length} · **fallbacks:** ${d.fallbacks.length}` +
+        `${d.fallbacks.length ? " (the current path ran instead)" : ""}`,
     );
     const grouped = new Map<string, number>();
     for (const f of d.fallbacks) grouped.set(`${f.use} — ${f.reason}`, (grouped.get(`${f.use} — ${f.reason}`) ?? 0) + 1);

@@ -27,6 +27,7 @@ function fakeDecider(script: Script, over: { maxQuestionsPerCall?: number; shado
     caps: { ...CAPS.laya, maxQuestionsPerCall: over.maxQuestionsPerCall ?? 16 },
     uses: new Set(["coverage"]),
     minConfidence: 0.75,
+    scrub: (t: string) => t,
     ...(over.shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
     summary: () => ({ provider: "laya", model: "jev-latest", calls: calls.length, fallbacks: [] }),
     async decide(_use, state, questions) {

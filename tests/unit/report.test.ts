@@ -179,7 +179,7 @@ describe("renderReportMd — decision layer sections (ADR-0022)", () => {
     });
     expect(md).toContain("## Decision layer");
     expect(md).toContain("- **Provider:** laya · model jev-latest");
-    expect(md).toContain("- **Calls:** 5 · **fallbacks:** 3 (the current path ran instead)");
+    expect(md).toContain("- **Decisions:** 5 · **answered:** 2 · **fallbacks:** 3 (the current path ran instead)");
     expect(md).toContain("  - repair-triage — HTTP 500 (×2)");
     expect(md).toContain("  - coverage — state is 1500 chars > 1200 (×1)");
   });

@@ -111,6 +111,11 @@ export interface Decider {
   readonly minConfidence: number;
   /** The questions are independent: they share `state` and never see each other's answers. */
   decide<K extends string>(use: DeciderUse, state: string, questions: Record<K, Question>): Promise<Record<K, Answer>>;
+  /**
+   * The run's secrets scrubbed out of a text, exactly as `decide` scrubs a state. A use point that cuts its state to
+   * fit a cap scrubs FIRST: a secret cut in half no longer matches, and half a secret is still one.
+   */
+  readonly scrub: (text: string) => string;
   /** Present only in shadow mode: use points record here and act on nothing. */
   readonly shadow?: ShadowLog;
   summary(): DeciderSummary;

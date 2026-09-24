@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeDecider, dataDestination, writeShadowFile, deciderReportKeys } from "../../src/decider/index.js";
+import { makeDecider, dataDestination, writeShadowFile, deciderReportKeys, deciderReaches } from "../../src/decider/index.js";
 import { secretValues, redact } from "../../src/decider/redact.js";
 import { CostLedger } from "../../src/llm/cost.js";
 import type { DecisionTrace } from "../../src/telemetry/index.js";
@@ -35,6 +35,23 @@ const sentBody = (fetchFn: typeof fetch): { state: string } =>
   JSON.parse(String((fetchFn as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]![1].body));
 
 // FIRST in the file: the "once per process" flag is module state, and every later test builds remote deciders.
+describe("deciderReaches — a run that cannot use the decider builds none", () => {
+  it.each([
+    [["repair-triage"], { repair: true, checklist: false }, true],
+    [["repair-triage"], { repair: false, checklist: true }, false], // design, with the default uses
+    [["coverage"], { repair: false, checklist: true }, true],
+    [["coverage"], { repair: true, checklist: false }, false],
+    [["repair-triage", "coverage"], { repair: false, checklist: false }, false], // MAX_REPAIR=0 and no checklist
+    [["repair-triage", "coverage"], { repair: true, checklist: true }, true],
+  ] as const)("uses %j on a run %j → %s", (uses, run, expected) => {
+    expect(deciderReaches(cfg({ uses: [...uses] }), run)).toBe(expected);
+  });
+
+  it("DECIDER off → never", () => {
+    expect(deciderReaches(undefined, { repair: true, checklist: true })).toBe(false);
+  });
+});
+
 describe("where the data goes", () => {
   it("warns once per process when data leaves the machine; never for localhost", () => {
     const warn = vi.fn();

@@ -163,7 +163,7 @@ describe("explore parity (C1-02)", () => {
     const stdout = outChunks.join("");
     expect(stdout).toContain("Not repaired — likely an app bug or a broken environment:");
     expect(stdout).toContain("  TC-3 — app-bug (confidence 0.91)");
-    expect(stdout).toContain("Decision layer (laya): 4 decisions · 1 fallback(s) — the current path ran instead");
+    expect(stdout).toContain("Decision layer (laya): 4 decisions · 3 answered · 1 fallback(s) — the current path ran instead");
   });
 
   it("--decider-shadow turns shadow mode on for explore, design and automate", async () => {

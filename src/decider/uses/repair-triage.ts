@@ -43,11 +43,14 @@ export interface TriageResult {
   exclude: boolean;
 }
 
-/** The test's name and its error, colour codes stripped, clipped to fit `maxChars` whole. */
-export function triageState(r: TestResult, maxChars: number): string {
+/**
+ * The test's name and its error, colour codes stripped, scrubbed, THEN clipped to fit `maxChars` whole — clipping
+ * first could cut a secret in half, and the half left would no longer match what the scrubber looks for.
+ */
+export function triageState(r: TestResult, maxChars: number, scrub: (text: string) => string): string {
   const head = `Playwright test "${r.test}" failed.\nError:\n`;
   const error = (r.error ?? "(no error message)").replace(/\u001b\[[0-9;]*m/g, "").trim();
-  const full = head + error;
+  const full = scrub(head + error);
   return full.length <= maxChars ? full : `${full.slice(0, maxChars - 1)}…`;
 }
 
@@ -77,9 +80,10 @@ export function makeTriage(decider: Decider): (failed: TestResult[]) => Promise<
   return async (failed) => {
     const asked = await Promise.all(
       failed.map(async (r): Promise<Asked> => {
-        const state = triageState(r, maxChars);
         const t0 = Date.now();
+        let state = "";
         try {
+          state = triageState(r, maxChars, decider.scrub); // inside the try: a scrubbing failure is a fallback
           const answers = await decider.decide("repair-triage", state, { cause: TRIAGE_QUESTION });
           const c = asCategory(answers.cause);
           return { r, state, latencyMs: Date.now() - t0, ...(c ? { c } : { reason: "an answer outside the offered categories" }) };

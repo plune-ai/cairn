@@ -19,6 +19,7 @@ import { computeCoverage } from "../eval/coverage.js";
 import { designGapCases } from "../eval/gap-cases.js";
 import { judgeTestCases, judgeChecklistCoverage, checklistCoverageScore } from "../eval/judge.js";
 import {
+  deciderReaches,
   makeDecider,
   secretValues,
   writeShadowFile,
@@ -236,8 +237,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const checklistFormatted = formatChecklist(checklistItems);
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
-  // ADR-0022: undefined unless DECIDER names a provider — and then every use point takes today's path.
-  const decider = cfg.decider
+  // ADR-0022: undefined unless DECIDER names a provider AND one of its use points can fire here — without one, every
+  // use point takes today's path.
+  const decider = deciderReaches(cfg.decider, { repair: cfg.maxRepair > 0, checklist: checklistItems.length > 0 })
     ? makeDecider(cfg.decider, { ledger: router.ledger, telemetry, secrets: secretValues(knowledgeText, process.env), warn: onProgress })
     : undefined;
   // #93: cross-run page-understanding cache (keyed by url + page fingerprint) — a re-run on the same
@@ -662,7 +664,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   const checklistItems = input.checklistText ? ingestChecklist(input.checklistText) : [];
   const knowledgeText = await loadKnowledge(resolve(input.knowledgeDir ?? "knowledge"), { url: input.url });
   // ADR-0022: design consults the decider only for checklist coverage (there is no repair here).
-  const decider = cfg.decider
+  const decider = deciderReaches(cfg.decider, { repair: false, checklist: checklistItems.length > 0 })
     ? makeDecider(cfg.decider, { ledger: router.ledger, telemetry, secrets: secretValues(knowledgeText, process.env), warn: onProgress })
     : undefined;
   // #93: cross-run page-understanding cache (keyed by url + page fingerprint) — a re-run on the same
@@ -953,7 +955,7 @@ export async function runAutomate(input: {
   // that has no such loop builds none: no data notice, no empty shadow file, no report key. It designs nothing, so
   // knowledge is read here for one reason: to know which values the cases may echo and must never be sent.
   const decider =
-    cfg.decider && input.validate && !isApi && cfg.maxRepair > 0 && cfg.decider.uses.includes("repair-triage")
+    deciderReaches(cfg.decider, { repair: Boolean(input.validate) && !isApi && cfg.maxRepair > 0, checklist: false })
       ? makeDecider(cfg.decider, {
           ledger: router.ledger,
           secrets: secretValues(await loadKnowledge(resolve("knowledge"), { url: baseUrl }), process.env),
