@@ -44,7 +44,7 @@ const PASSWORD_ENV = /(?:^|_)(?:PASS(?:WORDS?|WD|PHRASE|CODE)?|PWD)$/i;
 const PUBLIC_ENV = /(?:^|_)(?:PUBLIC|PUBLISHABLE)_KEYS?$/i;
 /** Never a secret: flags, and the words a field list puts after "Password:". */
 const TRIVIAL =
-  /^(?:true|false|yes|no|on|off|null|none|undefined|empty|blank|enabled|disabled|required|optional|hidden|visible|masked|mandatory|обов['’]язков\p{L}*|необов['’]язков\p{L}*|порожн\p{L}*|пуст\p{L}*)$/iu;
+  /^(?:true|false|yes|no|on|off|null|none|undefined|empty|blank|enabled|disabled|required|optional|hidden|visible|masked|mandatory|обов['’]язков\p{L}*|необов['’]язков\p{L}*|порожн\p{L}*|пуст\p{L}*|немає|нема)$/iu;
 
 /** Drops trailing characters of a class — a loop, not a `[…]+$` pattern, which rescans a long run from every position. */
 const trimEnd = (s: string, cls: RegExp): string => {
@@ -71,11 +71,14 @@ const SPEC_WORD =
 /** A first header cell that makes every column an instance: `| | Staging | Production |`, `| Role | Admin | Viewer |`. */
 const MATRIX_HEAD =
   /(?<![\p{L}\p{N}])(?:environment|env(?!\p{L})|account|role|user|середовищ|оточенн|окружени|акаунт|роль|користувач)/iu;
-/** …as do columns that all name an environment: `| Parameter | Staging | Production |`. */
+/** …as do columns that all name an environment: `| Parameter | Staging | Production |`, `| QA1 | QA2 |`,
+ * `| Staging EU | Prod (US) |`. */
 const ENV_NAME =
-  /^(?:staging|stage|stg|prod|production|dev|development|qa|test|testing|uat|local|demo|sandbox|pre-?prod|beta|integration|live|тест|прод|дев|стейдж\p{L}*)$/iu;
-/** Outside a matrix, a column named for the value holds it: `| Field | Required | Value |`, `| Test data |`. */
-const VALUE_COLUMN = /(?<![\p{L}\p{N}])(?:value|example|data|значен|приклад|пример|дані|данные)/iu;
+  /^(?:staging|stage|stg|prod|production|dev|development|qa|test|testing|uat|local|demo|sandbox|pre-?prod|beta|integration|live|тест|прод|дев|стейдж\p{L}*)(?:[\s_-]*(?:\d+|[a-z]{2}|\([^)]*\)?))?$/iu;
+/** Outside a matrix, a column named for the value holds it — the header's last word, and not a default, invalid or
+ * old value: `| Field | Required | Value |`, `| Test data |`, `| Тестове значення |`; not `| Data source |`. */
+const VALUE_COLUMN =
+  /(?<![\p{L}\p{N}])(?<!(?:default|invalid|wrong|old|initial|(?:невалідн|неправильн|невірн|некоректн|стар|початков|невалидн|неверн|некорректн|начальн)\p{L}*)\s+)(?:values?|examples?|data|значення|значение|приклад|пример|дані|данные)$/iu;
 
 /** A key–value table's layout, read once from its header: which columns describe the field, whether every other
  * column holds a value (a matrix), and the column named for the value. */
@@ -83,7 +86,7 @@ const tableLayout = (header: string[]): { spec: boolean[]; matrix: boolean; name
   const spec = header.map((h) => SPEC_COLUMN.test(h));
   const values = header.flatMap((h, i) => (i > 0 && !spec[i] ? [i] : []));
   const matrix = !header[0] || MATRIX_HEAD.test(header[0]) || values.every((i) => ENV_NAME.test(strip(header[i]!)));
-  return { spec, matrix, named: values.find((i) => VALUE_COLUMN.test(header[i]!)) };
+  return { spec, matrix, named: values.find((i) => VALUE_COLUMN.test(strip(header[i]!))) };
 };
 
 /**
@@ -187,13 +190,17 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
         for (const t of cell.split(/[\s,;/]+/)) if (credentialShaped(strip(t))) add(t);
       }
       // A key–value row — | Password | qwerty | — holds one value: in the column named for it (| Value |, | Test data |),
-      // else in the first that neither describes the field (| Type |, | Status |) nor holds a flag (| yes |) or nothing.
-      // The columns past it hold results or translations (| error |, | Passwort |); a matrix holds one per column.
+      // else in the first that neither describes the field (| Type |, | Status |) nor holds a flag (| yes |, | ✓ |) or
+      // nothing. The columns past it hold results or translations (| error |, | Passwort |); a matrix holds one per column.
       const rowHead = table && cells[0] ? secretHead(cells[0]) : undefined;
       if (table && rowHead) {
         const { spec, matrix, named } = table;
         const values = cells.flatMap((_, i) => (i > 0 && !spec[i] ? [i] : []));
-        const at = matrix ? values : [named ?? values.find((i) => cells[i] && !TRIVIAL.test(cells[i]!))];
+        const holds = (i: number): boolean => {
+          const s = strip(cells[i] ?? "");
+          return s.length >= 4 && !TRIVIAL.test(s);
+        };
+        const at = matrix ? values : [named ?? values.find(holds)];
         for (const i of at) if (i !== undefined) for (const v of headValues(rowHead, cells[i] ?? "")) add(v);
       }
     } else {

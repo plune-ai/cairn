@@ -328,6 +328,21 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["| Параметр | Тест | Прод |\n|---|---|---|\n| Пароль | qwerty | letmein |", "letmein"],
     ["| | Maxim | Olena |\n|---|---|---|\n| Password | qwerty | letmein |", "qwerty"],
     ["| | Максим | Олена |\n|---|---|---|\n| Пароль | qwerty | letmein |", "qwerty"],
+    ["| Field | Data source | Value |\n|---|---|---|\n| Password | vault | qwerty |", "qwerty"],
+    ["| Field | Metadata | Value |\n|---|---|---|\n| Password | internal | qwerty |", "qwerty"],
+    ["| Field | Default value | Test value |\n|---|---|---|\n| Password | none | qwerty |", "qwerty"],
+    ["| Field | Invalid value | Valid value |\n|---|---|---|\n| Password | abcdef | qwerty |", "qwerty"],
+    ["| Поле | Невалідне значення | Валідне значення |\n|---|---|---|\n| Пароль | abcdef | qwerty |", "qwerty"],
+    ["| Поле | Значення за замовчуванням | Тестове значення |\n|---|---|---|\n| Пароль | немає | qwerty |", "qwerty"],
+    ["| Поле | Метка | Значение |\n|---|---|---|\n| Пароль | Пароль | qwerty |", "qwerty"],
+    ["| Field | Label | **Value** |\n|---|---|---|\n| Password | Password | qwerty |", "qwerty"],
+    ["| Parameter | QA1 | QA2 |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Parameter | Staging EU | Prod (US) |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Parameter | stage-1 | stage-2 |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Field | Required | Staging |\n|---|---|---|\n| Password | ✓ | qwerty |", "qwerty"],
+    ["| Field | Required | Staging |\n|---|---|---|\n| Password | **yes** | qwerty |", "qwerty"],
+    ["| Field | Mandatory | Staging |\n|---|---|---|\n| Password | required | qwerty |", "qwerty"],
+    ["| Поле | Обов'язкове | Нове |\n|---|---|---|\n| Пароль | Так | qwerty |", "qwerty"],
   ])("knowledge %j yields a scrubbable secret", (line, secret) => {
     expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
@@ -394,6 +409,7 @@ describe("secretValues / redact (spec §3.7)", () => {
     "Password: text",
     "| Поле | Мінімальне значення | Максимальне значення |\n|---|---|---|\n| ПІН | 1000 | 9999 |",
     "| Поле | Минимальное значение |\n|---|---|\n| ПИН | 1000 |",
+    "Пароль: немає",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
   });
@@ -405,8 +421,14 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["| Field | Chrome | Firefox | Safari |\n|---|---|---|---|\n| Password | works | works | broken |", "broken"],
     ["| Field | ID | Value |\n|---|---|---|\n| Password | password-input | qwerty |", "password-input"],
     ["| Name | Env | Value |\n|---|---|---|\n| DB password | staging | qwerty |", "staging"],
+    ["| Field | Data source | Value |\n|---|---|---|\n| Password | vault | qwerty |", "vault"],
+    ["| Field | Invalid value | Valid value |\n|---|---|---|\n| Password | abcdef | qwerty |", "abcdef"],
   ])("knowledge %j: %s is not a secret", (line, word) => {
     expect(secretValues(line, {})).not.toContain(word);
+  });
+
+  it("a password env variable that names a type is not scrubbed: `password` protects nothing", () => {
+    expect(secretValues("", { DB_PASSWORD: "password", E2E_PASSWORD: "Passw0rd" })).toEqual(["Passw0rd"]);
   });
 
   it("a password with a space or prose after it: no fragment of it survives, and no plain word is taken", () => {
@@ -482,6 +504,8 @@ describe("secretValues / redact (spec §3.7)", () => {
     expect(time(`| ${"key ".repeat(20_000)}| x |\n|---|---|\n| ${"password ".repeat(10_000)}| qwerty |`)).toBeLessThan(500);
     // the header's environment names and bounds: a letter run that ends in a non-letter
     expect(time(`| Field | ${"стейдж".repeat(13_000)}1 | ${"мінімальн".repeat(9_000)}x |\n|---|---|---|\n| Password | a | b |`)).toBeLessThan(500);
+    // a value word at every word start, and an environment name trailed by a long run that fails its suffix
+    expect(time(`| Field | ${"value ".repeat(13_000)}x | prod${" ".repeat(80_000)}! |\n|---|---|---|\n| Password | a | b |`)).toBeLessThan(500);
   });
 
   it("redacts every occurrence, longest secret first", () => {

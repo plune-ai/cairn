@@ -45,11 +45,13 @@ values after it, and those that look like credentials are taken — `Qwerty123!`
 never a plain word; so is the credential in a login pair such as `qa@acme.test / Qwerty123!`. A label that names
 the secret itself also takes a plain value: `Password: qwerty`, `Login / password: admin / qwerty`, `PIN: 4711`,
 and so does a table row such as `| Password | qwerty |`. Its value is in the column named for one (`Value`,
-`Test data`, `Значення`), or else in the first column that neither describes the field (`Type`, `Role`, `Format`,
-`Status`, `Result`, `Min`) nor holds a flag (`yes`, `required`); the columns past it hold results or translations
-and are never taken. A matrix gives one value per column: its first header cell is empty or names an environment,
-account or role, or its columns are environments — `| Parameter | Staging | Production |`. A word that names a type
-(`password`, `textbox`) is never a value, in a table or after a label: a password `password` protects nothing. A label that only talks about one takes no plain value: `Password rules: must contain a
+`Test data`, `Тестове значення` — not `Default value` or `Data source`), or else in the first column that neither
+describes the field (`Type`, `Role`, `Format`, `Status`, `Result`, `Min`) nor holds a flag (`yes`, `✓`, `required`);
+the columns past it hold results or translations and are never taken. A matrix gives one value per column: its first
+header cell is empty or names an environment, account or role, or its columns are environments —
+`| Parameter | Staging | Production |`, `| QA1 | QA2 |`. A word that names a type (`password`, `textbox`) is never a
+value — in a table, after a label or in an environment variable (`DB_PASSWORD=password`): a password `password`
+protects nothing. A label that only talks about one takes no plain value: `Password rules: must contain a
 digit`, `Forgot password: /forgot-password` (a page path or a URL is never taken), `Empty password: "Password is
 required"`; nor does a quoted UI text (`"Forgot password?"`). A credential-shaped value is replaced wherever it
 appears, so `Qwerty123!x` in a negative case loses it too; a plain value or a PIN only as a whole token, never
