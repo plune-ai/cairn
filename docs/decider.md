@@ -44,9 +44,11 @@ sends. A secret word on a line (`Password`, `API key`, `Token`, `Пароль`, 
 values after it, and those that look like credentials are taken — `Qwerty123!`, `sk_live_…`, `admin@acme.test`,
 never a plain word; so is the credential in a login pair such as `qa@acme.test / Qwerty123!`. A label that names
 the secret itself also takes a plain value: `Password: qwerty`, `Login / password: admin / qwerty`, `PIN: 4711`,
-and so does a table row such as `| Password | qwerty |` — one value per environment in `| | Staging | Production |`
-— except in a field specification: a column like `Type`, `Role` or `Format`, or a cell that names a type
-(`password`, `textbox`). A label that only talks about one takes no plain value: `Password rules: must contain a
+and so does a table row such as `| Password | qwerty |`: its value is the first column that does not describe the
+field — not `Type`, `Role`, `Format`, `Status`, `Result` or `Min`, and not a cell that names a type (`password`,
+`textbox`). The columns past it hold results or translations and are never taken, except in a matrix, whose first
+header cell is empty or names an environment, account or role: one value per column in `| | Staging | Production |`.
+A label that only talks about one takes no plain value: `Password rules: must contain a
 digit`, `Forgot password: /forgot-password` (a page path or a URL is never taken), `Empty password: "Password is
 required"`; nor does a quoted UI text (`"Forgot password?"`). A credential-shaped value is replaced wherever it
 appears, so `Qwerty123!x` in a negative case loses it too; a plain value or a PIN only as a whole token, never

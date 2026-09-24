@@ -309,6 +309,13 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["Адмін - Пароль: qwerty", "qwerty"],
     ["Reset PIN: 4711", "4711"],
     ["| Item | Value |\n|---|---|\n| The password for the staging admin account that the nightly regression run uses | qwerty |", "qwerty"],
+    ["| Environment | Staging | Production |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Role | Admin | Viewer |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Середовище | Staging | Production |\n|---|---|---|\n| Пароль | qwerty | letmein |", "letmein"],
+    ["| | Admin | Controller |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Account | Information |\n|---|---|\n| Login | admin |\n| Password | qwerty |", "qwerty"],
+    ["| Field | Value |\n|---|---|\n| Login | admin |\n| Password | secret |", "secret"],
+    ["| Field | Type | Value |\n|---|---|---|\n| Password | password | qwerty |", "qwerty"],
   ])("knowledge %j yields a scrubbable secret", (line, secret) => {
     expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
@@ -359,8 +366,29 @@ describe("secretValues / redact (spec §3.7)", () => {
     'Wrong password: "Invalid email or password"',
     "Порожній пароль: «Пароль обов’язковий»",
     "Сменить пароль — Настройки",
+    "| Field | Input | Expected | Actual |\n|---|---|---|---|\n| Password | 123 | error | error |",
+    "| Key | en | de | fr |\n|---|---|---|---|\n| Password | Password | Passwort | Mot de passe |",
+    "| Ключ | EN | PL |\n|---|---|---|\n| Пароль | Password | Hasło |",
+    "| Feature | Status |\n|---|---|\n| Password | pass |",
+    "| Field | Min | Max |\n|---|---|---|\n| PIN | 1000 | 9999 |",
+    "| Field | Length |\n|---|---|\n| Password | 8-64 |",
+    "| Field | Default value |\n|---|---|\n| Password | empty |",
+    "| Check | Result |\n|---|---|\n| Password | passed |",
+    "| Check | Actual |\n|---|---|\n| Password | accepted |",
+    "| Поле | Мін | Макс |\n|---|---|---|\n| ПІН | 1000 | 9999 |",
+    "| Перевірка | Статус |\n|---|---|\n| Пароль | пройдено |",
+    "Пароль: порожній",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
+  });
+
+  // Outside a matrix a key–value row has one value column; the ones after it are results, not secrets.
+  it.each([
+    ["| Field | Valid | Invalid | Result |\n|---|---|---|---|\n| Password | Qwerty123! | abc | Invalid |", "Invalid"],
+    ["| Field | Test case | Result |\n|---|---|---|\n| Password | TC-012 | fail |", "fail"],
+    ["| Field | Chrome | Firefox | Safari |\n|---|---|---|---|\n| Password | works | works | broken |", "broken"],
+  ])("knowledge %j: %s is not a secret", (line, word) => {
+    expect(secretValues(line, {})).not.toContain(word);
   });
 
   it("a password with a space or prose after it: no fragment of it survives, and no plain word is taken", () => {
