@@ -147,6 +147,25 @@ describe("explore parity (C1-02)", () => {
     expect("decider" in runExploration.mock.calls[0][0].config).toBe(false); // the flag beats CAIRN_DECIDER
   });
 
+  it("automate prints the tests triage kept out of repair and the decider's fallbacks — nothing when absent", async () => {
+    const base = { runDir: "/runs/a", specFiles: [], cost: { perRole: [], totalTokens: 0, totalCostUsd: 0 }, budget: { used: 0, max: 80 }, stoppedEarly: false };
+    runAutomate.mockResolvedValue(base);
+    await buildProgram().parseAsync(["node", "cairn", "automate", "--run", "/runs/a"]);
+    expect(outChunks.join("")).not.toMatch(/not repaired|decision layer/i);
+
+    outChunks.length = 0;
+    runAutomate.mockResolvedValue({
+      ...base,
+      notRepaired: [{ test: "TC-3", category: "app-bug", confidence: 0.91, exclude: true }],
+      decider: { provider: "laya", model: "jev-latest", calls: 4, fallbacks: [{ use: "repair-triage", reason: "HTTP 500" }] },
+    });
+    await buildProgram().parseAsync(["node", "cairn", "automate", "--run", "/runs/a"]);
+    const stdout = outChunks.join("");
+    expect(stdout).toContain("Not repaired — likely an app bug or a broken environment:");
+    expect(stdout).toContain("  TC-3 — app-bug (confidence 0.91)");
+    expect(stdout).toContain("Decision layer (laya): 4 decisions · 1 fallback(s) — the current path ran instead");
+  });
+
   it("--decider-shadow turns shadow mode on for explore, design and automate", async () => {
     vi.stubEnv("DECIDER_BASE_URL", "http://127.0.0.1:8000");
     await buildProgram().parseAsync(["node", "cairn", "explore", "--url", "https://app.test", "--decider", "laya", "--decider-shadow"]);

@@ -380,6 +380,20 @@ export function buildProgram(): Command {
             `\nValidation: ${Math.round(result.validation.greenRatio * 100)}% green out of ${result.validation.results.length} tests\n`,
           );
         }
+        // ADR-0022: said out loud, so nobody mistakes an unrepaired failure for a test problem.
+        if (result.notRepaired?.length) {
+          process.stdout.write("\nNot repaired — likely an app bug or a broken environment:\n");
+          for (const t of result.notRepaired) {
+            process.stdout.write(`  ${t.test} — ${t.category} (confidence ${t.confidence.toFixed(2)})\n`);
+          }
+        }
+        if (result.decider) {
+          const d = result.decider;
+          process.stdout.write(
+            `\nDecision layer (${d.provider}): ${d.calls} decisions · ${d.fallbacks.length} fallback(s)` +
+              `${d.fallbacks.length ? " — the current path ran instead" : ""}\n`,
+          );
+        }
         printCost(result.cost);
         // L1-04 (Box 4): same consolidated footer as `explore` — pass/fail · cost · budget · path.
         process.stdout.write("\n");

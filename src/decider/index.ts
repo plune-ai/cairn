@@ -152,11 +152,11 @@ function shadowLog(telemetry?: Pick<Telemetry, "recordScore">): ShadowLog {
  * Shadow mode's only artifact (spec §7): `runs/<id>/decider-shadow.json`. A no-op for an active decider or
  * none, so every other file of the run stays what it would have been without the flag.
  */
-export async function writeShadowFile(runDir: string, decider: Decider | undefined): Promise<void> {
+export async function writeShadowFile(runDir: string, decider: Decider | undefined, file = "decider-shadow.json"): Promise<void> {
   if (!decider?.shadow) return;
   const { provider, model, calls, fallbacks, cost } = decider.summary();
   const payload = { provider, model, minConfidence: decider.minConfidence, calls, fallbacks, cost, entries: decider.shadow.entries };
-  await writeFile(join(runDir, "decider-shadow.json"), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  await writeFile(join(runDir, file), `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
 const DOCTOR_QUESTION: Question = {

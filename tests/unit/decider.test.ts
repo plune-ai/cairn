@@ -280,6 +280,9 @@ describe("shadow mode (spec §7) and the run summary", () => {
     expect(file).toMatchObject({ provider: "laya", model: "jev-latest", minConfidence: 0.75, calls: 1, fallbacks: [] });
     expect(file.cost.perRole).toEqual([expect.objectContaining({ role: "decider", calls: 1, inputTokens: 10, costUsd: 0 })]);
     expect(file.entries).toEqual([expect.objectContaining({ use: "coverage", agreement: 1 })]);
+    // automate writes under its own name: the run dir may already hold design's file
+    await writeShadowFile(dir, d, "decider-shadow-automate.json");
+    expect((await readdir(dir)).sort()).toEqual(["decider-shadow-automate.json", "decider-shadow.json"]);
   });
 });
 
