@@ -95,7 +95,8 @@ Each run is one Langfuse trace (root span via `startActiveObservation`); each st
 - **Methodology:** ported from qa-skills — ADR-0008.
 - **Decision layer (opt-in):** a System One model (TypeSafe Jev, a local Laya, or a compatible server) answers
   typed picks — why a test failed, whether a case covers a checklist item — and never generates text. Off by
-  default, it may only make a result stricter and never sinks a run — ADR-0022, [`decider.md`](../decider.md).
+  default, it may only make a gate stricter (checklist coverage, a metric, is the named exception) and never sinks a
+  run — ADR-0022, [`decider.md`](../decider.md).
 
 Composition details — [`module-map.md`](./module-map.md); the graph — [`state-machine.md`](./state-machine.md);
 the improvement loop — [`self-improvement.md`](./self-improvement.md).
