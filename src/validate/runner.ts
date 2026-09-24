@@ -149,6 +149,18 @@ export function screencastsFromRunnerOutput(stdout: string, runDir: string): Scr
   }
 }
 
+/** The first code-frame line (`  8 |`, `> 8 |`) or stack line (`at …:8:54`) of a formatted error. */
+const FRAME = /\n\s*(?:>?\s*\d+ \||at .+:\d+:\d+\)?$)/m;
+
+/**
+ * An error without its code frame and stack. They carry the spec's absolute path, and with it the machine's user
+ * name, which must not reach an LLM or a report; their line numbers would also make one failure look new after
+ * every regeneration.
+ */
+function withoutFrame(message: string | undefined): string | undefined {
+  return message?.split(FRAME)[0]?.trim();
+}
+
 function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
@@ -156,8 +168,9 @@ function extract(json: PwJson): RawTestResult[] {
       const result = spec.tests?.[0]?.results?.[0];
       const status = (result?.status ?? "failed") as TestStatus;
       // Every error, once each: on a test timeout `error` is the timeout alone, and the action's own error — the call
-      // log that names the locator — is a later entry of `errors`.
-      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map((m) => m?.trim());
+      // log that names the locator — is a later entry of `errors`. Those entries come formatted (message, code
+      // frame, `at <absolute path>`); without the frame, `errors[0]` is `error` again.
+      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map(withoutFrame);
       const error = [...new Set(messages.filter(Boolean))].join("\n\n");
       out.push({ title: spec.title, status, ...(error ? { error } : {}) });
     }
