@@ -1,4 +1,5 @@
 import type { TestResult } from "../../validate/index.js";
+import { questionChars } from "../capabilities.js";
 import type { Answer, Decider, Question } from "../types.js";
 
 /**
@@ -8,14 +9,18 @@ import type { Answer, Decider, Question } from "../types.js";
  */
 export type FailureCategory = "locator-ambiguous" | "locator-missing" | "timing" | "wrong-assertion" | "app-bug" | "env-or-session";
 
-/** label → when it applies. Sent as the choice's criteria: the descriptions are what the model decides by. */
+/**
+ * label → when it applies. Sent as the choice's criteria: the descriptions are what the model decides by.
+ * Short on purpose — the whole question must fit laya's 400-character question cap (capabilities.ts). A
+ * "wrong result" belongs to wrong-assertion only: when it is unclear whose fault it is, repair it.
+ */
 export const FAILURE_CATEGORIES: Record<FailureCategory, string> = {
-  "locator-ambiguous": "The locator matched more than one element (a strict mode violation: resolved to N elements)",
-  "locator-missing": "The locator matched no element: the element was not found, not visible or not attached",
-  timing: "The page was not ready yet: a navigation, network response or animation had not finished when the step ran",
-  "wrong-assertion": "The page worked, but the test expected a different text, value, count, state or URL",
-  "app-bug": "The application itself misbehaved: a server error, a crash, a broken page or a wrong result for valid input",
-  "env-or-session": "The environment failed: an expired session or a login page, an unreachable server, or a browser that did not start",
+  "locator-ambiguous": "locator matched several elements (strict mode)",
+  "locator-missing": "locator found no element, or it was hidden",
+  timing: "page not ready yet: navigation, data, animation",
+  "wrong-assertion": "page worked, but a different result was expected",
+  "app-bug": "the app failed: server error, crash, error page",
+  "env-or-session": "environment failed: session expired, server unreachable",
 };
 
 /** Categories a confident answer keeps out of repair — the only direction a decider may push (ADR-0020). */
@@ -24,9 +29,9 @@ const NOT_REPAIRABLE: ReadonlySet<string> = new Set(["app-bug", "env-or-session"
 /** Playwright's own call log follows the cause; beyond this the tokens buy nothing (and cost money on jev). */
 const MAX_STATE_CHARS = 2000;
 
-const QUESTION: Question = {
+export const TRIAGE_QUESTION: Question = {
   type: "choice",
-  instructions: "Why did this generated Playwright test fail? Pick the most likely cause from its error message.",
+  instructions: "Why did this Playwright test fail?",
   options: FAILURE_CATEGORIES,
 };
 
@@ -67,14 +72,15 @@ function asCategory(a: Answer | undefined): { category: FailureCategory; confide
  * returns nothing — so the loop runs as it would have without a decider.
  */
 export function makeTriage(decider: Decider): (failed: TestResult[]) => Promise<TriageResult[]> {
-  const maxChars = Math.min(decider.caps.maxStateChars, MAX_STATE_CHARS);
+  // The provider reads the state together with the question: the error gets what the question leaves.
+  const maxChars = Math.min(decider.caps.maxInputChars - questionChars(TRIAGE_QUESTION), MAX_STATE_CHARS);
   return async (failed) => {
     const asked = await Promise.all(
       failed.map(async (r): Promise<Asked> => {
         const state = triageState(r, maxChars);
         const t0 = Date.now();
         try {
-          const answers = await decider.decide("repair-triage", state, { cause: QUESTION });
+          const answers = await decider.decide("repair-triage", state, { cause: TRIAGE_QUESTION });
           const c = asCategory(answers.cause);
           return { r, state, latencyMs: Date.now() - t0, ...(c ? { c } : { reason: "an answer outside the offered categories" }) };
         } catch (e) {

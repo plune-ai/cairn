@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { caseState, deciderChecklistCoverage } from "../../src/decider/uses/coverage.js";
+import { CAPS, checkCaps } from "../../src/decider/capabilities.js";
 import { DeciderUnavailable, type Answer, type Decider, type Question, type ShadowEntry } from "../../src/decider/types.js";
 import type { TestCase } from "../../src/design/index.js";
 
@@ -23,7 +24,7 @@ function fakeDecider(script: Script, over: { maxQuestionsPerCall?: number; shado
   const decider: Decider = {
     provider: "laya",
     model: "jev-latest",
-    caps: { maxStateChars: 1200, maxOptions: 20, maxQuestionsPerCall: over.maxQuestionsPerCall ?? 16 },
+    caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: over.maxQuestionsPerCall ?? 16 },
     uses: new Set(["coverage"]),
     minConfidence: 0.75,
     ...(over.shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
@@ -121,6 +122,25 @@ describe("coverage by decider (spec §6.2)", () => {
   it("an answer of the wrong type is not trusted", async () => {
     const { decider } = fakeDecider(() => ({ type: "choice", value: "a", dist: { a: 1 }, confidence: 1 }));
     expect(await deciderChecklistCoverage(items, [tc("A")], decider)).toEqual({ undecided: "an answer that is not a yes/no" });
+  });
+
+  it("an ordinary case and checklist item pass laya's own caps", async () => {
+    const { decider } = fakeDecider(() => yes());
+    const laya: Decider = {
+      ...decider,
+      caps: CAPS.laya,
+      async decide(use, state, questions) {
+        checkCaps(CAPS.laya, state, questions as Record<string, Question>);
+        return decider.decide(use, state, questions);
+      },
+    };
+    const item = { text: "A user with an expired password is sent to the change-password page after signing in" };
+    const c = tc("Expired password", {
+      preconditions: ["a user whose password expired yesterday"],
+      steps: ["open /login", "type the user's email and password", "press Sign in"],
+      expected: "the change-password page opens with a notice that the password has expired",
+    });
+    expect(await deciderChecklistCoverage([item], [c], laya)).toMatchObject({ value: 1 });
   });
 
   it("no cases → nothing is covered, and no call is made", async () => {

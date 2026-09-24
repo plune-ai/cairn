@@ -71,7 +71,7 @@ describe("checklistCoverageScore (ADR-0022: decider first when asked, the LLM ju
     const decider: Decider = {
       provider: "laya",
       model: "jev-latest",
-      caps: { maxStateChars: 1200, maxOptions: 20, maxQuestionsPerCall: 16 },
+      caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
       uses: new Set(["coverage"]),
       minConfidence: 0.75,
       ...(shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),

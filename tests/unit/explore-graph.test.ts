@@ -285,7 +285,7 @@ describe("runExploreGraph — decision layer (ADR-0022)", () => {
     const decider: Decider = {
       provider: "laya",
       model: "jev-latest",
-      caps: { maxStateChars: 1200, maxOptions: 20, maxQuestionsPerCall: 16 },
+      caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
       uses: new Set(uses),
       minConfidence: 0.75,
       summary: () => ({ provider: "laya", model: "jev-latest", calls: calls.length, fallbacks: [] }),

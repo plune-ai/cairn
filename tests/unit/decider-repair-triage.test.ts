@@ -1,19 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
-import { FAILURE_CATEGORIES, makeTriage, triageState } from "../../src/decider/uses/repair-triage.js";
+import { FAILURE_CATEGORIES, TRIAGE_QUESTION, makeTriage, triageState } from "../../src/decider/uses/repair-triage.js";
+import { CAPS, checkCaps, questionChars } from "../../src/decider/capabilities.js";
 import { DeciderUnavailable, type Answer, type Decider, type Question, type ShadowEntry } from "../../src/decider/types.js";
 import type { TestResult } from "../../src/validate/index.js";
 
 /** A scripted decider: `answer(state)` decides per failed test; every call is captured. */
 function fakeDecider(
   answer: (state: string) => Answer | Error,
-  over: { minConfidence?: number; shadow?: boolean; maxStateChars?: number } = {},
+  over: { minConfidence?: number; shadow?: boolean } = {},
 ) {
   const calls: { use: string; state: string; questions: Record<string, Question> }[] = [];
   const entries: ShadowEntry[] = [];
   const decider: Decider = {
     provider: "laya",
     model: "jev-latest",
-    caps: { maxStateChars: over.maxStateChars ?? 1200, maxOptions: 20, maxQuestionsPerCall: 16 },
+    caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
     uses: new Set(["repair-triage"]),
     minConfidence: over.minConfidence ?? 0.75,
     ...(over.shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
@@ -84,6 +85,23 @@ describe("repair-triage (spec §6.1)", () => {
     expect(s.startsWith('Playwright test "TC-1" failed.\nError:\neee')).toBe(true);
     expect(s.endsWith("…")).toBe(true);
     expect(triageState(failed("TC-2"), 300)).toBe('Playwright test "TC-2" failed.\nError:\n(no error message)');
+  });
+
+  it("the real question and the longest state it builds pass laya's own caps — a fallback never comes from our own size", async () => {
+    expect(questionChars(TRIAGE_QUESTION)).toBeLessThanOrEqual(CAPS.laya.maxQuestionChars);
+    const base = fakeDecider(() => choice("timing", 0.9)).decider;
+    const sent: string[] = [];
+    const laya: Decider = {
+      ...base,
+      caps: CAPS.laya,
+      async decide(use, state, questions) {
+        checkCaps(CAPS.laya, state, questions as Record<string, Question>); // throws on anything laya would cut
+        sent.push(state);
+        return base.decide(use, state, questions);
+      },
+    };
+    expect(await makeTriage(laya)([failed("TC-1", "e".repeat(5000))])).toHaveLength(1);
+    expect(sent[0]!.length + questionChars(TRIAGE_QUESTION)).toBe(CAPS.laya.maxInputChars); // the whole budget, no more
   });
 
   it("terminal colour codes in Playwright's error are stripped from the state", () => {
