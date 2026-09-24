@@ -263,6 +263,21 @@ describe("shadow mode (spec §7) and the run summary", () => {
     expect(recordScore).toHaveBeenCalledWith("decider.coverage.agreement", 1);
   });
 
+  it("shadow entries are scrubbed like a state — decider-shadow.json never holds a secret the run knows", () => {
+    const d = makeDecider(cfg({ ...localLaya, shadow: true }), { ledger: new CostLedger(), secrets: ["Sup3rS3cret!"] })!;
+    d.shadow!.record({
+      use: "repair-triage",
+      input: 'Playwright test "signs in" failed.\nError: fill("Sup3rS3cret!") timed out',
+      current: "repair",
+      decider: { category: "timing", confidence: 0.8, wouldExclude: false },
+      latencyMs: 3,
+    });
+    d.shadow!.record({ use: "coverage", input: { items: ["type Sup3rS3cret! into Password"], cases: [] }, current: 1, decider: 1, latencyMs: 3 });
+    expect(JSON.stringify(d.shadow!.entries)).not.toContain("Sup3rS3cret!");
+    expect(d.shadow!.entries[0]).toMatchObject({ input: 'Playwright test "signs in" failed.\nError: fill("‹redacted›") timed out' });
+    expect(d.shadow!.entries[1]).toMatchObject({ input: { items: ["type ‹redacted› into Password"] }, latencyMs: 3 });
+  });
+
   it("deciderReportKeys: nothing without a decider or in shadow mode; the summary and not-repaired tests when active", () => {
     const tr = { test: "A", category: "app-bug" as const, confidence: 0.9, exclude: true };
     expect(deciderReportKeys(undefined)).toEqual({});

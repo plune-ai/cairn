@@ -94,7 +94,7 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
     caps,
     uses: new Set(cfg.uses),
     minConfidence: cfg.minConfidence,
-    ...(cfg.shadow ? { shadow: shadowLog(deps.telemetry) } : {}),
+    ...(cfg.shadow ? { shadow: shadowLog(deps.telemetry, deps.secrets ?? []) } : {}),
     summary: () => ({
       provider: cfg.provider,
       model: cfg.model,
@@ -138,12 +138,21 @@ export function makeDecider(cfg: DeciderConfig | undefined, deps: DeciderDeps): 
   };
 }
 
-function shadowLog(telemetry?: Pick<Telemetry, "recordScore">): ShadowLog {
+/** Every string of a value, scrubbed like a state. */
+function scrubDeep(v: unknown, secrets: readonly string[]): unknown {
+  if (typeof v === "string") return redact(v, secrets);
+  if (Array.isArray(v)) return v.map((x) => scrubDeep(x, secrets));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrubDeep(x, secrets)]));
+  return v;
+}
+
+function shadowLog(telemetry: Pick<Telemetry, "recordScore"> | undefined, secrets: readonly string[]): ShadowLog {
   const entries: ShadowEntry[] = [];
   return {
     entries,
     record(e) {
-      entries.push(e);
+      // decider-shadow.json is the file a pilot collects across apps: it holds what was SENT, never the raw text.
+      entries.push(secrets.length ? (scrubDeep(e, secrets) as ShadowEntry) : e);
       if (e.agreement !== undefined) telemetry?.recordScore?.(`decider.${e.use}.agreement`, e.agreement);
     },
   };

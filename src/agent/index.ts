@@ -949,15 +949,17 @@ export async function runAutomate(input: {
   const baseUrl = rep.url ?? "";
   const pageSemantics = rep.pageSemantics ?? "";
   const isApi = rep.mode === "api"; // API-7 (#144): report.json's mode (API-4) picks the codegen path.
-  // ADR-0022: automate consults the decider for repair-triage only. It designs nothing, so knowledge is read
-  // here for one reason: to know which values the cases may echo and must never be sent.
-  const decider = cfg.decider
-    ? makeDecider(cfg.decider, {
-        ledger: router.ledger,
-        secrets: secretValues(await loadKnowledge(resolve("knowledge"), { url: baseUrl }), process.env),
-        warn: onProgress,
-      })
-    : undefined;
+  // ADR-0022: automate consults the decider for repair-triage only, inside its web validate ⇄ repair loop. A run
+  // that has no such loop builds none: no data notice, no empty shadow file, no report key. It designs nothing, so
+  // knowledge is read here for one reason: to know which values the cases may echo and must never be sent.
+  const decider =
+    cfg.decider && input.validate && !isApi && cfg.decider.uses.includes("repair-triage")
+      ? makeDecider(cfg.decider, {
+          ledger: router.ledger,
+          secrets: secretValues(await loadKnowledge(resolve("knowledge"), { url: baseUrl }), process.env),
+          warn: onProgress,
+        })
+      : undefined;
   let notRepaired: TriageResult[] | undefined;
 
   const tcDir = join(runDir, "testcases");

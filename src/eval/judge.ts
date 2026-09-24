@@ -80,30 +80,39 @@ export async function checklistCoverageScore(
   const ask = (d: Decider): Promise<DeciderCoverage> =>
     deciderChecklistCoverage(items, cases, d).catch((e: unknown) => ({
       undecided: `error: ${e instanceof Error ? e.message : String(e)}`,
+      asked: [],
     }));
   if (decider && !decider.shadow) {
     const d = await ask(decider);
-    if (!("undecided" in d)) return { name: "checklist_coverage", value: d.value, comment: d.comment };
+    // A metric, not a gate: the decider's number replaces the judge's — and says so in the report.
+    if (!("undecided" in d)) return { name: "checklist_coverage", value: d.value, comment: `decider (${decider.provider}): ${d.comment}` };
   }
   let current: Score;
+  let source: "judge" | "token-overlap" = "judge";
   try {
     const cov = await judge();
     current = { name: "checklist_coverage", value: cov.value, comment: cov.comment };
   } catch {
     // fallback: token-based coverage (offline / judge unavailable)
+    source = "token-overlap";
     current = { name: "checklist_coverage", value: coverageScore(items, cases) };
   }
   if (decider?.shadow) {
-    const t0 = Date.now();
-    const d = await ask(decider);
-    decider.shadow.record({
-      use: "coverage",
-      input: { items: items.length, cases: cases.length },
-      current: current.value,
-      decider: "undecided" in d ? d : d.perItem,
-      latencyMs: Date.now() - t0,
-      ...("undecided" in d ? {} : { agreement: Math.abs(d.value - current.value) <= 0.1 + 1e-9 ? 1 : 0 }),
-    });
+    try {
+      const t0 = Date.now();
+      const d = await ask(decider);
+      decider.shadow.record({
+        use: "coverage",
+        input: { items: items.map((i) => i.text), cases: cases.map((c) => c.title) },
+        current: { value: current.value, source },
+        decider: d,
+        latencyMs: Date.now() - t0,
+        // Only against the judge: the token overlap is a fallback, not the judgment the decider would replace.
+        ...("undecided" in d || source !== "judge" ? {} : { agreement: Math.abs(d.value - current.value) <= 0.1 + 1e-9 ? 1 : 0 }),
+      });
+    } catch {
+      // shadow bookkeeping never touches the run
+    }
   }
   return current;
 }

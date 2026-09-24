@@ -24,10 +24,11 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 | Use | Where | What a confident answer does | Otherwise |
 |---|---|---|---|
 | `repair-triage` | the validate ⇄ repair loop (`explore`, `automate --validate`) | one six-way choice per failing test, over its name and error: `app-bug` / `env-or-session` keep the test **out of the repair hint** and list it under *Not repaired*; `locator-ambiguous` / `locator-missing` / `timing` / `wrong-assertion` only tag its hint line | the test goes into the hint exactly as today |
-| `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case says yes | any unsure or unavailable answer → the LLM judge decides, as today |
+| `coverage` | the `checklist_coverage` score (`explore`, `design` with `--checklist`) | one yes/no per checklist item per case: covered when some case says yes. Its number **replaces** the judge's, and the score's comment says so (`decider (laya): …`) | any unsure or unavailable answer → the LLM judge decides, as today |
 
-When every failing test is excluded, the loop stops without spending a repair attempt. A test excluded once is
-not asked about again in that run.
+When every failing test is excluded, the loop stops without spending a repair attempt. An exclusion holds while
+the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as
+*Not repaired*, and one that fails with a different error is asked about again.
 
 ## Providers
 
@@ -108,13 +109,17 @@ for `automate`, which reuses a design run's folder) next to what the run actuall
   "entries": [
     { "use": "repair-triage", "input": "Playwright test \"…\" failed.\nError:\n…", "current": "repair",
       "decider": { "category": "timing", "confidence": 0.82, "wouldExclude": false }, "confidence": 0.82, "latencyMs": 164 },
-    { "use": "coverage", "input": { "items": 5, "cases": 7 }, "current": 0.8,
-      "decider": [{ "item": "…", "covered": true }], "latencyMs": 1210, "agreement": 1 } ] }
+    { "use": "coverage", "input": { "items": ["…"], "cases": ["…"] }, "current": { "value": 0.8, "source": "judge" },
+      "decider": { "value": 0.8, "comment": "uncovered: …", "perItem": [{ "item": "…", "covered": true }],
+                   "asked": [{ "case": 0, "item": 0, "yes": true, "confidence": 0.91 }] },
+      "latencyMs": 1210, "agreement": 1 } ] }
 ```
 
-`agreement` (also a Langfuse score, `decider.<use>.agreement`) is 1 when the decider's coverage is within 0.1 of
-the judge's. Repair triage has none: today's path does not classify failures, so its answers must be checked by
-hand. A use point is worth turning on when the pilot shows agreement ≥ 90 % (hand-checked precision ≥ 85 % for
+`asked` keeps every (case, item) answer with its confidence — what a per-use threshold is tuned on. Every text in
+the file is scrubbed exactly like the input that was sent. `agreement` (also a Langfuse score,
+`decider.<use>.agreement`) is 1 when the decider's coverage is within 0.1 of the LLM judge's; it is absent when
+the judge failed and the token-overlap fallback scored the run, and absent for repair triage: today's path does
+not classify failures, so its answers must be checked by hand. A use point is worth turning on when the pilot shows agreement ≥ 90 % (hand-checked precision ≥ 85 % for
 triage) with fewer than 10 % fallbacks — and the confidence threshold is tuned per use point and per provider.
 
 ## Configuration

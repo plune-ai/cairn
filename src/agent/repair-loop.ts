@@ -67,24 +67,32 @@ export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopRes
   let prevSnapshot = progressSnapshot(validation);
   let attempts = 0;
   let stoppedEarly = false;
-  const excluded = new Map<string, TriageResult>(); // a test excluded once stays excluded (no second call)
+  // ADR-0022: an exclusion holds while the test fails THE SAME WAY. Every repair regenerates the whole suite, so
+  // a test can pass, or fail for another reason — then it is asked about again. Keyed by test + error.
+  const verdicts = new Map<string, TriageResult>();
+  const failure = (r: ValidationReport["results"][number]): string => `${r.test}\n${r.error ?? ""}`;
+  const failingIn = (v: ValidationReport): ValidationReport["results"] => v.results.filter((r) => r.status !== "passed");
 
   while (bestGreen < 1 && attempts < deps.maxRepair) {
     let triage: Map<string, TriageResult> | undefined;
     if (deps.triage) {
-      const failing = validation.results.filter((r) => r.status !== "passed");
-      const fresh = await deps.triage(failing.filter((r) => !excluded.has(r.test)));
+      const failing = failingIn(validation);
+      const fresh = await deps.triage(failing.filter((r) => !verdicts.has(failure(r))));
       const newlyExcluded = fresh.filter((t) => t.exclude);
-      for (const t of newlyExcluded) excluded.set(t.test, t);
+      for (const t of newlyExcluded) {
+        const r = failing.find((f) => f.test === t.test);
+        if (r) verdicts.set(failure(r), t);
+      }
       if (newlyExcluded.length > 0) {
         const names = newlyExcluded.map((t) => `${t.test} (${t.category})`).join(", ");
         deps.onProgress?.(`repair — triage: left out of repair as a likely app bug / broken environment: ${names}`);
       }
-      if (failing.length > 0 && failing.every((r) => excluded.has(r.test))) {
+      const excludedNow = failing.flatMap((r) => verdicts.get(failure(r)) ?? []);
+      if (failing.length > 0 && excludedNow.length === failing.length) {
         deps.onProgress?.(`repair — skipped: all ${failing.length} failing test(s) look like an app bug or a broken environment.`);
         break; // before attempts += 1: nothing is left that repairing the code could fix
       }
-      triage = new Map([...excluded, ...fresh.map((t) => [t.test, t] as const)]);
+      triage = new Map([...excludedNow, ...fresh].map((t) => [t.test, t] as const));
     }
     attempts += 1;
     const failed = failedTestsHint(validation.results, triage);
@@ -110,5 +118,7 @@ export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopRes
     prevSnapshot = snap;
   }
 
-  return { bestSuite, bestValidation, attempts, stoppedEarly, ...(excluded.size ? { notRepaired: [...excluded.values()] } : {}) };
+  // Not repaired = the KEPT suite's failures that a confident triage excluded — a test that passed is not listed.
+  const notRepaired = failingIn(bestValidation).flatMap((r) => verdicts.get(failure(r)) ?? []);
+  return { bestSuite, bestValidation, attempts, stoppedEarly, ...(notRepaired.length ? { notRepaired } : {}) };
 }

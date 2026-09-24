@@ -131,7 +131,7 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
   });
 
   it("an excluded test leaves the hint and is reported as not repaired; a confident category tags the rest", async () => {
-    const h = harness([two, report([{ test: "a", status: "failed" }, { test: "b", status: "passed" }], 0.5)]);
+    const h = harness([two, report([{ test: "a", status: "failed", error: "500 Internal Server Error" }, { test: "b", status: "passed" }], 0.5)]);
     const triage = vi.fn(async () => [tr("a", "app-bug", true), tr("b", "timing", false)]);
     const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 1, triage });
     expect(h.hints[1]).toBe("- b [triage: timing]: Timeout 5000ms exceeded");
@@ -162,7 +162,7 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
     expect(progress.join("\n")).toMatch(/repair — skipped: .*2 failing test/);
   });
 
-  it("a test excluded once stays excluded — it is not sent to the decider again", async () => {
+  it("a test excluded once is not sent to the decider again while it fails the same way", async () => {
     const still = report(
       [
         { test: "a", status: "failed", error: "500 Internal Server Error" },
@@ -170,7 +170,11 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
       ],
       0.1,
     );
-    const h = harness([two, still, report([{ test: "a", status: "failed" }, { test: "b", status: "passed" }], 0.5)]);
+    const h = harness([
+      two,
+      still,
+      report([{ test: "a", status: "failed", error: "500 Internal Server Error" }, { test: "b", status: "passed" }], 0.5),
+    ]);
     const triage = vi.fn(async (failedTests: { test: string }[]) =>
       failedTests.map((t) => (t.test === "a" ? tr("a", "app-bug", true) : tr("b", "timing", false))),
     );
@@ -186,5 +190,36 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
     const triage = vi.fn(async () => []);
     await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3, triage });
     expect(triage).not.toHaveBeenCalled();
+  });
+
+  /** A decider that calls a 500 an app bug and anything else a locator problem. */
+  const byError = () =>
+    vi.fn(async (failed: ValidationReport["results"]) =>
+      failed.map((r) => (r.error?.startsWith("500") ? tr(r.test, "app-bug", true) : tr(r.test, "locator-missing", false))),
+    );
+
+  it("an excluded test that passes after a repair is not reported as not repaired", async () => {
+    const h = harness([two, report([{ test: "a", status: "passed" }, { test: "b", status: "passed" }], 1)]);
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 3, triage: byError() });
+    expect(r.bestValidation.greenRatio).toBe(1);
+    expect("notRepaired" in r).toBe(false);
+  });
+
+  it("a test whose failure changed is asked about again — a stale verdict never keeps it out of repair", async () => {
+    const script = [
+      two,
+      report([{ test: "a", status: "passed" }, { test: "b", status: "failed", error: "Timeout 5000ms exceeded" }], 0.5),
+      report([{ test: "a", status: "failed", error: "locator resolved to 0 elements" }, { test: "b", status: "passed" }], 0.5),
+      report([{ test: "a", status: "passed" }, { test: "b", status: "passed" }], 1),
+    ];
+    const withTriage = harness(script);
+    const triage = byError();
+    const r = await runRepairLoop({ generate: withTriage.generate, validate: withTriage.validate, maxRepair: 3, triage });
+    const without = await runRepairLoop({ ...harness(script), maxRepair: 3 });
+    expect(r.attempts).toBe(without.attempts); // 3: the same convergence as without a decider
+    expect(r.bestValidation.greenRatio).toBe(1);
+    expect(triage.mock.calls[2]![0]).toEqual([expect.objectContaining({ test: "a", error: "locator resolved to 0 elements" })]);
+    expect(withTriage.hints[3]).toBe("- a [triage: locator-missing]: locator resolved to 0 elements");
+    expect("notRepaired" in r).toBe(false);
   });
 });

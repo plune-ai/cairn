@@ -71,7 +71,7 @@ describe("checklistCoverageScore (ADR-0022: decider first when asked, the LLM ju
     const decider: Decider = {
       provider: "laya",
       model: "jev-latest",
-      caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: 16 },
+      caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptionChars: 100, maxOptions: 20, maxQuestionsPerCall: 16 },
       uses: new Set(["coverage"]),
       minConfidence: 0.75,
       ...(shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
@@ -102,7 +102,8 @@ describe("checklistCoverageScore (ADR-0022: decider first when asked, the LLM ju
   it("an active decider that decides replaces the judge call", async () => {
     const judge = vi.fn(async () => judged);
     const s = await checklistCoverageScore(items, [tc], judge, fakeDecider(yes).decider);
-    expect(s).toStrictEqual({ name: "checklist_coverage", value: 1, comment: "full coverage" });
+    // the report says where the number came from: a metric the decider replaced, not the judge's
+    expect(s).toStrictEqual({ name: "checklist_coverage", value: 1, comment: "decider (laya): full coverage" });
     expect(judge).not.toHaveBeenCalled();
   });
 
@@ -130,9 +131,13 @@ describe("checklistCoverageScore (ADR-0022: decider first when asked, the LLM ju
     expect(f.entries).toEqual([
       expect.objectContaining({
         use: "coverage",
-        input: { items: 1, cases: 1 },
-        current: 0.5,
-        decider: [{ item: "Sign In", covered: true }],
+        input: { items: ["Sign In"], cases: ["Логін валідними даними"] },
+        current: { value: 0.5, source: "judge" },
+        decider: expect.objectContaining({
+          value: 1,
+          perItem: [{ item: "Sign In", covered: true }],
+          asked: [{ case: 0, item: 0, yes: true, confidence: 0.9 }], // the raw answers the pilot tunes on
+        }),
         agreement: 0, // |1 − 0.5| > 0.1
       }),
     ]);
@@ -147,5 +152,12 @@ describe("checklistCoverageScore (ADR-0022: decider first when asked, the LLM ju
     await checklistCoverageScore(items, [tc], async () => judged, dead.decider);
     expect(dead.entries[0]).toMatchObject({ decider: { undecided: "unavailable: timeout after 10 ms" } });
     expect("agreement" in dead.entries[0]!).toBe(false);
+  });
+
+  it("shadow: no agreement against the token overlap — it is a fallback, not the judgment being replaced", async () => {
+    const f = fakeDecider(yes, true);
+    await checklistCoverageScore(items, [tc], async () => Promise.reject(new Error("429")), f.decider);
+    expect(f.entries[0]).toMatchObject({ current: { source: "token-overlap" } });
+    expect("agreement" in f.entries[0]!).toBe(false);
   });
 });

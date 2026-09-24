@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is broken" or "the environment is broken" keeps a failing test out of the repair hint — repairing test code
   cannot fix either — and the run lists it under *Not repaired* (`report.json` `notRepaired`, `report.md`, the
   `automate` output); every other confident category only tags the hint, and when *every* failure is excluded
-  the loop stops without spending an attempt. `coverage`: the checklist × case matrix as yes/no answers
-  replaces the LLM coverage judge when every item gets a confident verdict, and falls back to it otherwise.
+  the loop stops without spending an attempt; an exclusion holds only while the test fails the same way.
+  `coverage`: the checklist × case matrix as yes/no answers replaces the LLM coverage judge when every item
+  gets a confident verdict (the score's comment names the decider), and falls back to it otherwise.
   `--decider-shadow` (`DECIDER_SHADOW=1`) asks the decider at every enabled use point, records its answers
   next to what the run actually did in `runs/<id>/decider-shadow.json`, and changes nothing else. An active
   run adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to

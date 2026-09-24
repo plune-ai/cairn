@@ -42,6 +42,10 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    never softer: downgrade, never upgrade; exclude, never unblock. Below `DECIDER_MIN_CONFIDENCE` the answer is
    ignored and the current path runs. Safety rules (`guardrails.ts`, the crawler's destructive-link filter) are
    not optional and do not consult it. Each such guard has a test that goes red when the guard is removed.
+   **One exception, by design (spec §6.2): coverage.** `checklist_coverage` is a metric, not a gate — nothing
+   is blocked or unblocked by it — and there a deciding decider *replaces* the LLM judge's number, which can come
+   out higher. Its guard is different: any unsure or unavailable answer hands the whole score back to the judge,
+   and the score's comment names its source (`decider (laya): …`), so a reader never mistakes it for the judge's.
 4. **It never sinks a run.** Every failure — network, timeout, 4xx/5xx, a state over the provider's limit, an
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.
@@ -134,7 +138,8 @@ changed the design.
 ## Consequences
 
 - **A run without the flag is the run it was.** Same prompts, same calls, same files — pinned by tests.
-- **The decider is only ever a narrower gate.** At worst it costs time and fallbacks; it cannot turn a failure into
+- **The decider is only ever a narrower gate** — coverage aside, where it replaces a metric and says so (rule 3).
+  At worst it costs time and fallbacks; it cannot turn a failure into
   a pass, unblock a destructive action, or keep a failing test out of repair without a confident answer.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.

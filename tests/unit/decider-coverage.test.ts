@@ -24,7 +24,7 @@ function fakeDecider(script: Script, over: { maxQuestionsPerCall?: number; shado
   const decider: Decider = {
     provider: "laya",
     model: "jev-latest",
-    caps: { maxInputChars: 1200, maxQuestionChars: 400, maxOptions: 20, maxQuestionsPerCall: over.maxQuestionsPerCall ?? 16 },
+    caps: { ...CAPS.laya, maxQuestionsPerCall: over.maxQuestionsPerCall ?? 16 },
     uses: new Set(["coverage"]),
     minConfidence: 0.75,
     ...(over.shadow ? { shadow: { entries, record: (e: ShadowEntry) => void entries.push(e) } } : {}),
@@ -69,6 +69,12 @@ describe("coverage by decider (spec §6.2)", () => {
         { item: "login works", covered: true },
         { item: "logout works", covered: true },
       ],
+      // every asked pair, as answered — the second case is asked only about the item still open
+      asked: [
+        { case: 0, item: 0, yes: true, confidence: 0.9 },
+        { case: 0, item: 1, yes: false, confidence: 0.9 },
+        { case: 1, item: 1, yes: true, confidence: 0.9 },
+      ],
     });
   });
 
@@ -82,7 +88,18 @@ describe("coverage by decider (spec §6.2)", () => {
 
   it("an item with no confident yes and an unsure answer → undecided (the LLM judge decides)", async () => {
     const { decider } = fakeDecider((_s, q) => (q.includes("logout") ? no(0.3) : yes()));
-    expect(await deciderChecklistCoverage(items, [tc("Login")], decider)).toEqual({ undecided: "unsure about: logout works" });
+    expect(await deciderChecklistCoverage(items, [tc("Login")], decider)).toEqual({
+      undecided: "unsure about: logout works",
+      asked: [
+        { case: 0, item: 0, yes: true, confidence: 0.9 },
+        { case: 0, item: 1, yes: false, confidence: 0.3 },
+      ],
+    });
+  });
+
+  it("ASYMMETRY: an unsure yes covers nothing — undecided, the LLM judge decides", async () => {
+    const { decider } = fakeDecider((_s, q) => (q.includes("logout") ? yes(0.3) : yes()));
+    expect(await deciderChecklistCoverage(items, [tc("Login")], decider)).toMatchObject({ undecided: "unsure about: logout works" });
   });
 
   it("an unsure answer does not matter once another case covers the item confidently", async () => {
@@ -94,6 +111,7 @@ describe("coverage by decider (spec §6.2)", () => {
     const { decider, calls } = fakeDecider(() => new DeciderUnavailable("state is 5000 chars > 1200"));
     expect(await deciderChecklistCoverage(items, [tc("A"), tc("B"), tc("C")], decider)).toEqual({
       undecided: "unavailable: state is 5000 chars > 1200",
+      asked: [],
     });
     expect(calls).toHaveLength(1);
   });
@@ -121,7 +139,7 @@ describe("coverage by decider (spec §6.2)", () => {
 
   it("an answer of the wrong type is not trusted", async () => {
     const { decider } = fakeDecider(() => ({ type: "choice", value: "a", dist: { a: 1 }, confidence: 1 }));
-    expect(await deciderChecklistCoverage(items, [tc("A")], decider)).toEqual({ undecided: "an answer that is not a yes/no" });
+    expect(await deciderChecklistCoverage(items, [tc("A")], decider)).toEqual({ undecided: "an answer that is not a yes/no", asked: [] });
   });
 
   it("an ordinary case and checklist item pass laya's own caps", async () => {
