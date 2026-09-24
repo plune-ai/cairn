@@ -45,9 +45,9 @@ An active run reports the layer, and where depends on the command:
 - `design` writes it to `report.json`.
 - `automate` writes no report. It prints both sections, and its MCP result carries both keys.
 
-The `decider` row of the cost summary counts the answered decisions only. A fallback has no usage to price, whether
-it was refused before sending (its length, `DECIDER_MAX_CALLS`) or failed on the way (a timeout, an HTTP error, an
-invalid answer).
+The `decider` row of the cost summary counts the answered decisions only. Cairn records no usage for a fallback,
+whether it was refused before sending (its length, `DECIDER_MAX_CALLS`) or failed on the way (a timeout, an HTTP
+error, an invalid answer). A call that reached the provider and came back invalid may still be billed.
 
 ## Providers
 

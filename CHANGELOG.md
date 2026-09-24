@@ -42,8 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback is a `WARNING` span with its reason) and the `decider.<use>.confidence` / `.agreement` scores;
   [MCP](docs/mcp.md) the `decider` parameter of `explore`, `design` and `automate`;
   [decider.md](docs/decider.md) laya-serve's `LAYA_MODELS`, the latency to expect on a CPU against the default
-  `DECIDER_TIMEOUT_MS`, and where each command reports the layer; the README links the guide. ADR-0022's latency
-  record is corrected: the pilot sent its twelve triage questions together, not one at a time.
+  `DECIDER_TIMEOUT_MS`, and where each command reports the layer; the README links the guide. ADR-0022 gains a
+  latency record for both laya checkpoints on a CPU, with the pilot's twelve triage questions sent together as a
+  failing suite sends them.
 - **The architecture overview no longer calls Cairn single-page:** `--flow` (ADR-0017) follows in-app
   navigation for up to `--max-pages` pages, and the decision layer is listed among the technology pillars.
 
