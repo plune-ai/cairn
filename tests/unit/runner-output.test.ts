@@ -117,9 +117,13 @@ describe("resultsFromRunnerOutput — every error, once, without its code frame"
   });
 
   it("a hostile error text costs linear time — no backtracking on a run of newlines or spaces", () => {
-    const hostile = ["x" + "\n".repeat(5_000) + "x", "x\n" + " ".repeat(80_000) + "x", "x\n  at " + "a:".repeat(40_000)];
-    const t0 = performance.now();
-    resultsFromRunnerOutput(reporterJson("failed", "boom", hostile), "");
-    expect(performance.now() - t0).toBeLessThan(200); // the cubic form took 1.2 s for 2 000 newlines
+    const hostile = ["x\n" + " ".repeat(80_000) + "x", "x\n  at " + "a:".repeat(40_000)];
+    // The newlines escalate. A cubic pattern fails on 5 000 within seconds, before 50 000 could run for hours. A
+    // quadratic one (a single `\s*`) passes 5 000 in 10 ms and fails on 50 000 at about a second.
+    for (const newlines of [5_000, 50_000]) {
+      const t0 = performance.now();
+      resultsFromRunnerOutput(reporterJson("failed", "boom", ["x" + "\n".repeat(newlines) + "x", ...hostile]), "");
+      expect(performance.now() - t0).toBeLessThan(200); // the cubic form took 1.2 s for 2 000 newlines
+    }
   });
 });
