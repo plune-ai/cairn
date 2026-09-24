@@ -61,7 +61,8 @@ the test fails the same way: every repair regenerates the suite, so a test that 
 - **Shared when it cannot depend on the test.** A named element that went missing (renamed, say) is the same
   element for every test that asked for it, so those tests share one heal: one question, one check, one answer. A
   renamed login button can fail every test. Which of several matches a test meant, or which unnamed element, is
-  asked per test.
+  asked per test. Whether a locator matched several elements is read from Playwright's error, not from triage's
+  verdict.
 - **Backend.** It needs the `lib` browser backend, the default: the `cli` one cannot count matches, so there a heal
   asks nothing. `automate` opens a browser for it only when a heal is asked, with the run's session, and closes
   it at the end.

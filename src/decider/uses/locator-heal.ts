@@ -26,6 +26,9 @@ export interface BrokenLocator {
 const GET_BY_ROLE =
   /getByRole\((['"])([a-z]+)\1(?:,\s*\{\s*name:\s*(['"])((?:\\.|(?!\3)[^\\\n])*)\3(?:,\s*exact:\s*(?:true|false))?\s*\})?\)/;
 
+/** Playwright colours its output; the codes are not part of what it says. */
+const plain = (error: string): string => error.replace(/\u001b\[[0-9;]*m/g, "");
+
 /** A locator expression. The first one in an error is the one that failed. */
 const ANY_LOCATOR = /\b(?:getBy[A-Z]\w*|locator|frameLocator)\(/;
 
@@ -37,7 +40,7 @@ const ANY_LOCATOR = /\b(?:getBy[A-Z]\w*|locator|frameLocator)\(/;
  * with an `aka getByRole(…)` hint that is not the locator that failed.
  */
 export function parseBrokenLocator(error: string): BrokenLocator | undefined {
-  const text = error.replace(/\u001b\[[0-9;]*m/g, ""); // Playwright colours its output
+  const text = plain(error);
   const m = GET_BY_ROLE.exec(text);
   if (!m || ANY_LOCATOR.exec(text)?.index !== m.index) return undefined;
   const after = text.slice(m.index + m[0].length);
@@ -192,7 +195,7 @@ export function makeHeal(opts: {
   /** One broken locator, asked about for the first test that failed on it. */
   const heal = async (
     failure: TestResult,
-    category: FailureCategory,
+    ambiguous: boolean,
     broken: BrokenLocator,
   ): Promise<{ to: string; confidence: number } | undefined> => {
     const input = { state: "", candidates: [] as string[] };
@@ -212,7 +215,7 @@ export function makeHeal(opts: {
       return undefined;
     };
     try {
-      const what = category === "locator-ambiguous" ? "matched several elements" : "matched no element";
+      const what = ambiguous ? "matched several elements" : "matched no element";
       // The locator first: a clip cuts the tail, and a long test name must not cut what the decider picks by.
       input.state = clip(decider.scrub(`Locator ${broken.source} ${what} in Playwright test "${failure.test}".`), MAX_STATE_CHARS);
       const { ariaSnapshot, capturedBy } = await gateway.observe({ url });
@@ -250,10 +253,13 @@ export function makeHeal(opts: {
     if (!HEALABLE.has(triage.category)) return undefined;
     const broken = parseBrokenLocator(failure.error ?? "");
     if (!broken) return undefined;
-    const shared = triage.category === "locator-missing" && broken.name !== undefined;
-    const key = `${triage.category}\n${broken.source}${shared ? "" : `\n${failure.test}`}`;
+    // Several matches or none is what Playwright's error says, not what triage (a model) called it — a wrong verdict
+    // must not make a heal shared. The key is what the question is built from.
+    const ambiguous = /strict mode violation/.test(plain(failure.error ?? ""));
+    const shared = !ambiguous && broken.name !== undefined;
+    const key = `${ambiguous}\n${broken.source}${shared ? "" : `\n${failure.test}`}`;
     let proposal = heals.get(key);
-    if (!proposal) heals.set(key, (proposal = heal(failure, triage.category, broken)));
+    if (!proposal) heals.set(key, (proposal = heal(failure, ambiguous, broken)));
     const p = await proposal;
     return p && { test: failure.test, from: broken.source, ...p };
   };

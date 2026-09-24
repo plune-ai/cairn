@@ -160,6 +160,11 @@ const PAGE = [
   '- button "Delete account"',
 ].join("\n");
 const BROKEN = "Error: locator.click: Test timeout of 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Sign' })";
+/** The same locator matching two buttons, in real strict-mode text (Playwright 1.61). */
+const STRICT =
+  "Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'Sign' }) resolved to 2 elements:\n" +
+  "    1) <button>Sign in</button> aka getByRole('button', { name: 'Sign in' })\n" +
+  "    2) <button>Sign up</button> aka getByRole('button', { name: 'Sign up' })\n\nCall log:\n  - waiting for getByRole('button', { name: 'Sign' })";
 const failure = (error = BROKEN, test = "tc-1: signs in"): TestResult => ({ test, status: "failed", error });
 const triage = (category: TriageResult["category"] = "locator-missing"): TriageResult => ({
   test: "tc-1: signs in",
@@ -234,11 +239,15 @@ describe("makeHeal (spec §6.6)", () => {
     expect(healed?.to).toBe("getByRole('button', { name: 'Create account', exact: true })");
   });
 
-  it("a locator-ambiguous failure is healed too", async () => {
+  it("several matches or none: the error says which, whatever triage called it", async () => {
     const { decider, calls } = healDecider((q) => pick(optionFor(q, '"Sign in"')));
     const heal = makeHeal({ decider, gateway: fakeGateway().gateway, url: "http://app/login" });
-    expect(await heal(failure(), triage("locator-ambiguous"))).toMatchObject({ confidence: 0.9 });
+    expect(await heal(failure(STRICT), triage("locator-ambiguous"))).toMatchObject({ confidence: 0.9 });
     expect(calls[0]!.state).toContain("matched several elements");
+    await heal(failure(STRICT, "tc-2: signs in again"), triage("locator-missing")); // a wrong verdict
+    expect(calls[1]!.state).toContain("matched several elements");
+    await heal(failure(BROKEN, "tc-3: signs in once more"), triage("locator-ambiguous")); // a timeout: nothing matched
+    expect(calls[2]!.state).toContain("matched no element");
   });
 
   it("a long test name is clipped from the end: the broken locator still reaches the decider, within laya's cap", async () => {
@@ -441,26 +450,25 @@ describe("makeHeal (spec §6.6)", () => {
     expect([calls.length, observe.mock.calls.length, verify.mock.calls.length]).toEqual([1, 1, 1]);
     expect([a?.test, b?.test]).toEqual(["tc-1: signs in", "tc-2: signs in twice"]);
     expect(b).toMatchObject({ from: a!.from, to: a!.to, confidence: a!.confidence });
-    // another locator, or the same one called ambiguous rather than missing, is another question
+    // another locator is another question; another verdict on the same failure is not: the question comes from the error
     await heal(failure(BROKEN.replace("'Sign'", "'Log in'")), triage());
-    await heal(failure(), triage("locator-ambiguous"));
-    expect(calls).toHaveLength(3);
+    await heal(failure(BROKEN, "tc-3: signs in again"), triage("locator-ambiguous"));
+    expect(calls).toHaveLength(2);
   });
 
-  it("which of several matches a test meant, or which unnamed element, is asked per test — never shared", async () => {
-    // Real strict-mode text: 'Sign' resolved to both buttons. Each test's name says which one it meant.
-    const strict =
-      "Error: locator.click: Error: strict mode violation: getByRole('button', { name: 'Sign' }) resolved to 2 elements:\n" +
-      "    1) <button>Sign in</button> aka getByRole('button', { name: 'Sign in' })\n" +
-      "    2) <button>Sign up</button> aka getByRole('button', { name: 'Sign up' })\n\nCall log:\n  - waiting for getByRole('button', { name: 'Sign' })";
-    const { decider, calls } = healDecider((q) => pick(optionFor(q, calls.at(-1)!.state.includes("signs up") ? '"Sign up"' : '"Sign in"')));
-    const heal = makeHeal({ decider, gateway: fakeGateway('- button "Sign in"\n- button "Sign up"').gateway, url: "u" });
-    const a = await heal(failure(strict, "tc-1: signs in"), triage("locator-ambiguous"));
-    const b = await heal(failure(strict, "tc-2: signs up"), triage("locator-ambiguous"));
-    expect([a?.to, b?.to]).toEqual([
-      "getByRole('button', { name: 'Sign in', exact: true })",
-      "getByRole('button', { name: 'Sign up', exact: true })",
-    ]);
+  it("which of several matches a test meant, or which unnamed element, is asked per test — whatever triage called it", async () => {
+    // A verdict is a model's answer; the strict-mode violation in the error is Playwright's. Each test's name says
+    // which of the two buttons 'Sign' resolved to it meant.
+    for (const verdict of ["locator-ambiguous", "locator-missing"] as const) {
+      const { decider, calls } = healDecider((q) => pick(optionFor(q, calls.at(-1)!.state.includes("signs up") ? '"Sign up"' : '"Sign in"')));
+      const heal = makeHeal({ decider, gateway: fakeGateway('- button "Sign in"\n- button "Sign up"').gateway, url: "u" });
+      const a = await heal(failure(STRICT, "tc-1: signs in"), triage(verdict));
+      const b = await heal(failure(STRICT, "tc-2: signs up"), triage(verdict));
+      expect([a?.to, b?.to]).toEqual([
+        "getByRole('button', { name: 'Sign in', exact: true })",
+        "getByRole('button', { name: 'Sign up', exact: true })",
+      ]);
+    }
     const unnamed = "Error: locator.fill: Test timeout of 30000ms exceeded.\nCall log:\n  - waiting for getByRole('textbox')";
     const page = '- textbox "Email"\n- textbox "Password"';
     const u = healDecider(() => pick("c1"));
@@ -468,7 +476,11 @@ describe("makeHeal (spec §6.6)", () => {
     await healUnnamed(failure(unnamed, "tc-1: types the email"), triage());
     await healUnnamed(failure(unnamed, "tc-2: types the password"), triage());
     expect(u.calls).toHaveLength(2);
-    await healUnnamed(failure(unnamed, "tc-1: types the email"), triage("locator-ambiguous")); // failing another way
+    const unnamedStrict =
+      "Error: locator.fill: Error: strict mode violation: getByRole('textbox') resolved to 2 elements:\n" +
+      "    1) <input id=\"email\"> aka getByRole('textbox', { name: 'Email' })\n" +
+      "    2) <input id=\"password\"> aka getByRole('textbox', { name: 'Password' })\n\nCall log:\n  - waiting for getByRole('textbox')";
+    await healUnnamed(failure(unnamedStrict, "tc-1: types the email"), triage()); // the same test failing another way
     expect(u.calls).toHaveLength(3);
   });
 
