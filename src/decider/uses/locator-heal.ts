@@ -44,7 +44,7 @@ export function parseBrokenLocator(error: string): BrokenLocator | undefined {
   const m = GET_BY_ROLE.exec(text);
   if (!m || ANY_LOCATOR.exec(text)?.index !== m.index) return undefined;
   const after = text.slice(m.index + m[0].length);
-  if (text[m.index - 1] === "." || /^\.(?!first\(\)|last\(\)|nth\()/.test(after)) return undefined;
+  if (/^\.(?!first\(\)|last\(\)|nth\()/.test(after)) return undefined; // a scope before it is a first locator already
   const name = m[4]?.replace(/\\(.)/g, "$1");
   return { role: m[2]!, ...(name !== undefined ? { name } : {}), source: m[0] };
 }
