@@ -154,6 +154,20 @@ changed the design.
   triage on twelve labelled Playwright failures: 5–6 of 12 right, one confident answer — right — so nothing was
   wrongly kept out of repair. Hence an active decider defaults to `repair-triage` alone; shadow mode asks every
   use point, and `coverage` acts only when named in `DECIDER_USES`.
+- **Locator healing on laya is not ready to act either.** This is one case, not a pilot: a login button renamed from
+  `Log in` to `Sign In`, with the test's locator still asking for `Log in`.
+  - **Triage.** Until the runner kept every error (#184), triage read only `Test timeout of 30000ms exceeded.`
+    The multilingual checkpoint answered `timing` at 0.92 (English: 0.14), which is what that line says. `timing`
+    is repairable, so nothing was kept out of repair. The heal, which needs a locator category and the locator
+    from the error, had nothing to work with. With the call log in the error, both checkpoints answer
+    `locator-missing`, at 0.30 (multilingual) and 0.05 (English): right, and below the default 0.75.
+  - **The pick.** Offered the page's `Sign In` button, the shipped question got `none-of-these` from both
+    checkpoints: 0.66 (multilingual) and 0.01 (English), and 0.87 and 0.38 with a `Create account` button beside
+    it. Two other wordings found the button once each, at 0.03 and 0.15.
+  - **What it never did** was pick the other button. With the element gone (a locator for a button the page does
+    not have), all three wordings on both checkpoints answered `none-of-these`, at 0.57–1.00. Laya declines rather
+    than guesses. A decline is today's behaviour, and a pick still has to match exactly once on the page.
+  - Hence `locator-heal`, like `coverage`, acts only when named in `DECIDER_USES`.
 - **Latency on a CPU** (no GPU; the same twelve triage questions, sent together as a failing suite sends them, so
   each waits for the others): the multilingual checkpoint 0.7 s at the median and 1.2 s at p95, the English one
   2.2 s and 3.6 s; one question alone, 0.1 s (multilingual) and 0.3 s (English). An earlier run on the same machine took 3.3 s and 4.6 s,
