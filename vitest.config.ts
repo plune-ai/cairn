@@ -10,6 +10,9 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     // The bot's own tests. No live LLM calls in CI — mock/replay.
+    // src/cli/index.ts loads dotenv/config: point it at a file that does not exist, so a developer's .env
+    // (DECIDER=jev with DECIDER_SHADOW=1, real keys) never reaches a test, exactly as in CI, which has none.
+    env: { DOTENV_CONFIG_PATH: "tests/no-such.env" },
     coverage: {
       provider: "v8",
       reporter: ["text-summary", "text"],
