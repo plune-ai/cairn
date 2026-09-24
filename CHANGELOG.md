@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DECIDER_USES`. A run in which no enabled use point can fire (no checklist, no repair loop) does not start the
   layer: no data notice, no report key, no shadow file.
 
+### Documentation
+
+- **The decision layer across the docs.** [Langfuse](docs/langfuse.md) lists the `decider.<use>` spans (a
+  fallback is a `WARNING` span with its reason) and the `decider.<use>.confidence` / `.agreement` scores;
+  [MCP](docs/mcp.md) the `decider` parameter of `explore`, `design` and `automate`;
+  [decider.md](docs/decider.md) laya-serve's `LAYA_MODELS` and the latency to expect on a CPU against the default
+  `DECIDER_TIMEOUT_MS`; the README links the guide.
+- **The architecture overview no longer calls Cairn single-page:** `--flow` (ADR-0017) follows in-app
+  navigation for up to `--max-pages` pages, and the decision layer is listed among the technology pillars.
+
 ## [0.7.0] - 2026-07-30
 
 ### Added

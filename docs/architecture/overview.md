@@ -17,7 +17,8 @@ An autonomous agent that **observes** a page (screenshot + ARIA snapshot), **rea
 
 - Not a replacement for a QA engineer — it's an assistant tool with a human in the improvement loop.
 - Not "tests that fix themselves" — the **bot** improves itself (its prompts/heuristics), not the already-generated tests.
-- (For now) not a crawler — the MVP works with **a single page** (application-graph traversal is a future ADR).
+- Not a crawler of whole applications — a run studies **one page**; `--flow` (opt-in, ADR-0017) follows in-app
+  navigation for up to `--max-pages` pages (default 3) to design multi-page journey cases.
 
 ## Context and the key finding
 
@@ -92,6 +93,9 @@ Each run is one Langfuse trace (root span via `startActiveObservation`); each st
 - **Observability:** Langfuse v5 (OTel), **self-hosted on the user's server**; judges are SDK-side — ADR-0006.
 - **Packaging:** one layered npm package — ADR-0007.
 - **Methodology:** ported from qa-skills — ADR-0008.
+- **Decision layer (opt-in):** a System One model (TypeSafe Jev, a local Laya, or a compatible server) answers
+  typed picks — why a test failed, whether a case covers a checklist item — and never generates text. Off by
+  default, it may only make a result stricter and never sinks a run — ADR-0022, [`decider.md`](../decider.md).
 
 Composition details — [`module-map.md`](./module-map.md); the graph — [`state-machine.md`](./state-machine.md);
 the improvement loop — [`self-improvement.md`](./self-improvement.md).

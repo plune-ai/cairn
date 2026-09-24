@@ -34,3 +34,20 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 
 > Enablement is all-or-nothing: Langfuse turns on only when **all three** variables are set; otherwise
 > telemetry is a no-op and the bot behaves exactly as offline.
+
+## Decision layer
+
+With a [decider](decider.md) on, each of its calls is a span `decider.<use>` (`decider.repair-triage`,
+`decider.coverage`) nested under the stage that asked. Its input is the scrubbed state (the first 2 000
+characters) and the questions, its output the answers, its metadata the provider, model, latency and confidence
+threshold. A call that fell back — timeout, server error, an input over the provider's limits, an invalid answer —
+is a `WARNING` span whose status message is the reason, so filtering a trace by level lists every fallback.
+
+| Score | Attached to | Value |
+|---|---|---|
+| `decider.<use>.confidence` | the call's span | the lowest confidence among the call's answers; none after a fallback |
+| `decider.<use>.agreement` | the run's trace, shadow mode only | 1 when the decider's coverage is within 0.1 of the LLM judge's, else 0; none when the judge failed. Only `coverage` has one: today's path does not classify failures |
+
+A confidence describes the shape of an answer's distribution, not the chance that it is right. Without Langfuse
+the same data is in `report.json` (`decider`: calls and fallbacks) and, in shadow mode,
+`runs/<id>/decider-shadow.json`.

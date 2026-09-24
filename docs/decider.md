@@ -37,6 +37,11 @@ When every failing test is excluded, the loop stops without spending a repair at
 the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as
 *Not repaired*, and one that fails with a different error is asked about again.
 
+An active run reports the layer in `report.json` (`decider`: `calls`, every decision asked, and each fallback with
+its reason) and in `report.md` (*Decision layer*: decisions, answered, fallbacks). The `decider` row of the cost
+summary counts the answered ones only: a decision refused for its length or past `DECIDER_MAX_CALLS` never reached
+the server.
+
 ## Providers
 
 | | `jev` | `laya` | `compat` |
@@ -99,6 +104,12 @@ short: it reads each question together with the state, cuts each answer option a
 at 192 and the whole at 512 (English checkpoint) or 1 024 (multilingual) — silently, answering from what it read.
 So Cairn counts the state and the question together, checks every option on its own, and refuses what would not
 fit: a longer input is a fallback, never a truncation.
+
+`LAYA_MODELS` (a comma list of `english`, `multilingual`, `typed-decisions`) limits the checkpoints laya-serve
+loads at start; by default it loads all of them. Without a GPU a decision takes seconds: on the machine behind
+ADR-0022's measurements, the multilingual checkpoint answered a triage question in 3.3 s at the median and 4.6 s
+at p95, the English one in 9.5 s and 13.5 s. `DECIDER_TIMEOUT_MS` (default 10 000) bounds every call and a call
+past it is a fallback, so on a slow machine raise it or expect fallbacks — `cairn doctor` shows one call's latency.
 
 ## Shadow mode — judge it before you trust it
 

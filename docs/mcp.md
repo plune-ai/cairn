@@ -27,11 +27,15 @@ npm i @modelcontextprotocol/sdk
 | `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir |
 
 `explore` and `design` take the same input: `url` (required) plus optional `session`, `flow`, `setup`,
-`gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages` —
+`gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages`, `decider` —
 mirroring the matching `cairn explore` flags. `automate` instead takes `run` (the run id/dir returned
-by `design` or `explore`) plus optional `validate` / `session` / `routing` / `channel`. Results come
+by `design` or `explore`) plus optional `validate` / `session` / `routing` / `channel` / `decider`. Results come
 back as JSON (run id, the generated cases or spec files, validation / metrics / Pilot, cost, and the
 `runs/<id>/` directory).
+
+`decider` (`off` | `jev` | `laya` | `compat`) switches the [decision layer](decider.md) for one call, like
+`--decider`. Everything else about it — address, key, shadow mode (`DECIDER_SHADOW=1`), use points — comes from
+the MCP server's own `DECIDER_*` environment.
 
 A typical agent flow: `design` a page → review the cases → `automate` the run dir it returned.
 
