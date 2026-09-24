@@ -48,6 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The architecture overview no longer calls Cairn single-page:** `--flow` (ADR-0017) follows in-app
   navigation for up to `--max-pages` pages, and the decision layer is listed among the technology pillars.
 
+### Fixed
+
+- **A test that timed out lost the error that named its locator.** When a click or a fill waits for an element
+  that never appears, the test's own timeout fires first. Playwright then reports the timeout as the test's error,
+  and the action's error, whose call log names the locator it waited for, comes second. Validation kept only the
+  first, so a repair saw `Test timeout of 30000ms exceeded.` and nothing about which locator failed. Every
+  error is now kept, once each: in the repair hint, in what repair triage reads, and in `explore`'s `report.json`
+  validation results. The code frame and the stack lines Playwright appends to each error are left out: they carry
+  the spec's absolute path, and with it the machine's user name. A failure with a single error reads as before,
+  minus any stack lines.
+
 ## [0.7.0] - 2026-07-30
 
 ### Added

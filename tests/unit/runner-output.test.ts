@@ -65,4 +65,65 @@ describe("resultsFromRunnerOutput — surfaces a missing browser instead of a fa
     expect(resultsFromRunnerOutput("", "")).toEqual([]);
     expect(resultsFromRunnerOutput("some noise without json", "warning: slow test")).toEqual([]);
   });
+
+});
+
+// Shapes captured from a Playwright 1.61 JSON report (#184): `error` is the raw first error; every `errors` entry is
+// formatted — its message, a code frame, then `at <absolute path>` (here a home folder with a user name in it).
+describe("resultsFromRunnerOutput — every error, once, without its code frame", () => {
+  const frame = (line: number, code: string): string =>
+    `\n\n\n  ${line - 1} |   await page.goto("http://127.0.0.1:5180/login.html");\n> ${line} |   ${code}\n` +
+    `     |   ^\n  ${line + 1} | });\n    at C:\\Users\\alice\\shop\\tests\\login.spec.ts:${line}:20`;
+  const reporterJson = (status: string, error: string, errors: string[]): string =>
+    JSON.stringify({
+      suites: [{ specs: [{ title: "TC-1", tests: [{ results: [{ status, error: { message: error }, errors: errors.map((message) => ({ message })) }] }] }] }],
+    });
+
+  it("a test timeout keeps the action's error too — its call log names the locator", () => {
+    // A click on a locator that never appears: the test's timeout fires first and becomes `error`; the action's own
+    // error, with the call log, is the second entry of `errors`.
+    const timeout = "Test timeout of 30000ms exceeded.";
+    const action = "Error: locator.click: Test timeout of 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Log in' })";
+    const click = `await page.getByRole("button", { name: "Log in" }).click();`;
+    const [r] = resultsFromRunnerOutput(reporterJson("timedOut", timeout, [timeout, action + frame(8, click)]), "");
+    expect(r!.error).toBe(`${timeout}\n\n${action}`);
+  });
+
+  it("a single failure reads exactly as before: its formatted copy in `errors` is the same error", () => {
+    const strict =
+      "Error: locator.click: Error: strict mode violation: getByRole('link') resolved to 2 elements:\n" +
+      "    1) <a href=\"/list.html\">View list</a> aka getByRole('link', { name: 'View list' })\n" +
+      "    2) <a href=\"/modal.html\">Open modal page</a> aka getByRole('link', { name: 'Open modal page' })\n\n" +
+      "Call log:\n  - waiting for getByRole('link')\n";
+    const [r] = resultsFromRunnerOutput(reporterJson("failed", strict, [strict + frame(13, `await page.getByRole("link").click();`)]), "");
+    expect(r!.error).toBe(strict.trim());
+  });
+
+  it("no code frame or stack line leaves the runner: the absolute path carries the machine's user name", () => {
+    const timeout = "Test timeout of 30000ms exceeded.";
+    const thrown = "Error: boom\n    at Object.<anonymous> (C:\\Users\\alice\\shop\\tests\\login.spec.ts:3:9)";
+    const [r] = resultsFromRunnerOutput(reporterJson("timedOut", timeout, [timeout, thrown]), "");
+    expect(r!.error).toBe(`${timeout}\n\nError: boom`);
+  });
+
+  it("a failure inside a helper file reads as before too: its frame opens with `at helpers.ts:5`, no column", () => {
+    const strict = "Error: locator.click: Error: strict mode violation: getByRole('link') resolved to 2 elements:\n\nCall log:\n  - waiting for getByRole('link')\n";
+    const formatted =
+      `${strict}\n\n   at helpers.ts:5\n\n  4 | export async function openFirstLink(page: Page): Promise<void> {\n` +
+      `> 5 |   await page.getByRole("link").click();\n    |                                ^\n  6 | }\n` +
+      `    at openFirstLink (C:\\Users\\alice\\shop\\tests\\helpers.ts:5:32)\n    at C:\\Users\\alice\\shop\\tests\\login.spec.ts:24:9`;
+    const [r] = resultsFromRunnerOutput(reporterJson("failed", strict, [formatted]), "");
+    expect(r!.error).toBe(strict.trim());
+  });
+
+  it("a hostile error text costs linear time — no backtracking on a run of newlines or spaces", () => {
+    const hostile = ["x\n" + " ".repeat(80_000) + "x", "x\n  at " + "a:".repeat(40_000)];
+    // The newlines escalate. A cubic pattern fails on 5 000 within seconds, before 50 000 could run for hours. A
+    // quadratic one (a single `\s*`) passes 5 000 in 10 ms and fails on 50 000 at about a second.
+    for (const newlines of [5_000, 50_000]) {
+      const t0 = performance.now();
+      resultsFromRunnerOutput(reporterJson("failed", "boom", ["x" + "\n".repeat(newlines) + "x", ...hostile]), "");
+      expect(performance.now() - t0).toBeLessThan(200); // the cubic form took 1.2 s for 2 000 newlines
+    }
+  });
 });
