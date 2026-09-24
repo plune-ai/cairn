@@ -316,6 +316,18 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["| Account | Information |\n|---|---|\n| Login | admin |\n| Password | qwerty |", "qwerty"],
     ["| Field | Value |\n|---|---|\n| Login | admin |\n| Password | secret |", "secret"],
     ["| Field | Type | Value |\n|---|---|---|\n| Password | password | qwerty |", "qwerty"],
+    ["| Field | Required | Value |\n|---|---|---|\n| Password | yes | qwerty |", "qwerty"],
+    ["| Field | Label | Test data |\n|---|---|---|\n| Password | Password | qwerty |", "qwerty"],
+    ["| Поле | Обов'язкове | Значення |\n|---|---|---|\n| Пароль | так | qwerty |", "qwerty"],
+    ["| Field | ID | Value |\n|---|---|---|\n| Password | password-input | qwerty |", "qwerty"],
+    ["| Name | Env | Value |\n|---|---|---|\n| DB password | staging | qwerty |", "qwerty"],
+    ["| Field | Required | Staging |\n|---|---|---|\n| Password | yes | qwerty |", "qwerty"],
+    ["| Field | Old | New |\n|---|---|---|\n| Password | | qwerty |", "qwerty"],
+    ["| Parameter | Staging | Production |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Key | QA | **Prod** |\n|---|---|---|\n| Password | qwerty | letmein |", "letmein"],
+    ["| Параметр | Тест | Прод |\n|---|---|---|\n| Пароль | qwerty | letmein |", "letmein"],
+    ["| | Maxim | Olena |\n|---|---|---|\n| Password | qwerty | letmein |", "qwerty"],
+    ["| | Максим | Олена |\n|---|---|---|\n| Пароль | qwerty | letmein |", "qwerty"],
   ])("knowledge %j yields a scrubbable secret", (line, secret) => {
     expect(redact(`type ${secret} into the field`, secretValues(line, {}))).toBe("type ‹redacted› into the field");
   });
@@ -378,6 +390,10 @@ describe("secretValues / redact (spec §3.7)", () => {
     "| Поле | Мін | Макс |\n|---|---|---|\n| ПІН | 1000 | 9999 |",
     "| Перевірка | Статус |\n|---|---|\n| Пароль | пройдено |",
     "Пароль: порожній",
+    "Password: password",
+    "Password: text",
+    "| Поле | Мінімальне значення | Максимальне значення |\n|---|---|---|\n| ПІН | 1000 | 9999 |",
+    "| Поле | Минимальное значение |\n|---|---|\n| ПИН | 1000 |",
   ])("knowledge %j holds no secret — nothing of it is scrubbed", (line) => {
     expect(secretValues(line, {})).toEqual([]);
   });
@@ -387,6 +403,8 @@ describe("secretValues / redact (spec §3.7)", () => {
     ["| Field | Valid | Invalid | Result |\n|---|---|---|---|\n| Password | Qwerty123! | abc | Invalid |", "Invalid"],
     ["| Field | Test case | Result |\n|---|---|---|\n| Password | TC-012 | fail |", "fail"],
     ["| Field | Chrome | Firefox | Safari |\n|---|---|---|---|\n| Password | works | works | broken |", "broken"],
+    ["| Field | ID | Value |\n|---|---|---|\n| Password | password-input | qwerty |", "password-input"],
+    ["| Name | Env | Value |\n|---|---|---|\n| DB password | staging | qwerty |", "staging"],
   ])("knowledge %j: %s is not a secret", (line, word) => {
     expect(secretValues(line, {})).not.toContain(word);
   });
@@ -462,6 +480,8 @@ describe("secretValues / redact (spec §3.7)", () => {
     expect(time(`Password: a${" ".repeat(80_000)}b`)).toBeLessThan(500);
     expect(time(`Password: ${"(".repeat(80_000)}`)).toBeLessThan(500);
     expect(time(`| ${"key ".repeat(20_000)}| x |\n|---|---|\n| ${"password ".repeat(10_000)}| qwerty |`)).toBeLessThan(500);
+    // the header's environment names and bounds: a letter run that ends in a non-letter
+    expect(time(`| Field | ${"стейдж".repeat(13_000)}1 | ${"мінімальн".repeat(9_000)}x |\n|---|---|---|\n| Password | a | b |`)).toBeLessThan(500);
   });
 
   it("redacts every occurrence, longest secret first", () => {

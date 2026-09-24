@@ -60,15 +60,31 @@ const QUOTED = /[`"«“„]([^`"«»“”„\n]{4,})[`"»”“]/gu;
 /** …and a value that STARTS with a quote is that quote, spaces and all: `Password: "correct horse battery"`. */
 const QUOTED_VALUE = /^[`"«“„]([^`"«»“”„\n]{4,})[`"»”“]/u;
 /** A column that describes a field or records a result rather than holding its value: `| Field | Type |`,
- * `| Поле | Роль |`, `| Status |`, `| Min |` — from a word start, so `Information` is not `format`. */
+ * `| Поле | Роль |`, `| Status |`, `| Min |` — from a word start, so `Information` is not `format`, and a bound as a
+ * whole word (`Minimum`, `Мінімальне значення`), so `Maxim` stays a name. */
 const SPEC_COLUMN =
-  /(?<![\p{L}\p{N}])(?:type|role|kind|format|rule|validat|constraint|selector|locator|element|widget|controls?(?!\p{L})|descri|note|comment|behavio|expect|status|result|actual|min|max|length|тип|роль|формат|правил|валідац|валидац|опис|примітк|примечан|очікуван|ожидаем|селектор|локатор|елемент|элемент|статус|результат|фактичн|мін|макс|мин|довжин|длин)/iu;
-/** …and a type or role word is a description in any column: `| Password | password |`, `| Password | textbox |`. */
+  /(?<![\p{L}\p{N}])(?:type|role|kind|format|rule|validat|constraint|selector|locator|element|widget|controls?(?!\p{L})|descri|note|comment|behavio|expect|status|result|actual|length|тип|роль|формат|правил|валідац|валидац|опис|примітк|примечан|очікуван|ожидаем|селектор|локатор|елемент|элемент|статус|результат|фактичн|довжин|длин|(?:(?:min|max)(?:imum|imal)?|мін(?:імум|імальн\p{L}*)?|мин(?:имум|имальн\p{L}*)?|макс(?:имум|имальн\p{L}*)?)(?!\p{L}))/iu;
+/** A type word describes a field and is never a secret: `| Password | textbox |`, `Password: password` — a password
+ * `password` protects nothing, and taking it would cut the word out of every state. */
 const SPEC_WORD =
   /^(?:password|text|textbox|textarea|string|email|e-mail|number|numeric|integer|int|boolean|bool|checkbox|radio|input|field|button|select|combobox|date|datetime|tel|url|search|пароль|текст|рядок|строка|число)$/iu;
 /** A first header cell that makes every column an instance: `| | Staging | Production |`, `| Role | Admin | Viewer |`. */
 const MATRIX_HEAD =
   /(?<![\p{L}\p{N}])(?:environment|env(?!\p{L})|account|role|user|середовищ|оточенн|окружени|акаунт|роль|користувач)/iu;
+/** …as do columns that all name an environment: `| Parameter | Staging | Production |`. */
+const ENV_NAME =
+  /^(?:staging|stage|stg|prod|production|dev|development|qa|test|testing|uat|local|demo|sandbox|pre-?prod|beta|integration|live|тест|прод|дев|стейдж\p{L}*)$/iu;
+/** Outside a matrix, a column named for the value holds it: `| Field | Required | Value |`, `| Test data |`. */
+const VALUE_COLUMN = /(?<![\p{L}\p{N}])(?:value|example|data|значен|приклад|пример|дані|данные)/iu;
+
+/** A key–value table's layout, read once from its header: which columns describe the field, whether every other
+ * column holds a value (a matrix), and the column named for the value. */
+const tableLayout = (header: string[]): { spec: boolean[]; matrix: boolean; named: number | undefined } => {
+  const spec = header.map((h) => SPEC_COLUMN.test(h));
+  const values = header.flatMap((h, i) => (i > 0 && !spec[i] ? [i] : []));
+  const matrix = !header[0] || MATRIX_HEAD.test(header[0]) || values.every((i) => ENV_NAME.test(strip(header[i]!)));
+  return { spec, matrix, named: values.find((i) => VALUE_COLUMN.test(header[i]!)) };
+};
 
 /**
  * Shaped like a credential rather than a word: letters mixed with digits (not "6-digit"), or a symbol other
@@ -145,11 +161,11 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
   const out = new Set<string>();
   const add = (v: string): void => {
     const s = strip(v);
-    if (s.length >= 4 && !TRIVIAL.test(s)) out.add(s);
+    if (s.length >= 4 && !TRIVIAL.test(s) && !SPEC_WORD.test(s)) out.add(s);
   };
   // A Markdown table: the row above its |---| rule is the header; a header cell naming a secret marks a column.
   let above: string[] = [];
-  let header: string[] | undefined; // undefined until the rule: a row above it may be the header itself
+  let table: ReturnType<typeof tableLayout> | undefined; // undefined until the rule: a row above it may be the header
   let columns: { at: number; head: Head | undefined }[] = [];
   for (const line of knowledgeText.split(/\r?\n/)) {
     for (const p of line.matchAll(LOGIN_PAIR)) {
@@ -161,7 +177,7 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
       const cells = line.split("|").slice(1, -1).map((c) => c.trim());
       if (cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c))) {
         columns = above.flatMap((c, at) => (SECRET_WORD.test(c) ? [{ at, head: secretHead(c) }] : []));
-        header = above;
+        table = tableLayout(above);
         continue;
       }
       above = cells;
@@ -170,19 +186,19 @@ export function secretValues(knowledgeText: string, env: Record<string, string |
         for (const v of head ? headValues(head, cell) : []) add(v);
         for (const t of cell.split(/[\s,;/]+/)) if (credentialShaped(strip(t))) add(t);
       }
-      // A key–value row — | Password | qwerty | — holds its value in the first column that does not describe the field
-      // (| Field | Type | Value |); the columns past it are results or translations (| error |, | Passwort |). Only a
-      // matrix has one value per column: | | Staging | Production |. A cell naming a type (| textbox |) is never one.
-      const rowHead = header && cells[0] ? secretHead(cells[0]) : undefined;
-      const matrix = !header?.[0] || MATRIX_HEAD.test(header[0]);
-      for (const [i, cell] of rowHead ? cells.entries() : []) {
-        if (i === 0 || SPEC_COLUMN.test(header?.[i] ?? "")) continue;
-        for (const v of headValues(rowHead!, cell)) if (!SPEC_WORD.test(v)) add(v);
-        if (!matrix) break;
+      // A key–value row — | Password | qwerty | — holds one value: in the column named for it (| Value |, | Test data |),
+      // else in the first that neither describes the field (| Type |, | Status |) nor holds a flag (| yes |) or nothing.
+      // The columns past it hold results or translations (| error |, | Passwort |); a matrix holds one per column.
+      const rowHead = table && cells[0] ? secretHead(cells[0]) : undefined;
+      if (table && rowHead) {
+        const { spec, matrix, named } = table;
+        const values = cells.flatMap((_, i) => (i > 0 && !spec[i] ? [i] : []));
+        const at = matrix ? values : [named ?? values.find((i) => cells[i] && !TRIVIAL.test(cells[i]!))];
+        for (const i of at) if (i !== undefined) for (const v of headValues(rowHead, cells[i] ?? "")) add(v);
       }
     } else {
       above = [];
-      header = undefined;
+      table = undefined;
       columns = [];
     }
     const at = line.search(SECRET_WORD);
