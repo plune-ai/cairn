@@ -29,11 +29,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gets a confident verdict (the score's comment names the decider), and falls back to it otherwise.
   `--decider-shadow` (`DECIDER_SHADOW=1`) asks the decider at every enabled use point, records its answers
   next to what the run actually did in `runs/<id>/decider-shadow.json`, and changes nothing else. An active
-  run adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to
-  `report.md`. By default an active decider consults `repair-triage` alone and shadow mode asks both:
+  `explore` adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to
+  `report.md`, and `design` adds the summary to `report.json`. `automate` writes no report: it prints both, and its
+  MCP tool returns `decider` and `notRepaired`. By default an active decider consults `repair-triage` alone and shadow mode asks both:
   `coverage` answered confidently wrong on laya's multilingual checkpoint, so it acts only when named in
   `DECIDER_USES`. A run in which no enabled use point can fire (no checklist, no repair loop) does not start the
   layer: no data notice, no report key, no shadow file.
+
+### Documentation
+
+- **The decision layer across the docs.** [Langfuse](docs/langfuse.md) lists the `decider.<use>` spans (a
+  fallback is a `WARNING` span with its reason) and the `decider.<use>.confidence` / `.agreement` scores;
+  [MCP](docs/mcp.md) the `decider` parameter of `explore`, `design` and `automate`;
+  [decider.md](docs/decider.md) laya-serve's `LAYA_MODELS`, the latency to expect on a CPU against the default
+  `DECIDER_TIMEOUT_MS`, and where each command reports the layer; the README links the guide. ADR-0022 gains a
+  latency record for both laya checkpoints on a CPU, with twelve labelled triage questions sent together as a
+  failing suite sends them.
+- **The architecture overview no longer calls Cairn single-page:** `--flow` (ADR-0017) follows in-app
+  navigation for up to `--max-pages` pages, and the decision layer is listed among the technology pillars.
 
 ## [0.7.0] - 2026-07-30
 

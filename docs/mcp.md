@@ -24,14 +24,30 @@ npm i @modelcontextprotocol/sdk
 |------|--------------|---------|
 | `explore`  | Explore a page → methodology-based cases → `@playwright/test` code → validate ⇄ repair | cases, validation summary, metrics, Pilot verdict, cost, run dir |
 | `design`   | Explore a page → cases in ATC/MTC format, **no code** | cases, metrics, cost, run dir |
-| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir |
+| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir; with an active decider, `decider` and, when any, `notRepaired` |
 
 `explore` and `design` take the same input: `url` (required) plus optional `session`, `flow`, `setup`,
-`gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages` —
+`gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages`, `decider` —
 mirroring the matching `cairn explore` flags. `automate` instead takes `run` (the run id/dir returned
-by `design` or `explore`) plus optional `validate` / `session` / `routing` / `channel`. Results come
+by `design` or `explore`) plus optional `validate` / `session` / `routing` / `channel` / `decider`. Results come
 back as JSON (run id, the generated cases or spec files, validation / metrics / Pilot, cost, and the
 `runs/<id>/` directory).
+
+`decider` (`off` | `jev` | `laya` | `compat`) switches the [decision layer](decider.md) for one call, like
+`--decider`. Everything else comes from the MCP server's own environment, as it does for the CLI:
+- the provider's address and key ([Providers](decider.md#providers): `laya` reads `DECIDER_BASE_URL` and
+  `LAYA_API_KEY`, `jev` the `TYPESAFE_*` pair);
+- `DECIDER_USES`, `DECIDER_SHADOW` and the limits.
+
+On `design` the parameter changes nothing unless the call passes a `checklist` and `coverage` is enabled; a
+configuration error still fails the call at start. `coverage` is enabled when `DECIDER_USES` names it, or in shadow
+mode with `DECIDER_USES` unset or empty, which asks every use point.
+The default use point, repair triage, lives in the repair loop, which `design` does not run.
+
+An active decider is reported by `explore` and `design` in the run's `report.json`. `automate` writes no report,
+so it returns `decider` and `notRepaired` instead. In shadow mode none of these keys appear: the answers go to
+`runs/<id>/decider-shadow.json` (`decider-shadow-automate.json` for `automate`). A `decider: "off"` call is an
+error while the server's environment sets `DECIDER_SHADOW=1`, just as `--decider off` is on the command line.
 
 A typical agent flow: `design` a page → review the cases → `automate` the run dir it returned.
 

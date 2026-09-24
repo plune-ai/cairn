@@ -37,6 +37,19 @@ When every failing test is excluded, the loop stops without spending a repair at
 the test fails the same way: every repair regenerates the suite, so a test that then passes is not listed as
 *Not repaired*, and one that fails with a different error is asked about again.
 
+An active run reports the layer, and where depends on the command:
+
+- `explore` writes it to `report.json` and `report.md`. In `report.json`, `decider` holds the provider, `calls` (the
+  number of decisions asked) and each fallback with its reason, and `notRepaired` lists the tests kept out of
+  repair. `report.md` has the *Decision layer* and *Not repaired* sections.
+- `design` writes it to `report.json`.
+- `automate` writes no report. It prints both sections, and its MCP result carries both keys.
+
+The `decider` row of the cost summary counts the answered decisions only. Cairn records no usage for a fallback,
+whether it was refused before sending (its length, `DECIDER_MAX_CALLS`) or failed on the way (a timeout, an HTTP
+error, an invalid answer). A call that reached the provider may still be billed, even when it timed out or came
+back invalid.
+
 ## Providers
 
 | | `jev` | `laya` | `compat` |
@@ -83,8 +96,9 @@ Laya ships its own Jev-compatible server:
 
 ```bash
 pip install laya
-LAYA_API_KEY=<a token you choose> LAYA_HOST=127.0.0.1 laya-serve   # port 8000 by default (LAYA_PORT); LAYA_HOST defaults to 0.0.0.0
-curl http://127.0.0.1:8000/health                                   # {"status":"ok","loaded":["multilingual","english"],…}
+# port 8000 by default (LAYA_PORT); LAYA_HOST defaults to 0.0.0.0, so pin it to this machine
+LAYA_API_KEY=<a token you choose> LAYA_HOST=127.0.0.1 LAYA_MODELS=english,multilingual laya-serve
+curl http://127.0.0.1:8000/health   # {"status":"ok","loaded":["english","multilingual"],…}
 ```
 
 Then:
@@ -99,6 +113,22 @@ short: it reads each question together with the state, cuts each answer option a
 at 192 and the whole at 512 (English checkpoint) or 1 024 (multilingual) — silently, answering from what it read.
 So Cairn counts the state and the question together, checks every option on its own, and refuses what would not
 fit: a longer input is a fallback, never a truncation.
+
+`LAYA_MODELS` (a comma list of `english`, `multilingual`, `typed-decisions`) limits the checkpoints laya-serve
+loads at start. By default it loads all three, but Cairn asks only `english` and `multilingual`, as the example above
+shows. Without a GPU the latency depends on how many questions arrive
+at once. Cairn sends a failing suite's triage questions together, and laya-serve answers them in turn. The figures
+below are for the machine behind ADR-0022's measurements.
+
+| Checkpoint | One question alone | Twelve sent together (median · p95) |
+|---|---|---|
+| multilingual | 0.1 s | 0.7 s · 1.2 s |
+| English | 0.3 s | 2.2 s · 3.6 s |
+
+An earlier run on the same machine, with twelve sent together, took 3.3 s · 4.6 s and 9.5 s · 13.5 s: what else the
+machine is doing counts as much as the checkpoint. `DECIDER_TIMEOUT_MS` (default 10 000) bounds every call, and a
+call past it is a fallback. With many failing tests on a busy machine, raise it or expect fallbacks. `cairn
+doctor` shows the latency of one call.
 
 ## Shadow mode — judge it before you trust it
 
