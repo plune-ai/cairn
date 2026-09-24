@@ -19,7 +19,10 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
 
 ## Use points
 
-`DECIDER_USES` picks them (default: both). An unknown name is an error, not a silent no-op.
+`DECIDER_USES` picks them. By default an active decider consults `repair-triage` alone, and shadow mode asks both
+— a use point acts only on evidence, and `coverage` has none yet: on laya's multilingual checkpoint it answered
+confidently wrong ([ADR-0022](adr/0022-optional-decision-layer.md#measured-facts-this-rests-on-2026-09-24)). Name
+it to turn it on: `DECIDER_USES=repair-triage,coverage`. An unknown name is an error, not a silent no-op.
 
 | Use | Where | What a confident answer does | Otherwise |
 |---|---|---|---|
@@ -115,7 +118,8 @@ for `automate`, which reuses a design run's folder) next to what the run actuall
       "latencyMs": 1210, "agreement": 1 } ] }
 ```
 
-`asked` keeps every (case, item) answer with its confidence — what a per-use threshold is tuned on. Every text in
+`asked` keeps every (case, item) answer with its confidence — in shadow mode the whole matrix, nothing pruned —
+which is what a per-use threshold is tuned on. Every text in
 the file is scrubbed exactly like the input that was sent. `agreement` (also a Langfuse score,
 `decider.<use>.agreement`) is 1 when the decider's coverage is within 0.1 of the LLM judge's; it is absent when
 the judge failed and the token-overlap fallback scored the run, and absent for repair triage: today's path does
@@ -137,7 +141,7 @@ Cairn decision layer (DECIDER — ADR-0022)
   Provider: laya · model: jev-latest
   Base URL: http://127.0.0.1:8000
   Data goes to: this machine (localhost)
-  Uses: repair-triage, coverage · min confidence 0.75 · timeout 10000 ms · ≤ 200 decisions/run
+  Uses: repair-triage · min confidence 0.75 · timeout 10000 ms · ≤ 200 decisions/run
   ✓ Test call (noul): 162 ms · answered by laya-rl-agent
 ```
 

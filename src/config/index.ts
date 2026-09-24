@@ -229,7 +229,9 @@ export function parseDeciderConfig(read: (name: string) => string | undefined): 
     throw new Error("CAIRN_TYPESAFE_BASE_URL is set, so DECIDER=jev takes its key from CAIRN_TYPESAFE_API_KEY — set that too.");
   }
 
-  const usesRaw = read("DECIDER_USES")?.trim() || "repair-triage,coverage";
+  // ADR-0022 rule 9: a use point acts only on evidence. Shadow mode acts on nothing, so by default it asks every
+  // one; an active decider defaults to repair-triage alone — coverage answered confidently wrong on laya (ADR).
+  const usesRaw = read("DECIDER_USES")?.trim() || (shadow ? DECIDER_USES.join(",") : "repair-triage");
   const uses = [...new Set(usesRaw.split(",").map((s) => s.trim()).filter(Boolean))];
   for (const u of uses) {
     if (!(DECIDER_USES as readonly string[]).includes(u)) {

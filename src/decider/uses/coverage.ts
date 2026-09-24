@@ -48,7 +48,8 @@ export async function deciderChecklistCoverage(
   const unsure = new Set<number>();
   const asked: CoverageAnswer[] = [];
   for (const [c, tc] of cases.entries()) {
-    const open = items.map((_, i) => i).filter((i) => !covered.has(i));
+    // Shadow mode asks the whole matrix: a pilot replaying a stricter threshold needs the answers pruning skips.
+    const open = items.map((_, i) => i).filter((i) => decider.shadow || !covered.has(i));
     for (let at = 0; at < open.length; at += decider.caps.maxQuestionsPerCall) {
       const chunk = open.slice(at, at + decider.caps.maxQuestionsPerCall);
       const questions: Record<string, Question> = Object.fromEntries(

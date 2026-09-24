@@ -953,7 +953,7 @@ export async function runAutomate(input: {
   // that has no such loop builds none: no data notice, no empty shadow file, no report key. It designs nothing, so
   // knowledge is read here for one reason: to know which values the cases may echo and must never be sent.
   const decider =
-    cfg.decider && input.validate && !isApi && cfg.decider.uses.includes("repair-triage")
+    cfg.decider && input.validate && !isApi && cfg.maxRepair > 0 && cfg.decider.uses.includes("repair-triage")
       ? makeDecider(cfg.decider, {
           ledger: router.ledger,
           secrets: secretValues(await loadKnowledge(resolve("knowledge"), { url: baseUrl }), process.env),

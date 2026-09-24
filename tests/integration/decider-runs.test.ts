@@ -238,7 +238,9 @@ describe("decision layer on a real run (integration, real Chromium, no LLM)", ()
   }, 120_000);
 
   it("active: the same confident app bug keeps the test out of repair, the decider scores coverage — and the report says so", async () => {
-    const e = await runVariant("E-active", { DECIDER: "compat", DECIDER_BASE_URL: confident.url }, site.url);
+    // coverage acts only when asked for by name (an active decider defaults to repair-triage alone)
+    const both = { DECIDER_USES: "repair-triage,coverage" };
+    const e = await runVariant("E-active", { DECIDER: "compat", DECIDER_BASE_URL: confident.url, ...both }, site.url);
     expect(e.out.attempts).toBe(0); // no repair was spent on an app bug
     expect(e.out.notRepaired).toEqual([expect.objectContaining({ test: "signs in", category: "app-bug", exclude: true })]);
     const files = await filesUnder(e.dir);
@@ -248,7 +250,7 @@ describe("decision layer on a real run (integration, real Chromium, no LLM)", ()
   }, 120_000);
 
   it("a dead decider (HTTP 500 on every call) never sinks the run: it repairs and judges exactly as without one, and the report shows the fallbacks", async () => {
-    const d = await runVariant("D-dead", { DECIDER: "compat", DECIDER_BASE_URL: dead.url }, site.url);
+    const d = await runVariant("D-dead", { DECIDER: "compat", DECIDER_BASE_URL: dead.url, DECIDER_USES: "repair-triage,coverage" }, site.url);
     expect(d.out.validation?.greenRatio).toBe(1);
     expect(d.out.attempts).toBe(1);
     expect(d.prompts).toEqual(baseline.prompts); // the repair hint and the judge prompt are today's, byte for byte

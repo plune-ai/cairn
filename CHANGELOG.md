@@ -30,7 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--decider-shadow` (`DECIDER_SHADOW=1`) asks the decider at every enabled use point, records its answers
   next to what the run actually did in `runs/<id>/decider-shadow.json`, and changes nothing else. An active
   run adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to
-  `report.md`.
+  `report.md`. By default an active decider consults `repair-triage` alone and shadow mode asks both:
+  `coverage` answered confidently wrong on laya's multilingual checkpoint, so it acts only when named in
+  `DECIDER_USES`.
 
 ## [0.7.0] - 2026-07-30
 

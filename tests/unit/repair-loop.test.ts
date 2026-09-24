@@ -222,4 +222,22 @@ describe("runRepairLoop with repair-triage (ADR-0022, spec §6.1)", () => {
     expect(withTriage.hints[3]).toBe("- a [triage: locator-missing]: locator resolved to 0 elements");
     expect("notRepaired" in r).toBe(false);
   });
+
+  it("the kept suite is the last, never-triaged one: an excluded test failing there with reworded text is asked once more and still reported", async () => {
+    const run = (a: string, b: "passed" | "failed", c: "passed" | "failed", green: number) =>
+      report(
+        [
+          { test: "a", status: "failed", error: `500 Internal Server Error (${a})` },
+          { test: "b", status: b, ...(b === "failed" ? { error: "locator resolved to 0 elements" } : {}) },
+          { test: "c", status: c, ...(c === "failed" ? { error: "locator resolved to 0 elements" } : {}) },
+        ],
+        green,
+      );
+    const h = harness([run("9 × retried", "failed", "failed", 0), run("8 × retried", "passed", "failed", 0.34), run("7 × retried", "passed", "passed", 0.67)]);
+    const triage = byError();
+    const r = await runRepairLoop({ generate: h.generate, validate: h.validate, maxRepair: 2, triage });
+    expect(r.bestValidation.greenRatio).toBe(0.67); // the last validation is the kept one
+    expect(triage.mock.calls.at(-1)![0]).toEqual([expect.objectContaining({ test: "a", error: "500 Internal Server Error (7 × retried)" })]);
+    expect(r.notRepaired).toEqual([expect.objectContaining({ test: "a", category: "app-bug" })]);
+  });
 });

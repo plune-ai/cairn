@@ -134,6 +134,15 @@ changed the design.
     into fallbacks, but these figures are not a calibration.
 - **An unknown `model` id on laya auto-routes by detected language**, per its source. So the default model is
   `jev-latest` for every provider; `DECIDER_MODEL=multilingual` pins laya's multilingual checkpoint.
+- **Coverage on laya is not ready to act.** Five Ukrainian checklist items × three Ukrainian cases, truth known
+  (each of three cases covers one item): with the shipped question the multilingual checkpoint got 2 of 15 right
+  and answered **5 wrong at confidence ≥ 0.75** — the case about a wrong password "covered" password recovery
+  and log-out at 0.97–0.98, so the score came out 1.00 against a true 0.60. Three other shapes (the item in the
+  state, the question in Ukrainian, both) did no better: 3–4 of 15, up to 7 confident errors, or no confident
+  answer at all. The English checkpoint was never confident on these texts (every answer a fallback). Repair
+  triage on twelve labelled Playwright failures: 5–6 of 12 right, one confident answer — right — so nothing was
+  wrongly kept out of repair. Hence an active decider defaults to `repair-triage` alone; shadow mode asks every
+  use point, and `coverage` acts only when named in `DECIDER_USES`.
 
 ## Consequences
 

@@ -122,6 +122,13 @@ describe("coverage by decider (spec §6.2)", () => {
     expect(Object.keys(calls[1]!.questions)).toHaveLength(1); // only "logout works" is still open
   });
 
+  it("shadow mode asks the whole matrix — the pilot needs every answer to replay a stricter threshold", async () => {
+    const { decider, calls } = fakeDecider((_s, q) => (q.includes("login works") ? yes() : no()), { shadow: true });
+    const r = await deciderChecklistCoverage(items, [tc("A"), tc("B")], decider);
+    expect(calls.map((c) => Object.keys(c.questions).length)).toEqual([2, 2]);
+    expect(r.asked).toHaveLength(4);
+  });
+
   it("items are chunked by the provider's questions-per-call cap", async () => {
     const many = Array.from({ length: 5 }, (_, i) => ({ text: `item ${i}` }));
     const { decider, calls } = fakeDecider(() => no(), { maxQuestionsPerCall: 2 });

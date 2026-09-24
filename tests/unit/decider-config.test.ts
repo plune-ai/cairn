@@ -25,7 +25,7 @@ describe("decider config — opt-in only (ADR-0022)", () => {
       baseUrl: "https://api.typesafe.ai",
       model: "jev-latest",
       apiKey: "k",
-      uses: ["repair-triage", "coverage"],
+      uses: ["repair-triage"], // coverage acts only when asked for (ADR-0022, measured facts)
       minConfidence: 0.75,
       timeoutMs: 10000,
       maxCalls: 200,
@@ -154,7 +154,15 @@ describe("decider config — opt-in only (ADR-0022)", () => {
       "coverage",
       "repair-triage",
     ]);
-    expect(parse({ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_USES: "" })?.uses).toEqual(["repair-triage", "coverage"]);
+    expect(parse({ DECIDER: "jev", TYPESAFE_API_KEY: "k", DECIDER_USES: "" })?.uses).toEqual(["repair-triage"]);
+  });
+
+  it("DECIDER_USES default: repair-triage alone when active, every use point in shadow mode (it acts on nothing)", () => {
+    const env = { DECIDER: "laya", DECIDER_BASE_URL: "http://127.0.0.1:8000" };
+    expect(parse(env)?.uses).toEqual(["repair-triage"]);
+    expect(parse({ ...env, DECIDER_SHADOW: "1" })?.uses).toEqual(["repair-triage", "coverage"]);
+    expect(parse({ ...env, DECIDER_USES: "coverage" })?.uses).toEqual(["coverage"]); // an explicit list is the list
+    expect(parse({ ...env, DECIDER_SHADOW: "1", DECIDER_USES: "coverage" })?.uses).toEqual(["coverage"]);
   });
 
   it.each([
