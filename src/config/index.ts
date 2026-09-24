@@ -1,5 +1,6 @@
 import {
   BrowserBackendSchema,
+  DeciderProviderSchema,
   LlmProfileSchema,
   ModelsConfigSchema,
   ProviderSchema,
@@ -9,8 +10,10 @@ import type { AppConfig, Provider, ModelTier, RolesConfig } from "./schema.js";
 import { PROFILES, ROUTING_PRESETS } from "./profiles.js";
 import { createEnvReader } from "./env.js";
 import { DEFAULT_STEP_TIMEOUT_MS } from "../llm/structured.js";
+import { DECIDER_USES, type DeciderConfig, type DeciderUse } from "../decider/types.js";
 
 export type { AppConfig, ModelsConfig, ModelTier, Provider, LlmProfile, BrowserBackend, Role, RoleModel, RolesConfig } from "./schema.js";
+export type { DeciderConfig } from "../decider/types.js";
 
 type Env = Record<string, string | undefined>;
 
@@ -119,6 +122,10 @@ export function loadConfig(
   };
   const testCaseLanguage = LANG_ALIASES[langRaw.toLowerCase()] ?? langRaw;
 
+  // ADR-0022: opt-in decision layer — the key is ABSENT (not undefined) when off, so an AppConfig
+  // built without DECIDER is exactly the object it was before the layer existed.
+  const decider = parseDeciderConfig(read);
+
   return {
     llmProfile,
     models,
@@ -137,6 +144,99 @@ export function loadConfig(
     playwrightWorkers,
     testCaseLanguage,
     stepTimeoutMs,
+    ...(decider ? { decider } : {}),
+  };
+}
+
+/** A number env var with a default and a validity rule; throws a clear error naming the variable. */
+function envNumber(
+  read: (name: string) => string | undefined,
+  name: string,
+  dflt: number,
+  ok: (n: number) => boolean,
+  rule: string,
+): number {
+  const raw = read(name)?.trim();
+  if (!raw) return dflt;
+  const n = Number(raw);
+  if (!ok(n)) throw new Error(`Invalid ${name}='${raw}'. ${rule}`);
+  return n;
+}
+
+/** TypeSafe's own hosts — the only addresses `DECIDER=jev` (and its key) may go to. */
+export const TYPESAFE_HOST = /(?:^|\.)typesafe\.ai$/;
+
+/**
+ * ADR-0022: the opt-in decision layer. undefined unless DECIDER names a provider — a key alone enables
+ * nothing (spec §3.2). Each provider reads ONLY its own key, so a TypeSafe cloud key is never sent to a
+ * laya/compat server. Misconfiguration fails here, at start, not in the middle of a run.
+ */
+export function parseDeciderConfig(read: (name: string) => string | undefined): DeciderConfig | undefined {
+  const raw = read("DECIDER")?.trim().toLowerCase();
+  if (!raw || raw === "off") return undefined;
+  const parsed = DeciderProviderSchema.safeParse(raw);
+  if (!parsed.success || parsed.data === "off") {
+    throw new Error(`Invalid DECIDER='${raw}'. Allowed: off | jev | laya | compat.`);
+  }
+  const provider = parsed.data;
+
+  // Each provider reads only its OWN address and key: jev takes TypeSafe's pair (as the SDK does), laya/compat
+  // take DECIDER_*. A laya address left in .env therefore never receives the TypeSafe key.
+  const urlVar = provider === "jev" ? "TYPESAFE_BASE_URL" : "DECIDER_BASE_URL";
+  const keyVar = provider === "jev" ? "TYPESAFE_API_KEY" : provider === "laya" ? "LAYA_API_KEY" : "DECIDER_API_KEY";
+  const baseUrl = read(urlVar)?.trim() || (provider === "jev" ? "https://api.typesafe.ai" : "");
+  if (!baseUrl) {
+    throw new Error(
+      `DECIDER=${provider} needs DECIDER_BASE_URL — the server's address, e.g. http://127.0.0.1:8000 (see docs/decider.md).`,
+    );
+  }
+  if (!/^https?:\/\//i.test(baseUrl) || !URL.canParse(baseUrl)) {
+    // Not echoed: a malformed value can still carry a credential (`https://u:p#ss@host`, a key pasted by mistake).
+    throw new Error(`Invalid ${urlVar} — expected an http(s) URL such as http://127.0.0.1:8000 (the value is not shown).`);
+  }
+  const url = new URL(baseUrl);
+  if (url.username || url.password) {
+    // Not echoed: the URL carries a credential.
+    throw new Error(`Invalid ${urlVar}: a user:password in the URL is not supported — put the key in ${keyVar}.`);
+  }
+  // jev means TypeSafe's cloud: its key and its caps. Any other address — a laya-serve the TypeSafe SDK was
+  // pointed at, a proxy — would receive the TypeSafe key and be read with Jev's 60k caps, which laya cuts silently.
+  if (provider === "jev" && (url.protocol !== "https:" || !TYPESAFE_HOST.test(url.hostname))) {
+    throw new Error(
+      `DECIDER=jev talks only to TypeSafe (https://*.typesafe.ai), but ${urlVar} points to ${url.host}. ` +
+        "For a Laya server use DECIDER=laya with DECIDER_BASE_URL; for another Jev-compatible server, DECIDER=compat. " +
+        "To reach TypeSafe while TYPESAFE_BASE_URL serves the SDK elsewhere, set CAIRN_TYPESAFE_BASE_URL=https://api.typesafe.ai " +
+        "and CAIRN_TYPESAFE_API_KEY (the CAIRN_ names win).",
+    );
+  }
+
+  const apiKey = read(keyVar)?.trim() || undefined;
+  if (provider === "jev" && !apiKey) throw new Error("DECIDER=jev needs TYPESAFE_API_KEY (your TypeSafe API key).");
+  // An address given as CAIRN_TYPESAFE_BASE_URL overrides the SDK's own — so its key must be Cairn's too: the bare
+  // TYPESAFE_API_KEY belongs to wherever the bare TYPESAFE_BASE_URL points (on some machines, a local laya-serve).
+  // (read("CAIRN_X") finds the literal CAIRN_X variable: the reader falls back to the name as given.) Set but empty
+  // counts as set: it still overrides the bare address — with the default one.
+  if (provider === "jev" && read("CAIRN_TYPESAFE_BASE_URL") !== undefined && !read("CAIRN_TYPESAFE_API_KEY")?.trim()) {
+    throw new Error("CAIRN_TYPESAFE_BASE_URL is set, so DECIDER=jev takes its key from CAIRN_TYPESAFE_API_KEY — set that too.");
+  }
+
+  const usesRaw = read("DECIDER_USES")?.trim() || "repair-triage,coverage";
+  const uses = [...new Set(usesRaw.split(",").map((s) => s.trim()).filter(Boolean))];
+  for (const u of uses) {
+    if (!(DECIDER_USES as readonly string[]).includes(u)) {
+      throw new Error(`Unknown DECIDER_USES entry '${u}' (supported in this version: ${DECIDER_USES.join(", ")}).`);
+    }
+  }
+
+  return {
+    provider,
+    baseUrl,
+    model: read("DECIDER_MODEL")?.trim() || "jev-latest",
+    ...(apiKey ? { apiKey } : {}),
+    uses: uses as DeciderUse[],
+    minConfidence: envNumber(read, "DECIDER_MIN_CONFIDENCE", 0.75, (n) => n >= 0 && n <= 1, "Must be a number from 0 to 1."),
+    timeoutMs: envNumber(read, "DECIDER_TIMEOUT_MS", 10_000, (n) => Number.isInteger(n) && n > 0, "Must be a positive integer (ms)."),
+    maxCalls: envNumber(read, "DECIDER_MAX_CALLS", 200, (n) => Number.isInteger(n) && n >= 0, "Must be a non-negative integer."),
   };
 }
 

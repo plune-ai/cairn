@@ -109,13 +109,14 @@ export class CostLedger {
 
   constructor(private readonly pricing: Record<string, ModelPrice> = DEFAULT_PRICING) {}
 
-  record(role: string, model: string, usage: TokenUsage): void {
+  /** `price` wins over the table — the decider prices by provider, not by model name (ADR-0022). */
+  record(role: string, model: string, usage: TokenUsage, price?: ModelPrice): void {
     const row = this.rows.get(role) ?? { models: new Set<string>(), calls: 0, in: 0, out: 0, cost: 0, costKnown: true };
     row.calls += 1;
     row.in += usage.inputTokens;
     row.out += usage.outputTokens;
     row.models.add(model);
-    const p = this.pricing[model];
+    const p = price ?? this.pricing[model];
     if (p) row.cost += (usage.inputTokens / 1e6) * p.inputPer1M + (usage.outputTokens / 1e6) * p.outputPer1M;
     else row.costKnown = false;
     this.rows.set(role, row);

@@ -37,6 +37,8 @@ export default defineConfig({
         "src/core/config.ts",
         "src/core/modality.ts",
         "src/core/registry.ts",
+        // ADR-0022 — decision layer: caps, wire format, guard, redaction, factory, doctor (fetch injected).
+        "src/decider/**",
         "scripts/benchmark-core.ts",
       ],
       thresholds: { lines: 80, functions: 80, branches: 75, statements: 80 },

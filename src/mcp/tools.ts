@@ -15,6 +15,9 @@ import { resolveStyleText } from "../design/style.js";
  * Core is injected via {@link ToolDeps} so the handlers are unit-testable without a browser or LLM.
  */
 
+/** ADR-0022 pass-through; the rest of the decision layer is configured by env (DECIDER_*). */
+const DECIDER_DESCRIPTION = "Opt-in decision layer: off | jev | laya | compat (the rest via DECIDER_* env; see docs/decider.md)";
+
 /** Tool input shape (zod raw shape) — a subset of the `cairn explore` / `design` flags. */
 export const TOOL_INPUT_SHAPE = {
   url: z.string().describe("Page URL to generate tests for"),
@@ -32,6 +35,7 @@ export const TOOL_INPUT_SHAPE = {
   fresh: z.boolean().optional().describe("Ignore prior-run experience for this URL (full set, no delta)"),
   intoProject: z.boolean().optional().describe("explore only: write specs into an existing Playwright project's testDir (detect playwright.config.*) instead of runs/<id>/tests"),
   projectDir: z.string().optional().describe("Explicit project dir for intoProject (detection searches from cwd upward when omitted)"),
+  decider: z.string().optional().describe(DECIDER_DESCRIPTION),
 };
 
 export const ToolInputSchema = z.object(TOOL_INPUT_SHAPE);
@@ -60,7 +64,7 @@ function compactValidation(v: ValidationReport | undefined) {
 
 /** Map tool input → the shared `ExploreInput` exactly like `exploreModality` does (config reused). */
 async function buildExploreInput(input: ToolInput, deps: ToolDeps): Promise<ExploreInput> {
-  const config = deps.resolveConfig({ backend: input.backend, routing: input.routing, channel: input.channel });
+  const config = deps.resolveConfig({ backend: input.backend, routing: input.routing, channel: input.channel, decider: input.decider });
   const checklistText = input.checklist ? await readInputFile(input.checklist, "Checklist") : undefined;
   const styleText = input.style ? await resolveStyleText(input.style) : undefined;
   return {
@@ -158,6 +162,7 @@ export const AUTOMATE_INPUT_SHAPE = {
   channel: z.string().optional().describe("System browser channel for validation, e.g. chrome"),
   intoProject: z.boolean().optional().describe("Write specs into an existing Playwright project's testDir (detect playwright.config.*) instead of the run's tests/"),
   projectDir: z.string().optional().describe("Explicit project dir for intoProject (detection searches from cwd upward when omitted)"),
+  decider: z.string().optional().describe(DECIDER_DESCRIPTION),
 };
 
 export const AutomateInputSchema = z.object(AUTOMATE_INPUT_SHAPE);
@@ -173,7 +178,7 @@ export interface AutomateToolResult {
 }
 
 export async function automateTool(input: AutomateInput, deps: ToolDeps = defaultDeps): Promise<AutomateToolResult> {
-  const config = deps.resolveConfig({ routing: input.routing, channel: input.channel });
+  const config = deps.resolveConfig({ routing: input.routing, channel: input.channel, decider: input.decider });
   const r = await deps.runAutomate({
     runDir: input.run,
     config,
