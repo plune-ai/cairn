@@ -155,7 +155,10 @@ function extract(json: PwJson): RawTestResult[] {
     for (const spec of s.specs ?? []) {
       const result = spec.tests?.[0]?.results?.[0];
       const status = (result?.status ?? "failed") as TestStatus;
-      const error = (result?.error?.message ?? result?.errors?.[0]?.message)?.trim();
+      // Every error, once each: on a test timeout `error` is the timeout alone, and the action's own error — the call
+      // log that names the locator — is a later entry of `errors`.
+      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map((m) => m?.trim());
+      const error = [...new Set(messages.filter(Boolean))].join("\n\n");
       out.push({ title: spec.title, status, ...(error ? { error } : {}) });
     }
     for (const child of s.suites ?? []) walk(child);

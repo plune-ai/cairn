@@ -65,4 +65,23 @@ describe("resultsFromRunnerOutput — surfaces a missing browser instead of a fa
     expect(resultsFromRunnerOutput("", "")).toEqual([]);
     expect(resultsFromRunnerOutput("some noise without json", "warning: slow test")).toEqual([]);
   });
+
+  it("a test timeout keeps the action's error too — the call log is what names the locator", () => {
+    // Playwright 1.61, a click on a locator that never appears: `error` is the timeout alone, and the action's
+    // own error — with the call log — is the second entry of `errors`.
+    const timeout = "Test timeout of 30000ms exceeded.";
+    const action =
+      "Error: locator.click: Test timeout of 30000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Log in' })";
+    const json = JSON.stringify({
+      suites: [
+        {
+          specs: [
+            { title: "TC-1", tests: [{ results: [{ status: "timedOut", error: { message: timeout }, errors: [{ message: timeout }, { message: action }] }] }] },
+          ],
+        },
+      ],
+    });
+    const [r] = resultsFromRunnerOutput(json, "");
+    expect(r!.error).toBe(`${timeout}\n\n${action}`);
+  });
 });
