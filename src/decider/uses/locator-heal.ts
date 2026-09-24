@@ -1,13 +1,19 @@
 /**
  * locator-heal (spec §6.6, ADR-0022), v1: after a test fails on a locator, propose a verified replacement in the
  * repair hint. The generated spec stays plain `@playwright/test` — healing happens after the failure, never inside
- * the code. This part is pure: read the broken locator out of Playwright's error, and narrow the page's elements to
- * the ones a healer may offer — the same or a compatible role, never a destructive one.
+ * the code. Code reads the broken locator out of Playwright's error and narrows the page's elements to the ones a
+ * healer may offer — the same or a compatible role, never a destructive one; the decider only picks among them, and
+ * its pick counts only when the browser finds exactly one such element.
  */
+import type { BrowserGateway } from "../../browser/gateway.js";
 import type { ElementRef } from "../../browser/types.js";
 import { DESTRUCTIVE } from "../../flow/crawl.js";
 import { parseAriaSnapshot } from "../../observe/parse-aria.js";
 import { isDeletionIntent } from "../../safety/guardrails.js";
+import type { TestResult } from "../../validate/index.js";
+import { checkCaps } from "../capabilities.js";
+import type { Decider, Question } from "../types.js";
+import type { FailureCategory, TriageResult } from "./repair-triage.js";
 
 export interface BrokenLocator {
   role: string;
@@ -70,4 +76,132 @@ const quote = (s: string): string => `'${s.replace(/\\/g, "\\\\").replace(/'/g, 
 /** The exact locator the repair hint proposes: `getByRole('button', { name: 'Save', exact: true })`. */
 export function locatorText(el: { role: string; name: string }): string {
   return `getByRole(${quote(el.role)}, { name: ${quote(el.name)}, exact: true })`;
+}
+
+/** A proposal for the repair hint: the broken locator and a replacement verified to match one element. */
+export interface HealRecord {
+  test: string;
+  /** The broken `getByRole(…)`, as the error printed it. */
+  from: string;
+  to: string;
+  confidence: number;
+}
+
+/** Only a locator failure is healed — and only on triage's confident word (spec §6.6 step 1). */
+const HEALABLE: ReadonlySet<FailureCategory> = new Set(["locator-missing", "locator-ambiguous"]);
+const NONE = "none-of-these";
+const PICK_INSTRUCTIONS = "Which element on the page did the failing locator mean?";
+const SCORE_LEVELS = ["Unrelated to the failing step", "Plausible", "Clearly the element the step meant"];
+/** The failure in one line. With a question of at most 400 chars (laya) it stays inside every provider's input cap. */
+const MAX_STATE_CHARS = 500;
+/** The two-stage path (spec §6.6, laya): at most the ten best-scored candidates go into the final choice. */
+const MAX_FINALISTS = 10;
+
+const clip = (s: string, n: number): string => (s.length <= n ? s : `${s.slice(0, n - 1)}…`);
+
+interface Offered {
+  el: ElementRef;
+  label: string;
+  /** `role "name"` as the decider sees it: scrubbed, then clipped to fit one option. */
+  text: string;
+}
+
+/**
+ * The healer (spec §6.6). Candidates come from the page as it loads now, not as it was when the test failed: a
+ * locator reachable only mid-scenario finds no candidate, or none the decider picks, and goes to repair as today.
+ * No verdict, no parse, no candidate, a doubt, a pick that does not match exactly one element, or any failure →
+ * undefined, and repair runs as it would have without a decider. Shadow mode asks and verifies, records, and
+ * proposes nothing.
+ */
+export function makeHeal(opts: {
+  decider: Decider;
+  gateway: BrowserGateway;
+  url: string;
+}): (failure: TestResult, triage: TriageResult) => Promise<HealRecord | undefined> {
+  const { decider, gateway, url } = opts;
+  const { caps } = decider;
+  // ponytail: room for labels up to "c999: " — a page with more candidates would still be refused whole, by checkCaps.
+  const room = caps.maxOptionChars - 6;
+  const choice = (offered: readonly Offered[]): Question => ({
+    type: "choice",
+    instructions: PICK_INSTRUCTIONS,
+    options: { ...Object.fromEntries(offered.map((o) => [o.label, o.text])), [NONE]: "the element it meant is not in this list" },
+  });
+  const fits = (state: string, q: Question): boolean => {
+    try {
+      checkCaps(caps, state, { pick: q });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** Too many candidates for one choice: score each, in calls of at most `maxQuestionsPerCall`, keep the best that fit. */
+  const shortlist = async (state: string, offered: readonly Offered[]): Promise<Offered[]> => {
+    const score = new Map<string, number>();
+    for (let i = 0; i < offered.length; i += caps.maxQuestionsPerCall) {
+      const chunk = offered.slice(i, i + caps.maxQuestionsPerCall);
+      const questions = Object.fromEntries(
+        chunk.map((o): [string, Question] => [
+          o.label,
+          { type: "score", instructions: `How well does ${o.text} match the element the failing locator meant?`, levels: SCORE_LEVELS },
+        ]),
+      );
+      const answers = await decider.decide("locator-heal", state, questions);
+      for (const o of chunk) {
+        const a = answers[o.label];
+        if (a?.type === "score") score.set(o.label, a.value);
+      }
+    }
+    const ranked = [...offered].sort((a, b) => (score.get(b.label) ?? -1) - (score.get(a.label) ?? -1)); // stable: ties keep page order
+    const finalists: Offered[] = [];
+    for (const o of ranked) {
+      if (finalists.length === MAX_FINALISTS || !fits(state, choice([...finalists, o]))) break;
+      finalists.push(o);
+    }
+    return finalists;
+  };
+
+  return async (failure, triage) => {
+    if (!HEALABLE.has(triage.category)) return undefined;
+    const broken = parseBrokenLocator(failure.error ?? "");
+    if (!broken) return undefined;
+    const t0 = Date.now();
+    const input = { state: "", candidates: [] as string[] };
+    // A no-op for an active decider, so every path below returns through it.
+    const record = (d: unknown, confidence?: number): undefined => {
+      decider.shadow?.record({
+        use: "locator-heal",
+        input,
+        current: "repair",
+        decider: d,
+        ...(confidence !== undefined ? { confidence } : {}),
+        latencyMs: Date.now() - t0,
+      });
+      return undefined;
+    };
+    try {
+      const what = triage.category === "locator-ambiguous" ? "matched several elements" : "matched no element";
+      // The locator first: a clip cuts the tail, and a long test name must not cut what the decider picks by.
+      input.state = clip(decider.scrub(`Locator ${broken.source} ${what} in Playwright test "${failure.test}".`), MAX_STATE_CHARS);
+      const { ariaSnapshot } = await gateway.observe({ url });
+      const offered = healCandidates(ariaSnapshot, broken).map(
+        (el, i): Offered => ({ el, label: `c${i + 1}`, text: clip(decider.scrub(`${el.role} "${el.name}"`), room) }),
+      );
+      if (offered.length === 0) return undefined; // nothing to ask about
+      input.candidates = offered.map((o) => o.text);
+      const finalists = fits(input.state, choice(offered)) ? offered : await shortlist(input.state, offered);
+      const a = (await decider.decide("locator-heal", input.state, { pick: choice(finalists) })).pick;
+      if (a?.type !== "choice") throw new Error("an answer of the wrong type");
+      if (a.value === NONE) return record({ to: null, confidence: a.confidence }, a.confidence);
+      const chosen = finalists.find((o) => o.label === a.value);
+      if (!chosen) throw new Error(`an answer outside the offered candidates: '${a.value}'`); // never trust an unoffered label
+      if (!decider.shadow && a.confidence < decider.minConfidence) return undefined;
+      const [v] = await gateway.verify([chosen.el]);
+      const to = locatorText({ role: chosen.el.role, name: chosen.el.name ?? "" });
+      if (decider.shadow) return record({ to, confidence: a.confidence, verified: v?.count === 1 }, a.confidence);
+      return v?.count === 1 ? { test: failure.test, from: broken.source, to, confidence: a.confidence } : undefined;
+    } catch (e) {
+      return record({ unavailable: e instanceof Error ? e.message : String(e) });
+    }
+  };
 }
