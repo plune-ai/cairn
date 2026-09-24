@@ -58,7 +58,7 @@ export function buildMcpServer(): McpServer {
         "Generate @playwright/test code from the ready ATC cases of a previous run (the second half of " +
         "the decoupled design → automate flow). Pass `run` = the run id/dir returned by `design`; " +
         "optionally `validate` (needs a `session`). Returns the spec files, validation summary, and cost — " +
-        "plus `decider` (and, when any, `notRepaired`) when an active decision layer ran.",
+        "plus `decider` (and, when any, `notRepaired` and `healed`) when an active decision layer ran.",
       inputSchema: AUTOMATE_INPUT_SHAPE,
     },
     async (args) => {

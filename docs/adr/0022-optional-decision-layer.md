@@ -49,6 +49,14 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    and some case is unsure about, an unavailable call or an answer that is not a yes/no hands the whole score back
    to the judge; and the score's comment names its source (`decider (laya): …`), so a reader never mistakes it
    for the judge's.
+   **A second, bounded one (spec §6.6): `locator-heal` proposes.** For a failure triage confidently called a
+   locator failure, it offers the repair a replacement locator. Code chooses the candidates first: the start page's
+   elements of the same or a compatible role, never one the crawler's destructive-link filter or `isDeletionIntent`
+   refuses, so the decider only picks among safe ones or answers `none-of-these`. A pick counts only when the
+   browser matches it exactly once, and it is a hint: the repair still writes the code and the next validation
+   judges it. A wrong pick can still let a test pass while it checks another element. So `locator-heal` is off
+   unless named, and every proposal behind the kept suite is listed in the report (*Locators healed*): no replacement
+   is silent.
 4. **It never sinks a run.** Every failure — network, timeout, 4xx/5xx, a state over the provider's limit, an
    answer that fails validation — surfaces as one exception, `DeciderUnavailable`; the call site catches it and
    takes the path it would have taken without a decider. The failure is traced, not raised.
@@ -156,9 +164,10 @@ changed the design.
 ## Consequences
 
 - **A run without the flag is the run it was.** Same prompts, same calls, same files — pinned by tests.
-- **The decider is only ever a narrower gate** — coverage aside, where it replaces a metric and says so (rule 3).
-  At worst it costs time and fallbacks; it cannot turn a failure into
-  a pass, unblock a destructive action, or keep a failing test out of repair without a confident answer.
+- **The decider is only ever a narrower gate**, with two exceptions (rule 3). Coverage replaces a metric and says
+  so. `locator-heal` hands the repair a verified locator and lists it. At worst it costs time and fallbacks. It
+  cannot turn a failure into a pass by itself: every pass is a validation's. It cannot unblock a destructive action,
+  and it cannot keep a failing test out of repair without a confident answer.
 - **Most small-model answers will be fallbacks at first**, especially on laya's multilingual checkpoint. That is the
   intended failure mode: a fallback is today's behaviour.
 - **The protocol has a single owner**, so a Jev wire change is one file and one test file.
@@ -193,5 +202,10 @@ changed the design.
 1. *Wire format* — verified, above. 2. *A ready laya server* — `laya-serve`, above. 3. *Decider tokens* — from
 `usage`; a length-based estimate only when a server omits it. 4. *`--decider` in the GitHub Action* — not in v1;
 env is enough (`action.yml` unchanged). 5. *Publishing Jev results* — the owner's call; nothing is published.
-6. *Failure-time page snapshot for `locator-heal`* — to be checked when that use point lands. 7. *POM stability
-for deterministic patches* — a `locator-heal` v2 question; v1 only proposes.
+6. *Failure-time page snapshot for `locator-heal`* — it exists (checked on Playwright 1.61). The JSON reporter
+attaches `error-context` (`text/markdown`) to a failed result. The file holds the error and a `# Page snapshot`: the
+ARIA snapshot at the moment of failure, in the form `parseAriaSnapshot` reads. v1 re-observes the start page
+instead. The v2 path is to take the candidates from that snapshot, which also reaches a locator met mid-scenario;
+it is filed, not built. v2 must also set `outputDir`: `runSpecs` sets none, so the file lands in `test-results/`
+beside the nearest `package.json`, and every run shares and clears that folder. 7. *POM stability for
+deterministic patches* — a `locator-heal` v2 question; v1 only proposes.

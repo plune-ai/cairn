@@ -94,10 +94,11 @@ Each run is one Langfuse trace (root span via `startActiveObservation`); each st
 - **Packaging:** one layered npm package — ADR-0007.
 - **Methodology:** ported from qa-skills — ADR-0008.
 - **Decision layer (opt-in):** a System One model (TypeSafe Jev, a local Laya, or a compatible server) answers
-  typed picks — why a test failed, whether a case covers a checklist item — and never generates text. Off by
-  default, it may only make a gate stricter (checklist coverage, a metric, is the named exception). A bad
-  configuration stops a run at start; once the run is going, the layer never sinks it — ADR-0022,
-  [`decider.md`](../decider.md).
+  typed picks — why a test failed, whether a case covers a checklist item, which element a broken locator
+  meant — and never generates text. It is off by default and may only make a gate stricter. There are two named
+  exceptions: checklist coverage, which is a metric, and locator healing, which offers the repair a verified
+  locator and lists it in the report. A bad configuration stops a run at start; once the run is going, the layer
+  never sinks it — ADR-0022, [`decider.md`](../decider.md).
 
 Composition details — [`module-map.md`](./module-map.md); the graph — [`state-machine.md`](./state-machine.md);
 the improvement loop — [`self-improvement.md`](./self-improvement.md).

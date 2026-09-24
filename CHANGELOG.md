@@ -31,10 +31,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next to what the run actually did in `runs/<id>/decider-shadow.json`, and changes nothing else. An active
   `explore` adds a `decider` summary (calls, fallbacks) to `report.json` and a *Decision layer* section to
   `report.md`, and `design` adds the summary to `report.json`. `automate` writes no report: it prints both, and its
-  MCP tool returns `decider` and `notRepaired`. By default an active decider consults `repair-triage` alone and shadow mode asks both:
+  MCP tool returns `decider` and `notRepaired`. By default an active decider consults `repair-triage` alone and shadow mode asks every use point:
   `coverage` answered confidently wrong on laya's multilingual checkpoint, so it acts only when named in
   `DECIDER_USES`. A run in which no enabled use point can fire (no checklist, no repair loop) does not start the
   layer: no data notice, no report key, no shadow file.
+- **A third use point, `locator-heal`: a verified replacement for a broken locator, offered to the repair.**
+  It starts when triage confidently calls a failure a locator failure and the error names a `getByRole(…)`.
+  - Cairn reopens the start page, and the decider picks the element the locator meant, or `none-of-these`. The
+    candidates are the page's elements of the same or a compatible role, never a destructive one.
+  - A pick the browser matches exactly once joins the test's repair hint:
+    `→ replace <old> with getByRole(…, exact: true) (verified: 1 match)`. The repair still writes the code.
+  - Every proposal behind the kept suite is listed: `report.json` `healed`, a *Locators healed* section in
+    `report.md`, the `automate` output and its MCP result.
+  - It acts only when named (`DECIDER_USES=repair-triage,locator-heal`; without `repair-triage` it is an error)
+    and needs the `lib` browser backend.
+  - Shadow mode asks it on every verdict triage would have given, and records whether its pick matched once.
 
 ### Documentation
 
