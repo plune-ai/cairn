@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The destructive-action filters know Ukrainian and Russian, not English only (#185).** The crawler's
+  destructive-link filter and the deletion-intent check matched English words, so on an app in another language
+  neither refused anything: `--flow` followed a link named `Вийти`, which can end the saved session mid-run, a
+  precondition worded `Видалити всі наявні елементи` was seeded instead of left to a human, and `locator-heal` could
+  offer `Видалити акаунт` as a replacement. Both now refuse the Ukrainian and Russian words for log out, delete, remove,
+  deactivate and close account (the crawler) and for delete, remove, clear and reset (the deletion-intent check),
+  each as a whole word in the form a button or a step uses. A name that only shares a root is not refused:
+  `Видалені елементи` (Deleted items), `Удалённый доступ` (Remote access), `Вихідні дані` (Output data). English
+  is matched as before; a control named in any other language is still offered like any other.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

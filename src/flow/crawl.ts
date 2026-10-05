@@ -4,6 +4,7 @@ import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import type { PageStudy } from "../observe/index.js";
 import type { Transition } from "../probe/index.js";
 import type { JourneyCase } from "../design/schema.js";
+import { DELETE_WORDS_RU, DELETE_WORDS_UK, wholeWords } from "../safety/guardrails.js";
 import type { SetupPlan } from "./setup.js";
 
 /** One studied page in the flow graph. */
@@ -35,9 +36,20 @@ export interface CrawlDeps {
 
 /**
  * Destructive / session-ending link names — NEVER followed during a crawl (would log us out or
- * mutate data mid-walk, breaking both session reuse and read-only safety).
+ * mutate data mid-walk, breaking both session reuse and read-only safety). English, Ukrainian and Russian (#185).
+ * Besides delete and remove (`DELETE_WORDS_UK`, `DELETE_WORDS_RU`): log out (вийти, вихід · выйти, выход), deactivate,
+ * and close account — «закрити» alone is an ordinary Close button, so only the account counts. «Вихідні дані»
+ * ("Output data") is another word than «вихід»: each word is matched whole. The noun itself is refused in every sense
+ * («Вихід на пенсію», «Выход на посадку») — by design.
  */
-export const DESTRUCTIVE = /\b(log\s?out|sign\s?out|logout|signout|delete|remove|deactivate|close account)\b/i;
+export const DESTRUCTIVE = new RegExp(
+  [
+    /\b(log\s?out|sign\s?out|logout|signout|delete|remove|deactivate|close account)\b/.source,
+    wholeWords(String.raw`вийти|вихід|${DELETE_WORDS_UK}|деактив(?:увати|уй|уйте)|закри(?:ти|й|йте)\s+(?:акк?аунт|обліковий\s+запис)`),
+    wholeWords(String.raw`выйти|выход|${DELETE_WORDS_RU}|деактивир(?:овать|уй|уйте)|закр(?:ыть|ой|ойте)\s+(?:аккаунт|уч[её]тную\s+запись)`),
+  ].join("|"),
+  "iu",
+);
 
 /** Same-origin check — the crawl stays inside the app under test, never wanders to external sites. */
 function sameOrigin(a: string, b: string): boolean {

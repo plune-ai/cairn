@@ -15,9 +15,9 @@ behind them: [ADR-0022](adr/0022-optional-decision-layer.md).
   softer; below `DECIDER_MIN_CONFIDENCE` its answer is ignored and Cairn does what it always did. Two use points
   go further, so both are off until you name them. `coverage` is a metric rather than a gate: its number replaces
   the judge's and can come out higher. `locator-heal` offers the repair a replacement locator. The replacement is
-  never a different kind of control, nor one Cairn's destructive-action filters refuse (they match English words
-  only). It matches exactly one element on the page, and the report lists it. A wrong pick can still let a test
-  pass while it checks another element; that is what the report is for.
+  never a different kind of control, nor one Cairn's destructive-action filters refuse (they match English,
+  Ukrainian and Russian words). It matches exactly one element on the page, and the report lists it. A wrong pick
+  can still let a test pass while it checks another element; that is what the report is for.
 - It **never sinks a run**. Timeout, server error, an input too long for the model, an invalid answer — each is
   a silent fallback to the current behaviour, recorded in the trace.
 - `confidence` describes the shape of an answer's distribution, **not** the chance that it is right. Each
@@ -52,9 +52,9 @@ the test fails the same way: every repair regenerates the suite, so a test that 
 - **Compatible roles.** A textbox, searchbox and combobox count as one kind of control; so do a checkbox and a
   switch, and the three menu-item roles. Any other role must match exactly.
 - **Only what the destructive-action filters let through.** An element the crawler's destructive-link filter or the
-  deletion-intent check refuses is never offered: log out, delete, remove, reset and the like. Both match English words only
-  ([#185](https://github.com/plune-ai/cairn/issues/185)), so a control named `Видалити` or `Вийти` is offered like
-  any other.
+  deletion-intent check refuses is never offered: log out, delete, remove, reset and the like. Both match English,
+  Ukrainian and Russian words, so `Log out`, `Вийти` and `Выйти` are refused alike. A control named in any other
+  language is offered like any other.
 - **The question.** It is one choice among all candidates. When that does not fit the provider's limits (laya:
   twenty options, 400 characters), each candidate is scored first, and one choice follows among the best ten that
   fit.

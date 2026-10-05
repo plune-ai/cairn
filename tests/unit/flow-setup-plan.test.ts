@@ -57,4 +57,27 @@ describe("planSetup (#60)", () => {
     const plan = await planSetup({ journey }, { invoke: fake, prompts: new PromptRegistry() });
     expect(plan.preconditions[0]?.strategy).toBe("manual"); // data-protection guardrail downgraded it
   });
+
+  it.each([
+    ["Ukrainian", "Видалити всі наявні елементи, щоб список був порожнім"],
+    ["Russian", "Удалить все существующие элементы, чтобы список был пустым"],
+  ])("#185: a %s delete precondition is forced to manual as well", async (_language, description) => {
+    const fake: StructuredInvoke = async (schema) =>
+      schema.parse({ preconditions: [{ description, strategy: "api-seed", endpoint: "/api/items" }] });
+    const plan = await planSetup({ journey }, { invoke: fake, prompts: new PromptRegistry() });
+    expect(plan.preconditions[0]?.strategy).toBe("manual");
+  });
+
+  it("#185: a Ukrainian or Russian precondition that deletes nothing keeps its strategy", async () => {
+    const fake: StructuredInvoke = async (schema) =>
+      schema.parse({
+        preconditions: [
+          { description: "Користувач увійшов у систему", strategy: "session" },
+          { description: "Пользователь вошёл в систему", strategy: "session" },
+          { description: "У списку є елемент з назвою «Видалені елементи»", strategy: "fixture", entity: "item" },
+        ],
+      });
+    const plan = await planSetup({ journey }, { invoke: fake, prompts: new PromptRegistry() });
+    expect(plan.preconditions.map((p) => p.strategy)).toEqual(["session", "session", "fixture"]);
+  });
 });

@@ -52,8 +52,8 @@ only make a result stricter, falls back silently on any failure, and is bounded 
    **A second, bounded one (spec §6.6): `locator-heal` proposes.** For a failure triage confidently called a
    locator failure, it offers the repair a replacement locator. Code chooses the candidates first: the start page's
    elements of the same or a compatible role, never one the crawler's destructive-link filter or `isDeletionIntent`
-   refuses (both match English words only), so the decider picks among what those filters let through or answers
-   `none-of-these`. A pick counts only when the
+   refuses (both match English, Ukrainian and Russian words), so the decider picks among what those filters let
+   through or answers `none-of-these`. A pick counts only when the
    browser matches it exactly once, and it is a hint: the repair still writes the code and the next validation
    judges it. A wrong pick can still let a test pass while it checks another element. So `locator-heal` is off
    unless named, and every proposal behind the kept suite is listed in the report (*Locators healed*): no replacement

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { crawlFlow, flowReportPayload, flowSnapshotPath, type FlowNode } from "../../src/flow/crawl.js";
+import { crawlFlow, DESTRUCTIVE, flowReportPayload, flowSnapshotPath, type FlowNode } from "../../src/flow/crawl.js";
 import { designJourneys } from "../../src/flow/journey.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
@@ -93,6 +93,31 @@ describe("crawlFlow (#59)", () => {
     expect(loggedOut).toBe(false);
     expect(graph.nodes).toHaveLength(1); // only the start page
     expect(graph.edges).toHaveLength(0);
+  });
+
+  it("never follows a Ukrainian or Russian log-out link, and still follows one that only looks like it (#185)", async () => {
+    const clicked: string[] = [];
+    const pages: Record<string, FakePage> = {
+      home: {
+        url: "http://app/home",
+        // e1, e2 end the session; e3, e4 are "Output data" pages (their names merely begin with the same letters)
+        aria: aria(['- link "Вийти"', '- link "Выйти из аккаунта"', '- link "Вихідні дані"', '- link "Выходные данные"']),
+        links: { e1: "login", e2: "login", e3: "outputUk", e4: "outputRu" },
+      },
+      login: { url: "http://app/login", aria: aria(['- heading "Вхід"']), links: {} },
+      outputUk: { url: "http://app/output-uk", aria: aria(['- heading "Вихідні дані"']), links: {} },
+      outputRu: { url: "http://app/output-ru", aria: aria(['- heading "Выходные данные"']), links: {} },
+    };
+    const gw = fakeGateway(pages, "home");
+    const realAct = gw.act;
+    gw.act = async (a) => {
+      if (a.kind === "click" && a.ref) clicked.push(a.ref);
+      return realAct(a);
+    };
+    const graph = await crawlFlow(nodeFrom(pages.home!), { gateway: gw }, { maxPages: 5 });
+
+    expect(clicked).toEqual(["e3", "e4"]);
+    expect(graph.nodes.map((n) => n.url)).toEqual(["http://app/home", "http://app/output-uk", "http://app/output-ru"]);
   });
 
   it("dedupes revisits and stays in-app (external links skipped)", async () => {
@@ -251,5 +276,132 @@ describe("flowSnapshotPath + flowReportPayload per-page snapshots (#103)", () =>
       { url: "http://app/", snapshot: "snapshots/0-index" },
       { url: "http://app/platform", snapshot: "snapshots/1-platform" },
     ]);
+  });
+});
+
+// #185 — the filter knows Ukrainian and Russian next to English. `\b` never fires next to Cyrillic, even with the `u`
+// flag (`\w` stays ASCII), so those words are delimited by `\p{L}` lookarounds instead. A word counts in the forms a
+// link or a button uses — the infinitive, the imperative (not that of «вийти»/«выйти»), the noun where it is itself the
+// label (Вихід, Выход) — and never as a participle or an adjective of the same root. That is what the English filter
+// does too: "Delete" counts, "Deleted items" does not.
+describe("DESTRUCTIVE — destructive and session-ending names (#185)", () => {
+  it("English: unchanged", () => {
+    for (const t of ["Log out", "Sign out", "Logout", "Delete account", "Remove item", "Deactivate account", "Close account", "LOG OUT"]) {
+      expect(DESTRUCTIVE.test(t), t).toBe(true);
+    }
+    for (const t of ["Log in", "Sign in", "Settings", "Deleted items", "Close", "Close window"]) {
+      expect(DESTRUCTIVE.test(t), t).toBe(false);
+    }
+  });
+
+  it("Ukrainian: log out, delete, remove, deactivate, close account", () => {
+    for (const t of [
+      "Вийти",
+      "Вийти з акаунта",
+      "Вихід",
+      "Видалити",
+      "Видалити акаунт",
+      "Видалити обліковий запис",
+      "Видаліть акаунт",
+      "Вилучити з обраного",
+      "Деактивувати акаунт",
+      "Закрити обліковий запис",
+      "ВИДАЛИТИ АКАУНТ",
+    ]) {
+      expect(DESTRUCTIVE.test(t), t).toBe(true);
+    }
+  });
+
+  it("Russian: log out, delete, remove, deactivate, close account", () => {
+    for (const t of [
+      "Выйти",
+      "Выйти из аккаунта",
+      "Выход",
+      "Удалить",
+      "Удалить аккаунт",
+      "Удалить учётную запись",
+      "Удалите аккаунт",
+      "Деактивировать аккаунт",
+      "Закрыть аккаунт",
+      "УДАЛИТЬ АККАУНТ",
+    ]) {
+      expect(DESTRUCTIVE.test(t), t).toBe(true);
+    }
+  });
+
+  // Every form the pattern lists, bare: take one alternative out of the pattern and its row goes red. The account
+  // phrases take each verb form and each noun once.
+  it.each([
+    // Ukrainian: log out, delete, remove, deactivate, close account
+    "вийти",
+    "вихід",
+    "видалити",
+    "видаляти",
+    "видали",
+    "видаліть",
+    "вилучити",
+    "вилучати",
+    "вилучи",
+    "вилучіть",
+    "деактивувати",
+    "деактивуй",
+    "деактивуйте",
+    "закрити акаунт",
+    "закрий аккаунт",
+    "закрийте обліковий запис",
+    // Russian: log out, delete, deactivate, close account
+    "выйти",
+    "выход",
+    "удалить",
+    "удалять",
+    "удали",
+    "удалите",
+    "деактивировать",
+    "деактивируй",
+    "деактивируйте",
+    "закрыть аккаунт",
+    "закрой учётную запись",
+    "закройте учетную запись",
+  ])("every listed form is refused: %s", (form) => {
+    expect(DESTRUCTIVE.test(form), form).toBe(true);
+  });
+
+  it.each([
+    ["Вихідні дані", "Output data: «вихідні» only begins like «вихід»"],
+    ["Вихідні та святкові дні", "Weekends and holidays"],
+    ["Вихідний код", "Source code"],
+    ["Видалені елементи", "Deleted items: a folder, a state, not the action"],
+    ["Видалений користувач", "the name a deleted user is shown under"],
+    ["Політика видалення даних", "a noun: the policy page, not the action"],
+    ["Закрити", "an ordinary Close button: only closing an account counts"],
+    ["Закрити вікно", "Close window"],
+    ["Вхід", "Log in"],
+    ["Увійти", "Sign in"],
+    ["Зберегти", "Save"],
+    ["Выходные данные", "Output data: «выходные» only begins like «выход»"],
+    ["Выходные и праздничные дни", "Weekends and holidays"],
+    ["Удалённый доступ", "Remote access: «удалённый» is not «удалить»"],
+    ["Удаленный рабочий стол", "Remote desktop, spelled without ё"],
+    ["Удалённая работа", "Remote jobs"],
+    ["Удалённые", "Deleted items: a folder, a state, not the action"],
+    ["Закрыть", "an ordinary Close button: only closing an account counts"],
+    ["Закрыть окно", "Close window"],
+    ["Войти", "Sign in"],
+    ["Сохранить", "Save"],
+    // The word boundaries: a listed form that only begins, ends or sits inside another word is not that word.
+    ["Вийти2", "a digit after it continues the word"],
+    ["Вийти_", "an underscore after it continues the word"],
+    ["Невийти", "a letter before it: another word, not «вийти»"],
+    ["2Вийти", "a digit before it continues the word"],
+    ["_Вийти", "an underscore before it continues the word"],
+  ])("a name that only resembles a destructive one is followed: %s (%s)", (name) => {
+    expect(DESTRUCTIVE.test(name), name).toBe(false);
+  });
+
+  it("the noun «вихід»/«выход» is refused in every sense, on purpose: a skipped link costs a page, a followed one the session", () => {
+    // Like «Скинути вагу» for a reset: nothing in the word tells an exit of any kind from a log-out.
+    for (const t of ["Вихід на пенсію", "Выход на посадку"]) {
+      expect(DESTRUCTIVE.test(t), t).toBe(true);
+    }
   });
 });
