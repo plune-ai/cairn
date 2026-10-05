@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { rm, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config/index.js";
-import { runExploration } from "../../src/agent/index.js";
+import { runExploration, runDesign } from "../../src/agent/index.js";
 
 // Runs land inside the project (spec resolution needs node_modules). Unreachable URL → observe fails
 // BEFORE any LLM call, so no API key/credits are needed (the dummy key below is never used).
@@ -40,5 +40,23 @@ describe("runExploration hardening (integration, real browser, no LLM)", () => {
     // forward slashes for cross-platform display, so match the POSIX form regardless of the OS
     // separator `join` produced (on Windows runDir has backslashes; the message has forward slashes).
     expect(error!.message).toContain(runDir.replace(/\\/g, "/"));
+
+    // 4) run.log keeps the progress the run had already written, and ends with the summary (#181).
+    const log = await readFile(join(runDir, "run.log"), "utf8");
+    expect(log).toContain("observe — opening browser");
+    expect(log).toContain("=== Run summary (partial) ===");
+  });
+
+  it("a failed design run keeps its progress in run.log too (#181)", { timeout: 60000 }, async () => {
+    await rm(BASE, { recursive: true, force: true });
+    const config = loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used" });
+
+    await expect(runDesign({ url: "http://127.0.0.1:9/nope", config, runsBaseDir: BASE })).rejects.toThrow();
+
+    const runDirs = await readdir(BASE);
+    expect(runDirs).toHaveLength(1);
+    const log = await readFile(join(BASE, runDirs[0]!, "run.log"), "utf8");
+    expect(log).toContain("observe — opening browser");
+    expect(log).toContain("=== Run summary (partial) ===");
   });
 });

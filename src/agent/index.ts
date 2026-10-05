@@ -577,6 +577,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       budget: { used: budget.spent, max: budget.max },
       sessionName: input.sessionName,
       onProgress,
+      logLines,
     });
   } finally {
     await gateway.close();
@@ -883,6 +884,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
       budget: { used: budget.spent, max: budget.max },
       sessionName: input.sessionName,
       onProgress,
+      logLines,
     });
   } finally {
     await gateway.close();

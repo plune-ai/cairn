@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   each as a whole word in the form a button or a step uses. A name that only shares a root is not refused:
   `Видалені елементи` (Deleted items), `Удалённый доступ` (Remote access), `Вихідні дані` (Output data). English
   is matched as before; a control named in any other language is still offered like any other.
+- **A timed-out LLM step is reported as itself, not as a page that could not load (#181).** The per-step timeout
+  (`STEP_TIMEOUT_MS`) fails with "timed out", and a failed run whose error said "timed out" was filed under
+  navigation: a run whose page had loaded and whose model then ran past the limit ended with "Could not load the
+  page" and the advice to check the URL. It now says that an LLM step timed out and gives the advice that applies,
+  a faster `--routing` or a higher `STEP_TIMEOUT_MS`; `page.goto` timeouts and `net::ERR_…` errors are still reported
+  as navigation failures. A failed run also keeps its cause and its progress: `report.json` gains `errorDetail`, the
+  error's own first line, beside the friendly `error` (for a timed-out step it names the role and the model and how
+  long the step waited; `schemaVersion` stays `1`, the key is only added), and `run.log` keeps the progress lines the
+  run had written and ends with the summary, where the summary used to replace them.
 
 ## [0.8.0] - 2026-09-24
 
