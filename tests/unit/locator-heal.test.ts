@@ -132,6 +132,30 @@ describe("healCandidates", () => {
   it("an empty snapshot has no candidates", () => {
     expect(healCandidates("", { role: "button", source: "getByRole('button')" })).toEqual([]);
   });
+
+  // #185 — the filters are not English-only: on an app in Ukrainian or Russian the same controls are refused.
+  it("ASYMMETRY holds in Ukrainian and Russian: a destructive control is never a candidate, one that only resembles it is", () => {
+    const page = [
+      '- button "Видалити акаунт"',
+      '- button "Скинути пароль"',
+      '- button "Очистити кошик"',
+      '- button "Зберегти"',
+      '- button "Вихідні дані"',
+      '- button "Удалить аккаунт"',
+      '- button "Сбросить пароль"',
+      '- button "Очистить корзину"',
+      '- button "Сохранить"',
+      '- button "Удалённый доступ"',
+    ].join("\n");
+    const got = healCandidates(page, { role: "button", name: "Збер", source: "getByRole('button', { name: 'Збер' })" });
+    expect(got.map((e) => e.name)).toEqual(["Зберегти", "Вихідні дані", "Сохранить", "Удалённый доступ"]);
+  });
+
+  it("a Ukrainian or Russian log-out link is never a candidate either", () => {
+    const page = ['- link "Вийти"', '- link "Выйти из аккаунта"', '- link "Вихід"', '- link "Профіль"', '- link "Профиль"'].join("\n");
+    const got = healCandidates(page, { role: "link", name: "Проф", source: "getByRole('link', { name: 'Проф' })" });
+    expect(got.map((e) => e.name)).toEqual(["Профіль", "Профиль"]);
+  });
 });
 
 describe("locatorText", () => {
