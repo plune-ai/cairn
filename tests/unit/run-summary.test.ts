@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderRunSummary, classifyRunError, partialReportPayload, displayPath } from "../../src/agent/summary.js";
+import { timeoutInvoke, type StructuredInvoke } from "../../src/llm/structured.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 import type { CostReport } from "../../src/llm/cost.js";
 
@@ -126,6 +127,59 @@ describe("classifyRunError (L1-04, Box 1/3 — friendly, actionable)", () => {
   });
 });
 
+/** The error a timed-out LLM step really throws (#110) — built by `timeoutInvoke`, not typed out by hand. */
+async function stepTimeoutError(label?: string): Promise<Error> {
+  const hangs: StructuredInvoke = () => new Promise(() => undefined); // a provider that never answers
+  vi.useFakeTimers();
+  try {
+    const caught = timeoutInvoke(hangs, { timeoutMs: 5, label })({} as never, []).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(5);
+    return (await caught) as Error;
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+describe("classifyRunError — a timed-out LLM step is not a page that could not load (#181)", () => {
+  it.each([["role 'reasoner', model 'deepseek/deepseek-r1'"], [undefined]])(
+    "files the step timeout under its own kind, with the advice that applies (label %j)",
+    async (label) => {
+      const err = await stepTimeoutError(label);
+      const info = classifyRunError(err, { runDir: "runs/abc" });
+      expect(info.kind).toBe("llm-timeout");
+      expect(info.line).toMatch(/LLM step timed out/);
+      expect(info.hint).toContain("--routing");
+      expect(info.hint).toContain("STEP_TIMEOUT_MS");
+      expect(info.hint).toContain("runs/abc"); // where the partial results are, as for every kind
+      expect(`${info.line} ${info.hint}`).not.toMatch(/page|URL/i); // none of the page advice it used to get
+      expect(info.detail).toBe(err.message); // the raw cause stays available
+    },
+  );
+
+  it.each([
+    "page.goto: Timeout 30000ms exceeded.",
+    "page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:9/",
+    "net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/",
+    "Navigation timeout of 30000 ms exceeded",
+  ])("still files %j under navigation", (message) => {
+    expect(classifyRunError(new Error(message), { runDir: "runs/abc" })).toMatchObject({
+      kind: "navigation",
+      line: "Could not load the page (navigation failed or timed out).",
+      hint: "Check the URL is correct and reachable, then try again. Partial results saved to runs/abc.",
+    });
+  });
+
+  it.each([
+    "LLM-call budget limit reached (80 calls)", // budget
+    "Session looks expired — re-capture it", // session
+    "Invalid API key provided", // config
+    "page.goto: Timeout 30000ms exceeded.", // navigation
+    "something odd happened", // unknown
+  ])("keeps the first line of %j as `detail`, under whatever kind it is filed", (message) => {
+    expect(classifyRunError(new Error(`${message}\n    at navigate (pw.js:1:1)`)).detail).toBe(message);
+  });
+});
+
 describe("displayPath — cross-platform path display (console)", () => {
   it("normalizes Windows backslashes to forward slashes", () => {
     expect(displayPath("runs\\abc123\\testcases")).toBe("runs/abc123/testcases");
@@ -164,5 +218,14 @@ describe("partialReportPayload (L1-04, Box 1/3)", () => {
     expect(String(p.error)).toContain("could not load");
     expect(p.budget).toEqual({ used: 80, max: 80 });
     expect(p.cost).toBe(cost);
+  });
+
+  it("keeps the error's own first line beside the friendly one, when there is one (#181)", () => {
+    const base = { runId: "r1", url: "https://app.test", error: "An LLM step timed out" };
+    expect(partialReportPayload({ ...base, errorDetail: "LLM step timed out after 240000ms" })).toMatchObject({
+      error: "An LLM step timed out",
+      errorDetail: "LLM step timed out after 240000ms",
+    });
+    expect(partialReportPayload(base)).not.toHaveProperty("errorDetail");
   });
 });

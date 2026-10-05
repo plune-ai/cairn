@@ -14,6 +14,9 @@ export interface FailureContext {
   budget?: BudgetReport;
   sessionName?: string;
   onProgress?: (event: string) => void;
+  /** The progress lines the run has already buffered for run.log (the run's `onProgress` appends to them). The
+   * failure log keeps them and adds the summary after, as a finished run's log does — it never replaces them. */
+  logLines?: readonly string[];
 }
 
 /** Run a best-effort artifact write — an artifact write must never mask the original failure. */
@@ -50,6 +53,7 @@ export async function finalizeFailure(runWriter: RunWriter, ctx: FailureContext)
         url: ctx.url,
         mode: ctx.mode,
         error: info.line,
+        errorDetail: info.detail,
         cost: ctx.cost,
         budget: ctx.budget,
       }),
@@ -70,7 +74,10 @@ export async function finalizeFailure(runWriter: RunWriter, ctx: FailureContext)
       ].join("\n"),
     ),
   );
-  await safe(() => runWriter.writeLog([info.line, "", ...summary].join("\n")));
+  // The failure line is already in the buffer: `onProgress` above is the run's own, which appends it. Without a
+  // buffer the log is the failure line and the summary.
+  const progress = ctx.logLines?.length ? ctx.logLines : [info.line];
+  await safe(() => runWriter.writeLog([...progress, "", ...summary].join("\n")));
 
   return new Error([info.line, "", ...summary, "", info.hint].join("\n"));
 }

@@ -93,7 +93,7 @@ export function renderRunSummary(s: RunSummaryInput): string[] {
   return lines;
 }
 
-export type RunErrorKind = "navigation" | "session" | "budget" | "config" | "unknown";
+export type RunErrorKind = "navigation" | "session" | "budget" | "config" | "llm-timeout" | "unknown";
 
 export interface RunErrorInfo {
   kind: RunErrorKind;
@@ -101,6 +101,8 @@ export interface RunErrorInfo {
   line: string;
   /** An actionable next step (e.g. where the partial results were saved). */
   hint: string;
+  /** The error's own first line, untouched — what a wrong `kind` must never erase (#181). */
+  detail: string;
 }
 
 /**
@@ -116,11 +118,24 @@ export function classifyRunError(
   const m = first.toLowerCase();
   const where = ctx.runDir ? ` Partial results saved to ${displayPath(ctx.runDir)}.` : "";
 
+  // #181: the per-step LLM timeout (`timeoutInvoke`) says "timed out" too. Its own signature goes first, so the
+  // navigation branch below cannot file a slow model as a page that could not load.
+  if (m.includes("llm step timed out")) {
+    return {
+      kind: "llm-timeout",
+      line: "An LLM step timed out — the model provider was too slow to answer.",
+      // No provider names here: the TUI sorts the thrown text by keyword (use-runner.ts) and would take a provider's
+      // name for a missing API key. The full message, with its profile advice, stays in `detail`.
+      hint: `Try a faster routing (e.g. --routing volume-fast), or raise STEP_TIMEOUT_MS.${where}`,
+      detail: first,
+    };
+  }
   if (m.includes("budget") || m.includes("call cap") || m.includes("callbudget")) {
     return {
       kind: "budget",
       line: "Call budget reached — the run hit the cost guardrail and stopped early.",
       hint: `Increase maxLlmCalls if this is expected, or check for a loop.${where}`,
+      detail: first,
     };
   }
   if (
@@ -134,6 +149,7 @@ export function classifyRunError(
       kind: "session",
       line: "The login session looks expired or missing.",
       hint: `Re-capture it: cairn session capture --url <loginUrl>${ctx.sessionName ? ` --name ${ctx.sessionName}` : ""}.${where}`,
+      detail: first,
     };
   }
   if (
@@ -147,6 +163,7 @@ export function classifyRunError(
       kind: "config",
       line: "An API key looks missing or invalid.",
       hint: `Set ANTHROPIC_API_KEY / OPENROUTER_API_KEY in your environment.${where}`,
+      detail: first,
     };
   }
   if (
@@ -163,9 +180,10 @@ export function classifyRunError(
       kind: "navigation",
       line: first.startsWith("Could not") ? first : "Could not load the page (navigation failed or timed out).",
       hint: `Check the URL is correct and reachable, then try again.${where}`,
+      detail: first,
     };
   }
-  return { kind: "unknown", line: first || "The run failed.", hint: `See the message above.${where}` };
+  return { kind: "unknown", line: first || "The run failed.", hint: `See the message above.${where}`, detail: first };
 }
 
 export interface PartialReportInput {
@@ -174,6 +192,8 @@ export interface PartialReportInput {
   /** Which kind of run failed. Optional only because a caller might not know it; pass it when you do. */
   mode?: RunMode;
   error: string;
+  /** The error's own first line, kept beside the friendly `error` so a wrong classification never erases the cause. */
+  errorDetail?: string;
   cost?: CostReport;
   budget?: BudgetReport;
 }
@@ -189,6 +209,7 @@ export function partialReportPayload(i: PartialReportInput): Record<string, unkn
     ...(i.mode ? { mode: i.mode } : {}),
     partial: true,
     error: i.error,
+    ...(i.errorDetail ? { errorDetail: i.errorDetail } : {}),
     ...(i.cost ? { cost: i.cost } : {}),
     ...(i.budget ? { budget: i.budget } : {}),
   };

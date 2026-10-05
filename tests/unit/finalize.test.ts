@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { finalizeFailure } from "../../src/agent/finalize.js";
 import type { RunWriter } from "../../src/artifacts/index.js";
 import type { CostReport } from "../../src/llm/cost.js";
+import { timeoutInvoke, type StructuredInvoke } from "../../src/llm/structured.js";
 
 const cost: CostReport = {
   perRole: [
@@ -39,6 +40,19 @@ function captureWriter(over: Partial<RunWriter> = {}): { rw: RunWriter; store: C
     ...over,
   };
   return { rw, store };
+}
+
+/** The error a timed-out LLM step really throws (#110) — built by `timeoutInvoke`, not typed out by hand. */
+async function stepTimeoutError(label: string): Promise<Error> {
+  const hangs: StructuredInvoke = () => new Promise(() => undefined); // a provider that never answers
+  vi.useFakeTimers();
+  try {
+    const caught = timeoutInvoke(hangs, { timeoutMs: 5, label })({} as never, []).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(5);
+    return (await caught) as Error;
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
@@ -92,5 +106,46 @@ describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
     // the returned error is the friendly run error, not "disk full"
     expect(err.message).not.toMatch(/disk full/);
     expect(err.message.toLowerCase()).toMatch(/could not load|timed out|navigation/);
+  });
+
+  it("reports a timed-out LLM step as itself, and keeps the raw error beside the friendly one (#181)", async () => {
+    const { rw, store } = captureWriter();
+    const cause = await stepTimeoutError("role 'reasoner', model 'deepseek/deepseek-r1'");
+    const err = await finalizeFailure(rw, { runId: "r1", url: "https://app.test", mode: "explore", error: cause });
+
+    expect(store.report?.error).toMatch(/LLM step timed out/);
+    // a wrong classification must never erase the cause: it names the step and how long it waited
+    expect(store.report?.errorDetail).toBe(cause.message);
+    expect(store.report?.errorDetail).toContain("role 'reasoner', model 'deepseek/deepseek-r1'");
+    for (const text of [store.md, err.message]) {
+      expect(text).toContain("STEP_TIMEOUT_MS");
+      expect(text).not.toContain("Could not load the page");
+    }
+  });
+
+  it("keeps the progress lines run.log already had and appends the summary (#181)", async () => {
+    const { rw, store } = captureWriter();
+    const progress = [
+      "2026-10-05T10:00:00.000Z  observe — done: 12 elements, screenshot taken",
+      "2026-10-05T10:00:05.000Z  identifyElements — page analysis (LLM)…",
+    ];
+    const logLines = [...progress];
+    await finalizeFailure(rw, {
+      runId: "r1",
+      url: "https://app.test",
+      error: new Error("something odd happened"),
+      logLines,
+      onProgress: (event) => logLines.push(event), // as the run's own onProgress does: the failure line joins the buffer
+    });
+
+    expect(store.log?.startsWith(progress.join("\n"))).toBe(true);
+    expect(store.log).toMatch(/\n\n=== Run summary \(partial\) ===\n/);
+    expect(store.log?.match(/something odd happened/g)).toHaveLength(1); // the failure line is not written twice
+  });
+
+  it("with no buffered progress the log still opens with the failure line", async () => {
+    const { rw, store } = captureWriter();
+    await finalizeFailure(rw, { runId: "r1", url: "https://app.test", error: new Error("something odd happened") });
+    expect(store.log).toMatch(/^something odd happened\n\n=== Run summary \(partial\) ===/);
   });
 });
