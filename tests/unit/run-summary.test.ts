@@ -141,7 +141,13 @@ async function stepTimeoutError(label?: string): Promise<Error> {
 }
 
 describe("classifyRunError — a timed-out LLM step is not a page that could not load (#181)", () => {
-  it.each([["role 'reasoner', model 'deepseek/deepseek-r1'"], [undefined]])(
+  it.each([
+    ["role 'reasoner', model 'deepseek/deepseek-r1'"],
+    [undefined],
+    // the label carries a model id, which can hold the words of the branches checked after this one (budget, login):
+    // the timeout is still the timeout, so its check goes first
+    ["role 'worker', model 'acme/budget-login-1'"],
+  ])(
     "files the step timeout under its own kind, with the advice that applies (label %j)",
     async (label) => {
       const err = await stepTimeoutError(label);

@@ -66,6 +66,7 @@ describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
       cost,
       budget: { used: 80, max: 80 },
       onProgress: (e) => lines.push(e),
+      logLines: lines,
     });
 
     expect(store.report?.partial).toBe(true);
@@ -88,6 +89,7 @@ describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
       runId: "r1",
       url: "https://app.test",
       error: new Error("Could not reach https://app.test: navigation failed (DNS/connection)."),
+      logLines: [],
     });
     expect(err.message.toLowerCase()).toMatch(/could not reach|navigation/);
   });
@@ -102,6 +104,7 @@ describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
       runId: "r1",
       url: "x",
       error: new Error("page.goto: Timeout 30000ms exceeded"),
+      logLines: [],
     });
     // the returned error is the friendly run error, not "disk full"
     expect(err.message).not.toMatch(/disk full/);
@@ -111,7 +114,13 @@ describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
   it("reports a timed-out LLM step as itself, and keeps the raw error beside the friendly one (#181)", async () => {
     const { rw, store } = captureWriter();
     const cause = await stepTimeoutError("role 'reasoner', model 'deepseek/deepseek-r1'");
-    const err = await finalizeFailure(rw, { runId: "r1", url: "https://app.test", mode: "explore", error: cause });
+    const err = await finalizeFailure(rw, {
+      runId: "r1",
+      url: "https://app.test",
+      mode: "explore",
+      error: cause,
+      logLines: [],
+    });
 
     expect(store.report?.error).toMatch(/LLM step timed out/);
     // a wrong classification must never erase the cause: it names the step and how long it waited
@@ -145,7 +154,12 @@ describe("finalizeFailure (L1-04, Box 1/3/4)", () => {
 
   it("with no buffered progress the log still opens with the failure line", async () => {
     const { rw, store } = captureWriter();
-    await finalizeFailure(rw, { runId: "r1", url: "https://app.test", error: new Error("something odd happened") });
+    await finalizeFailure(rw, {
+      runId: "r1",
+      url: "https://app.test",
+      error: new Error("something odd happened"),
+      logLines: [],
+    });
     expect(store.log).toMatch(/^something odd happened\n\n=== Run summary \(partial\) ===/);
   });
 });

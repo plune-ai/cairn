@@ -97,7 +97,8 @@ export type RunErrorKind = "navigation" | "session" | "budget" | "config" | "llm
 
 export interface RunErrorInfo {
   kind: RunErrorKind;
-  /** A one-line, user-facing description (keeps the keyword so the TUI classifier still matches). */
+  /** A one-line, user-facing description. Session, budget and config keep the keyword the TUI classifier
+   * (tui/hooks/use-runner.ts) sorts by; llm-timeout deliberately has none (see its branch). */
   line: string;
   /** An actionable next step (e.g. where the partial results were saved). */
   hint: string;

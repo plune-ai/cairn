@@ -14,9 +14,11 @@ export interface FailureContext {
   budget?: BudgetReport;
   sessionName?: string;
   onProgress?: (event: string) => void;
-  /** The progress lines the run has already buffered for run.log (the run's `onProgress` appends to them). The
-   * failure log keeps them and adds the summary after, as a finished run's log does — it never replaces them. */
-  logLines?: readonly string[];
+  /** The progress lines the run has already buffered for run.log. Required: left out, they would be replaced by the
+   * summary alone. The run's `onProgress` must append every event to this same buffer, the failure line included
+   * (`finalizeFailure` reports it through `onProgress`), so the log written here is these lines, then the summary,
+   * as a finished run's log is. */
+  logLines: readonly string[];
 }
 
 /** Run a best-effort artifact write — an artifact write must never mask the original failure. */
@@ -74,9 +76,9 @@ export async function finalizeFailure(runWriter: RunWriter, ctx: FailureContext)
       ].join("\n"),
     ),
   );
-  // The failure line is already in the buffer: `onProgress` above is the run's own, which appends it. Without a
-  // buffer the log is the failure line and the summary.
-  const progress = ctx.logLines?.length ? ctx.logLines : [info.line];
+  // The failure line is already in the buffer: `onProgress` above is the run's own, which appends it. With nothing
+  // buffered the log is the failure line and the summary.
+  const progress = ctx.logLines.length ? ctx.logLines : [info.line];
   await safe(() => runWriter.writeLog([...progress, "", ...summary].join("\n")));
 
   return new Error([info.line, "", ...summary, "", info.hint].join("\n"));
