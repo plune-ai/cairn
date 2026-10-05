@@ -39,7 +39,8 @@ export interface CrawlDeps {
  * mutate data mid-walk, breaking both session reuse and read-only safety). English, Ukrainian and Russian (#185).
  * Besides delete and remove (`DELETE_WORDS_UK`, `DELETE_WORDS_RU`): log out (вийти, вихід · выйти, выход), deactivate,
  * and close account — «закрити» alone is an ordinary Close button, so only the account counts. «Вихідні дані»
- * ("Output data") is another word than «вихід»: each word is matched whole.
+ * ("Output data") is another word than «вихід»: each word is matched whole. The noun itself is refused in every sense
+ * («Вихід на пенсію», «Выход на посадку») — by design.
  */
 export const DESTRUCTIVE = new RegExp(
   [

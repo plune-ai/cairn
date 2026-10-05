@@ -121,6 +121,45 @@ describe("isDeletionIntent — Ukrainian and Russian (#185)", () => {
     }
   });
 
+  // Every form the pattern lists, bare: take one alternative out of the pattern and its row goes red. «очисти» is the
+  // same form in both languages, so it stands once.
+  it.each([
+    // Ukrainian: delete, remove, clear, reset
+    "видалити",
+    "видаляти",
+    "видали",
+    "видаліть",
+    "вилучити",
+    "вилучати",
+    "вилучи",
+    "вилучіть",
+    "очистити",
+    "очисти",
+    "очистіть",
+    "очищати",
+    "очищувати",
+    "скинути",
+    "скинь",
+    "скиньте",
+    "скидати",
+    "скидання",
+    // Russian: delete, clear, reset
+    "удалить",
+    "удалять",
+    "удали",
+    "удалите",
+    "очистить",
+    "очистите",
+    "очищать",
+    "сброс",
+    "сбросить",
+    "сбрось",
+    "сбросьте",
+    "сбрасывать",
+  ])("every listed form is flagged: %s", (form) => {
+    expect(isDeletionIntent(form), form).toBe(true);
+  });
+
   it.each([
     ["Видалені елементи", "the Deleted items folder: a state, not the action"],
     ["Видалений користувач", "the name a deleted user is shown under"],
@@ -134,6 +173,16 @@ describe("isDeletionIntent — Ukrainian and Russian (#185)", () => {
     ["Очищенная вода", "purified water, an adjective"],
     ["Очистные сооружения", "sewage treatment plants"],
     ["Пользователь вошёл в систему", "no deletion at all"],
+    // The word boundaries: a listed form that only begins, ends or sits inside another word is not that word.
+    ["Видалили", "past tense: only begins like the imperative «видали»"],
+    ["Удалили", "past tense: only begins like the imperative «удали»"],
+    ["Очистили", "past tense: only begins like the imperative «очисти»"],
+    ["Сброса", "a case form of the noun: only the nominative «сброс» counts"],
+    ["Видалити_все", "an underscore after it continues the word"],
+    ["Скинути2", "a digit after it continues the word"],
+    ["Перескинути", "a letter before it: another word, not «скинути»"],
+    ["2Скинути", "a digit before it continues the word"],
+    ["_Видалити", "an underscore before it continues the word"],
   ])("a benign name that shares a root with a deletion verb is not flagged: %s (%s)", (text) => {
     expect(isDeletionIntent(text), text).toBe(false);
   });

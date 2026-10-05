@@ -281,9 +281,9 @@ describe("flowSnapshotPath + flowReportPayload per-page snapshots (#103)", () =>
 
 // #185 — the filter knows Ukrainian and Russian next to English. `\b` never fires next to Cyrillic, even with the `u`
 // flag (`\w` stays ASCII), so those words are delimited by `\p{L}` lookarounds instead. A word counts in the forms a
-// link or a button uses — the infinitive, the imperative, the noun where it is itself the label (Вихід, Выход) — and
-// never as a participle or an adjective of the same root. That is what the English filter does too: "Delete" counts,
-// "Deleted items" does not.
+// link or a button uses — the infinitive, the imperative (not that of «вийти»/«выйти»), the noun where it is itself the
+// label (Вихід, Выход) — and never as a participle or an adjective of the same root. That is what the English filter
+// does too: "Delete" counts, "Deleted items" does not.
 describe("DESTRUCTIVE — destructive and session-ending names (#185)", () => {
   it("English: unchanged", () => {
     for (const t of ["Log out", "Sign out", "Logout", "Delete account", "Remove item", "Deactivate account", "Close account", "LOG OUT"]) {
@@ -329,6 +329,43 @@ describe("DESTRUCTIVE — destructive and session-ending names (#185)", () => {
     }
   });
 
+  // Every form the pattern lists, bare: take one alternative out of the pattern and its row goes red. The account
+  // phrases take each verb form and each noun once.
+  it.each([
+    // Ukrainian: log out, delete, remove, deactivate, close account
+    "вийти",
+    "вихід",
+    "видалити",
+    "видаляти",
+    "видали",
+    "видаліть",
+    "вилучити",
+    "вилучати",
+    "вилучи",
+    "вилучіть",
+    "деактивувати",
+    "деактивуй",
+    "деактивуйте",
+    "закрити акаунт",
+    "закрий аккаунт",
+    "закрийте обліковий запис",
+    // Russian: log out, delete, deactivate, close account
+    "выйти",
+    "выход",
+    "удалить",
+    "удалять",
+    "удали",
+    "удалите",
+    "деактивировать",
+    "деактивируй",
+    "деактивируйте",
+    "закрыть аккаунт",
+    "закрой учётную запись",
+    "закройте учетную запись",
+  ])("every listed form is refused: %s", (form) => {
+    expect(DESTRUCTIVE.test(form), form).toBe(true);
+  });
+
   it.each([
     ["Вихідні дані", "Output data: «вихідні» only begins like «вихід»"],
     ["Вихідні та святкові дні", "Weekends and holidays"],
@@ -351,7 +388,20 @@ describe("DESTRUCTIVE — destructive and session-ending names (#185)", () => {
     ["Закрыть окно", "Close window"],
     ["Войти", "Sign in"],
     ["Сохранить", "Save"],
+    // The word boundaries: a listed form that only begins, ends or sits inside another word is not that word.
+    ["Вийти2", "a digit after it continues the word"],
+    ["Вийти_", "an underscore after it continues the word"],
+    ["Невийти", "a letter before it: another word, not «вийти»"],
+    ["2Вийти", "a digit before it continues the word"],
+    ["_Вийти", "an underscore before it continues the word"],
   ])("a name that only resembles a destructive one is followed: %s (%s)", (name) => {
     expect(DESTRUCTIVE.test(name), name).toBe(false);
+  });
+
+  it("the noun «вихід»/«выход» is refused in every sense, on purpose: a skipped link costs a page, a followed one the session", () => {
+    // Like «Скинути вагу» for a reset: nothing in the word tells an exit of any kind from a log-out.
+    for (const t of ["Вихід на пенсію", "Выход на посадку"]) {
+      expect(DESTRUCTIVE.test(t), t).toBe(true);
+    }
   });
 });

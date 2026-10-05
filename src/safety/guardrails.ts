@@ -84,8 +84,10 @@ export const wholeWords = (alternatives: string): string =>
 /**
  * "Delete" and "remove" in Ukrainian and in Russian — words of both name-based filters (`isDeletionIntent` here and
  * the crawler's `DESTRUCTIVE`), so they are written once. Only the forms a button or a step uses: the infinitive of
- * either aspect and the imperative. Never a participle or an adjective of the same root, as the English filter never
- * matches "Deleted": «Видалені елементи» is the Deleted items folder, «Удалённый доступ» is Remote access.
+ * either aspect and the imperative of the perfective verb (видали, видаліть — not видаляй). «Вийти»/«выйти»
+ * (`DESTRUCTIVE`) are the exception: only their infinitive counts, вийди, вийдіть and выйди are not covered. Never a
+ * participle or an adjective of the same root, as the English filter never matches "Deleted": «Видалені елементи» is
+ * the Deleted items folder, «Удалённый доступ» is Remote access.
  */
 export const DELETE_WORDS_UK = "видал(?:ити|яти|и|іть)|вилуч(?:ити|ати|и|іть)";
 export const DELETE_WORDS_RU = "удал(?:ить|ять|и|ите)";
