@@ -67,8 +67,26 @@ jobs:
 | `commit-message` | `test: update generated …`       | Commit message for the follow-up PR. |
 | `pr-title`       | (commit message)                 | Title for the follow-up PR. |
 | `github-token`   | `${{ github.token }}`            | Token for commenting / opening the follow-up PR. |
+| `api-spec`       | —                                | OpenAPI 3.x spec (path or URL). When set, runs `cairn api --spec` after the UI step; `url` may then be omitted for an API-only job. |
+| `min-coverage`   | —                                | Minimum share (0-100) of spec operations that must be covered; below it the step fails with exit code `3`. Needs `api-spec`. |
+| `count-partial`  | `false`                          | Count partially covered operations as covered for `min-coverage`. |
 | `cairn-version`  | `latest`                         | npm version/tag of `@plune-ai/cairn` to install. |
 | `install-browsers` | `true`                         | Install Playwright Chromium before running. |
+
+## Coverage gate
+
+Fail the job when too little of the OpenAPI spec is covered by the generated cases:
+
+```yaml
+- uses: plune-ai/cairn/action@v1
+  with:
+    api-spec: openapi.yaml
+    min-coverage: 80        # percent of operations that must be `covered`
+    count-partial: false    # true: operations covered only in part count too
+```
+
+The step runs `cairn api --spec openapi.yaml --min-coverage 80` and prints `n / N`, the percentage and the
+uncovered operations in the log. Below the threshold it exits with `3` (`1` is a failed test or a bad value).
 
 ## Required secrets (set by a repo admin — the action does **not** set these)
 

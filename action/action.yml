@@ -66,6 +66,16 @@ inputs:
     description: "Token for commenting / opening the follow-up PR. Needs pull-requests: write (and contents: write for open-pr)."
     required: false
     default: ${{ github.token }}
+  api-spec:
+    description: "OpenAPI 3.x spec (path or URL). When set, runs `cairn api` after the UI step; combine with min-coverage to gate on spec coverage."
+    required: false
+  min-coverage:
+    description: "Minimum share (0-100) of spec operations that must be covered; the step fails with exit code 3 below it. Needs api-spec."
+    required: false
+  count-partial:
+    description: "Count partially covered operations as covered when checking min-coverage."
+    required: false
+    default: "false"
   cairn-version:
     description: "npm version/tag of @plune-ai/cairn to install."
     required: false
@@ -93,6 +103,7 @@ runs:
       run: npx --yes playwright install --with-deps chromium
 
     - name: Run Cairn CI
+      if: ${{ inputs.url != '' || inputs.api-spec == '' }}
       shell: bash
       run: cairn ci
       env:
@@ -115,3 +126,16 @@ runs:
         INPUT_COMMIT-MESSAGE: ${{ inputs.commit-message }}
         INPUT_PR-TITLE: ${{ inputs.pr-title }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+
+    - name: Run Cairn API coverage gate
+      if: ${{ inputs.api-spec != '' }}
+      shell: bash
+      run: |
+        args=(api --spec "$INPUT_API_SPEC")
+        if [ -n "$INPUT_MIN_COVERAGE" ]; then args+=(--min-coverage "$INPUT_MIN_COVERAGE"); fi
+        if [ "$INPUT_COUNT_PARTIAL" = "true" ]; then args+=(--count-partial); fi
+        cairn "${args[@]}"
+      env:
+        INPUT_API_SPEC: ${{ inputs.api-spec }}
+        INPUT_MIN_COVERAGE: ${{ inputs.min-coverage }}
+        INPUT_COUNT_PARTIAL: ${{ inputs.count-partial }}

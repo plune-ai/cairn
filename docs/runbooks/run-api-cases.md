@@ -42,6 +42,18 @@
   pass/fail + endpoint coverage instead of green%/pilot, and its Report tab shows the per-operation
   table + a link to `api-evidence.json`.
 
+## Coverage gate for CI (`--min-coverage`)
+`cairn api --spec ./openapi.yaml --min-coverage 80` fails the run when fewer than 80% of the spec's
+operations are `covered` (covered operations / all operations). `partial` operations are not counted
+unless you add `--count-partial`. Works with or without `--base-url`: coverage is spec-vs-generated cases.
+
+- **Report:** a `=== Coverage gate: … — n / N operation(s) covered = P% (min M%) ===` line, followed on
+  failure by every operation that was not counted (status, method, path), so the reason is visible in the log.
+- **Exit codes:** `0` ok, `1` failed tests or bad input (including a `--min-coverage` outside 0..100 or not a
+  number), `3` coverage below the threshold. When tests also fail, `1` wins.
+- **GitHub Action:** set `api-spec` with `min-coverage` (and `count-partial`) — see `action/README.md`.
+- Without the flag nothing changes.
+
 ## Robustness
 - **Transient faults** (connection reset / timeout / `429` / `5xx`) retry with backoff before failing,
   reusing the tiered-recovery pattern (#90); DNS/refused and `4xx` fail fast (no retry).
