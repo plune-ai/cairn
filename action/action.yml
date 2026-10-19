@@ -9,8 +9,8 @@ branding:
 
 inputs:
   url:
-    description: "Page URL to generate tests for (required)."
-    required: true
+    description: "Page URL to generate tests for. Required unless api-spec is set (an API-only job)."
+    required: false
   mode:
     description: "explore (cases + @playwright/test code) or design (cases only). Code is needed for a follow-up PR."
     required: false
@@ -88,6 +88,13 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Check coverage-gate inputs
+      if: ${{ inputs.api-spec == '' && (inputs.min-coverage != '' || inputs.count-partial == 'true') }}
+      shell: bash
+      run: |
+        echo "::error::min-coverage / count-partial need api-spec; without it no coverage gate would run."
+        exit 1
+
     - name: Set up Node.js
       uses: actions/setup-node@v7
       with:

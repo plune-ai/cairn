@@ -50,7 +50,7 @@ jobs:
 
 | Input            | Default                          | Description |
 | ---------------- | -------------------------------- | ----------- |
-| `url`            | — (**required**)                 | Page URL to generate tests for. |
+| `url`            | — (**required** unless `api-spec` is set) | Page URL to generate tests for. |
 | `mode`           | `explore`                        | `explore` (cases + code) or `design` (cases only). A follow-up PR needs `explore`. |
 | `session`        | —                                | Saved session name for authenticated targets. |
 | `checklist`      | —                                | Path to a checklist file that steers what to test. |
@@ -86,7 +86,15 @@ Fail the job when too little of the OpenAPI spec is covered by the generated cas
 ```
 
 The step runs `cairn api --spec openapi.yaml --min-coverage 80` and prints `n / N`, the percentage and the
-uncovered operations in the log. Below the threshold it exits with `3` (`1` is a failed test or a bad value).
+operations that are not counted in the log: the uncovered ones and, without `count-partial`, the partially covered
+ones. Below the threshold it exits with `3` (`1` is a failed test or a bad value). A spec with no operations passes at 100%.
+
+Notes:
+- The API step runs the cases-only path: it takes the spec and generated cases, with no `--base-url` and no headers, so
+  nothing is sent to your API. Coverage is spec versus generated cases.
+- It runs after the UI step; if the UI step fails, the API step is skipped. To get both verdicts regardless, use two
+  separate action steps (or jobs): one with `url`, one with `api-spec`.
+- `min-coverage` or `count-partial: true` without `api-spec` fails the job early, so a typo cannot silently disable the gate.
 
 ## Required secrets (set by a repo admin — the action does **not** set these)
 
