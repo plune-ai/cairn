@@ -56,14 +56,17 @@ export function computeApiCoverage(
   cases: ApiCase[],
   results?: ApiCaseResult[],
 ): ApiCoverageReport {
+  const resultByName = new Map((results ?? []).map((r) => [r.name, r]));
   const casesByKey = new Map<string, ApiCase[]>();
   for (const c of cases) {
+    // A case the guardrails kept off the wire (#196) was described, not tested: it covers nothing.
+    const r = resultByName.get(c.name);
+    if (r && (r.skipped || r.blocked)) continue;
     const key = apiEndpointKey({ method: c.method, path: c.path, operationId: c.operationId });
     const bucket = casesByKey.get(key);
     if (bucket) bucket.push(c);
     else casesByKey.set(key, [c]);
   }
-  const resultByName = new Map((results ?? []).map((r) => [r.name, r]));
 
   let coveredCount = 0;
   let partialCount = 0;
@@ -86,7 +89,9 @@ export function computeApiCoverage(
     else if (status === "partial") partialCount += 1;
     else uncoveredCount += 1;
 
-    const passed = targeting.length > 0 ? targeting.every((c) => resultByName.get(c.name)?.passed) : undefined;
+    // A case the guardrails kept off the wire (#196) says nothing about pass/fail — leave it out of the overlay.
+    const ran = targeting.filter((c) => !resultByName.get(c.name)?.skipped && !resultByName.get(c.name)?.blocked);
+    const passed = ran.length > 0 ? ran.every((c) => resultByName.get(c.name)?.passed) : undefined;
 
     return endpointCoverage(e, status, declaredStatuses, testedStatuses, results ? passed : undefined);
   });

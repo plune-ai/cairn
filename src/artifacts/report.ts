@@ -6,7 +6,8 @@ import type { ValidationReport } from "../validate/index.js";
 import type { Score } from "../eval/scorers.js";
 import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
 import type { CostReport } from "../llm/cost.js";
-import type { ApiCaseResult } from "../api/runner.js";
+import { wasNotSent, type ApiCaseResult } from "../api/runner.js";
+import { renderGuardrails, type GuardrailReport } from "../api/guard.js";
 import { renderCoverageGate, type ApiCoverageReport, type CoverageGateResult } from "../api/coverage.js";
 import type { ApiScenarioResult } from "../api/scenario-runner.js";
 import type { DeciderSummary } from "../decider/types.js";
@@ -242,37 +243,41 @@ export interface ApiReportInput {
   coverageGate?: CoverageGateResult;
   /** API-9 (#146): multi-endpoint scenario chains — rendered as a section only when non-empty. */
   scenarios?: ApiScenarioResult[];
+  /** #196: request-guardrail summary (executed / skipped / blocked, budget used). */
+  guardrails?: GuardrailReport;
 }
 
 /** Human-readable Markdown run report for `cairn api`: per-operation pass/fail + evidence link. */
 export function renderApiReportMd(r: ApiReportInput): string {
-  const passed = r.results.filter((x) => x.passed).length;
+  const sent = r.results.filter((x) => !wasNotSent(x));
+  const passed = sent.filter((x) => x.passed).length;
   const lines: string[] = ["# QA Explorer — API run report", ""];
   lines.push(`- **Base URL:** ${r.baseUrl}`);
   lines.push(`- **Spec:** ${r.source}`);
   lines.push(`- **Run ID:** ${r.runId}`);
-  lines.push(`- **Operations:** ${passed}/${r.results.length} passed · ${r.endpointCount} endpoint(s) covered`);
+  lines.push(`- **Operations:** ${passed}/${sent.length} passed · ${r.endpointCount} endpoint(s) covered`);
   lines.push(`- **Evidence:** ${displayPath(r.evidencePath)}`);
   lines.push("");
 
   lines.push(`## Operations (${r.results.length})`, "");
   lines.push("| status | method | url | expected | got |", "|---|---|---|---|---|");
   for (const x of r.results) {
-    const got = x.error ? `error: ${x.error}` : String(x.response?.status ?? "—");
-    lines.push(`| ${x.passed ? "✓" : "✗"} | ${x.method} | ${x.url} | ${x.expectedStatus} | ${got} |`);
+    const got = x.skipped ? `skipped: ${x.skipped}` : x.blocked ? `blocked: ${x.blocked}` : x.error ? `error: ${x.error}` : String(x.response?.status ?? "—");
+    lines.push(`| ${wasNotSent(x) ? "⊘" : x.passed ? "✓" : "✗"} | ${x.method} | ${x.url} | ${x.expectedStatus} | ${got} |`);
   }
   lines.push("");
 
   // API-9 (#146): per-scenario pass/fail, each step's own row (mirrors the Operations table above).
   if (r.scenarios && r.scenarios.length > 0) {
-    const scenariosPassed = r.scenarios.filter((s) => s.passed).length;
-    lines.push(`## Scenarios (${scenariosPassed}/${r.scenarios.length} passed)`, "");
+    const ranScenarios = r.scenarios.filter((s) => !s.skipped);
+    const scenariosPassed = ranScenarios.filter((s) => s.passed).length;
+    lines.push(`## Scenarios (${scenariosPassed}/${ranScenarios.length} passed)`, "");
     for (const s of r.scenarios) {
-      lines.push(`### ${s.passed ? "✓" : "✗"} ${s.name}`, "");
+      lines.push(`### ${s.skipped ? "⊘" : s.passed ? "✓" : "✗"} ${s.name}`, "");
       lines.push("| status | method | url | expected | got |", "|---|---|---|---|---|");
       for (const step of s.steps) {
-        const got = step.error ? step.error : String(step.response?.status ?? "—");
-        lines.push(`| ${step.passed ? "✓" : "✗"} | ${step.method} | ${step.url || "—"} | ${step.expectedStatus} | ${got} |`);
+        const got = step.skipped ? `skipped: ${step.skipped}` : step.error ? step.error : String(step.response?.status ?? "—");
+        lines.push(`| ${wasNotSent(step) ? "⊘" : step.passed ? "✓" : "✗"} | ${step.method} | ${step.url || "—"} | ${step.expectedStatus} | ${got} |`);
       }
       lines.push("");
     }
@@ -299,5 +304,7 @@ export function renderApiReportMd(r: ApiReportInput): string {
   if (r.coverageGate) {
     lines.push(...renderCoverageGate(r.coverageGate).map((l) => (l.startsWith("=== ") ? `## ${l.slice(4, -4)}` : l)), "");
   }
+  // #196: what the request guardrails did (executed / skipped by reason / blocked, budget used).
+  if (r.guardrails) lines.push(...renderGuardrails(r.guardrails).map((l) => (l === "=== Guardrails ===" ? "## Guardrails" : l)), "");
   return lines.join("\n");
 }

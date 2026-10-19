@@ -11,7 +11,7 @@
  * continuing with an unresolved captured value (e.g. a missing id after a failed create) would just
  * cascade one real failure into several meaningless ones.
  */
-import { runApiCases, type ApiCaseResult, type RunnerOptions } from "./runner.js";
+import { runApiCases, wasNotSent, type ApiCaseResult, type RunnerOptions } from "./runner.js";
 import type { ApiCase, ApiCaseParams } from "./cases.js";
 import type { ApiScenario } from "./scenarios.js";
 
@@ -19,6 +19,8 @@ export interface ApiScenarioResult {
   name: string;
   steps: ApiCaseResult[];
   passed: boolean;
+  /** #196: the guardrails kept at least one step off the wire and no step actually failed — not a test failure. */
+  skipped?: boolean;
 }
 
 export async function runApiScenarios(scenarios: ApiScenario[], opts: RunnerOptions): Promise<ApiScenarioResult[]> {
@@ -31,24 +33,29 @@ async function runOneScenario(scenario: ApiScenario, opts: RunnerOptions): Promi
   const captured: Record<string, string> = {};
   const steps: ApiCaseResult[] = [];
   let aborted = false;
+  let notSent: ApiCaseResult | undefined; // #196: the step the guardrails kept off the wire
 
   for (let i = 0; i < scenario.steps.length; i++) {
     const step = scenario.steps[i]!;
     if (aborted) {
-      steps.push(skippedResult(step));
+      steps.push(notSent ? { ...skippedResult(step), skipped: notSent.skipped, blocked: notSent.blocked } : skippedResult(step));
       continue;
     }
 
     const [result] = await runApiCases([resolveParams(step, captured)], opts);
     steps.push(result!);
     if (!result!.passed) {
-      aborted = true; // an earlier step in the chain failed — later steps have nothing valid to run on
+      aborted = true;
+      if (wasNotSent(result!)) notSent = result; // an earlier step in the chain failed — later steps have nothing valid to run on
       continue;
     }
     captureValues(step, result!, scenario.steps.slice(i + 1), captured);
   }
 
-  return { name: scenario.name, steps, passed: steps.every((s) => s.passed) };
+  const passed = steps.every((s) => s.passed);
+  // Guard-skipped steps are not failures: a scenario is "skipped" when nothing in it actually failed.
+  const skipped = !passed && steps.some(wasNotSent) && steps.every((s) => s.passed || wasNotSent(s));
+  return { name: scenario.name, steps, passed, ...(skipped ? { skipped } : {}) };
 }
 
 function skippedResult(step: ApiCase): ApiCaseResult {

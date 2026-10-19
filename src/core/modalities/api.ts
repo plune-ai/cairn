@@ -18,7 +18,23 @@ import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
 import { generateAdversarialCases, ADVERSARIAL_STYLES, type AdversarialStyle } from "../../api/adversarial.js";
-import { runApiCases, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
+import { runApiCases, wasNotSent, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
+import {
+  RequestGuard,
+  BUDGET_EXIT_CODE,
+  NOTHING_SENT_EXIT_CODE,
+  MIN_RPS,
+  parseBaseUrl,
+  tooShortSecrets,
+  DEFAULT_MAX_REQUESTS,
+  DEFAULT_RPS,
+  collectSecrets,
+  maskSecrets,
+  parseList,
+  parsePositiveInt,
+  parsePositiveNumber,
+  renderGuardrails,
+} from "../../api/guard.js";
 import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
 import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
@@ -60,6 +76,16 @@ interface ApiFlags {
   minCoverage?: string;
   /** #197: with --min-coverage, count `partial` operations as covered. */
   countPartial?: boolean;
+  /** #196: allow POST/PUT/PATCH/DELETE (and the psycho/hacker styles) to run against --base-url. */
+  allowMutations?: boolean;
+  /** #196: comma-separated method allow-list. */
+  allowedMethods?: string;
+  /** #196: comma-separated path masks (`*` within a segment, `**` across). */
+  allowedPaths?: string;
+  /** #196: request budget for the whole run, retries included (default 300). */
+  maxRequests?: string;
+  /** #196: requests per second for the whole run (default 5). */
+  rps?: string;
 }
 
 /**
@@ -91,9 +117,19 @@ function parseHeaderFlags(flags: string[] | undefined): Record<string, string> {
  * pass/fail + coverage + evidence-path footer is API-4's `renderRunSummary` (shared with web runs).
  */
 export function renderApiRun(results: ApiCaseResult[]): string[] {
-  const passed = results.filter((r) => r.passed).length;
-  const lines = ["", "=== Run results (status + schema asserts) ===", `${passed}/${results.length} case(s) passed`];
+  const sent = results.filter((r) => !wasNotSent(r));
+  const passed = sent.filter((r) => r.passed).length;
+  const notSent = results.length - sent.length;
+  const lines = [
+    "",
+    "=== Run results (status + schema asserts) ===",
+    `${passed}/${sent.length} case(s) passed${notSent ? ` · ${notSent} not sent (see Guardrails)` : ""}`,
+  ];
   for (const r of results) {
+    if (wasNotSent(r)) {
+      lines.push(`  ⊘ ${r.name} → ${r.skipped ? `skipped: ${r.skipped}` : `blocked: ${r.blocked}`}`);
+      continue;
+    }
     const mark = r.passed ? "✓" : "✗";
     const got = r.error ? `error: ${r.error}` : `${r.response?.status ?? "—"} (want ${r.expectedStatus})`;
     const retries = r.attempts > 1 ? ` ·${r.attempts} attempts` : "";
@@ -194,13 +230,15 @@ export function renderApiScenarios(scenarios: ApiScenario[]): string[] {
 /** Render scenario run results — per-scenario pass/fail + per-step breakdown (API-9 DoD). */
 export function renderApiScenarioRun(results: ApiScenarioResult[]): string[] {
   if (results.length === 0) return [];
-  const passed = results.filter((r) => r.passed).length;
-  const lines = ["", "=== Scenario results ===", `${passed}/${results.length} scenario(s) passed`];
+  const skipped = results.filter((r) => r.skipped).length;
+  const ran = results.filter((r) => !r.skipped);
+  const passed = ran.filter((r) => r.passed).length;
+  const lines = ["", "=== Scenario results ===", `${passed}/${ran.length} scenario(s) passed${skipped ? ` · ${skipped} not run (see Guardrails)` : ""}`];
   for (const r of results) {
-    lines.push(`  ${r.passed ? "✓" : "✗"} ${r.name}`);
+    lines.push(`  ${r.skipped ? "⊘" : r.passed ? "✓" : "✗"} ${r.name}`);
     for (const step of r.steps) {
-      const mark = step.passed ? "✓" : step.error?.startsWith("skipped") ? "⊘" : "✗";
-      const got = step.error ? `${step.error}` : `${step.response?.status ?? "—"} (want ${step.expectedStatus})`;
+      const mark = step.passed ? "✓" : wasNotSent(step) || step.error?.startsWith("skipped") ? "⊘" : "✗";
+      const got = step.skipped ? `skipped: ${step.skipped}` : step.blocked ? `blocked: ${step.blocked}` : step.error ? `${step.error}` : `${step.response?.status ?? "—"} (want ${step.expectedStatus})`;
       lines.push(`      ${mark} ${step.name} → ${got}`);
     }
   }
@@ -236,8 +274,25 @@ export const apiModality: Modality = {
   name: "api",
   gated: false,
   summary: "Generate API / contract tests from an OpenAPI spec",
-  async run(ctx: ModalityContext): Promise<void> {
-    const opts = ctx.flags as ApiFlags;
+  async run(rawCtx: ModalityContext): Promise<void> {
+    const opts = rawCtx.flags as ApiFlags;
+    // #196: every line the run prints passes through the secret scrubber (the list is filled once the headers are known).
+    const secrets: string[] = [];
+    const ctx: ModalityContext = {
+      ...rawCtx,
+      out: (s) => rawCtx.out(maskSecrets(s, secrets)),
+      err: (s) => rawCtx.err(maskSecrets(s, secrets)),
+    };
+    // Validate the guardrail flags before any work: a typo must not silently fall back to a default.
+    const maxRequests = opts.maxRequests === undefined ? DEFAULT_MAX_REQUESTS : parsePositiveInt("--max-requests", opts.maxRequests);
+    const rps = opts.rps === undefined ? DEFAULT_RPS : parsePositiveNumber("--rps", opts.rps, MIN_RPS);
+    const allowedMethods = opts.allowedMethods === undefined ? undefined : parseList(opts.allowedMethods);
+    const allowedPaths = opts.allowedPaths === undefined ? undefined : parseList(opts.allowedPaths);
+    if (allowedMethods && allowedMethods.length === 0) throw new Error("--allowed-methods needs at least one method (e.g. GET,HEAD).");
+    // --base-url must be an absolute http(s) URL; credentials in it are moved to a Basic header and masked.
+    const base = opts.baseUrl === undefined ? undefined : parseBaseUrl(opts.baseUrl);
+    if (base) secrets.push(...base.secrets);
+    if (allowedPaths && allowedPaths.length === 0) throw new Error("--allowed-paths needs at least one path mask (e.g. /pets/*).");
     const spec = opts.spec;
     if (!spec) {
       // commander enforces requiredOption in the CLI; this guards programmatic/test callers.
@@ -294,7 +349,7 @@ export const apiModality: Modality = {
     for (const line of renderApiScenarios(scenarios)) ctx.out(`${line}\n`);
 
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
-    if (!opts.baseUrl) {
+    if (!base) {
       // API-6 (#136): coverage is meaningful even without a run — it's spec-vs-generated-cases.
       const casesOnly = computeApiCoverage(model, cases);
       for (const line of renderApiCoverage(casesOnly)) ctx.out(`${line}\n`);
@@ -305,11 +360,24 @@ export const apiModality: Modality = {
 
     // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
     const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
-    const fromKnowledge = await loadApiCreds(knowledgeDir, { scope: "api", endpoint: opts.baseUrl });
+    const fromKnowledge = await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl });
     const headers = { ...fromKnowledge, ...parseHeaderFlags(opts.header) };
+    if (base.basicAuth && !Object.keys(headers).some((h) => h.toLowerCase() === "authorization")) {
+      headers["Authorization"] = base.basicAuth;
+    }
+    const weak = tooShortSecrets(headers);
+    if (weak.length) {
+      ctx.err(`⚠ The secret in ${weak.join(", ")} is shorter than 4 characters and will NOT be masked in the output.\n`);
+    }
 
-    const runnerOpts: RunnerOptions = { baseUrl: opts.baseUrl, auth: { headers } };
-    ctx.err(`▸ Running ${cases.length} case(s) against ${opts.baseUrl}…\n`);
+    secrets.push(...collectSecrets(headers));
+    const adversarialNeedsMutations = adversarialStyles.some((s) => s === "psycho" || s === "hacker");
+    if (adversarialNeedsMutations && !opts.allowMutations) {
+      ctx.err("⚠ The psycho/hacker styles need --allow-mutations; their cases are listed but will not be sent.\n");
+    }
+    const guard = new RequestGuard({ allowMutations: opts.allowMutations, allowedMethods, allowedPaths, maxRequests, rps });
+    const runnerOpts: RunnerOptions = { baseUrl: base.baseUrl, auth: { headers }, guard, secrets };
+    ctx.err(`▸ Running ${cases.length} case(s) against ${base.baseUrl}…\n`);
     const results = await runApiCases(cases, runnerOpts);
     // API-6 (#136): spec-vs-tested coverage, overlaid with this run's pass/fail per operation.
     const coverage = computeApiCoverage(model, cases, results);
@@ -321,21 +389,27 @@ export const apiModality: Modality = {
     const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     await mkdir(outDir, { recursive: true });
     const evidencePath = join(outDir, "api-evidence.json");
-    await writeFile(evidencePath, JSON.stringify(results, jsonSafe, 2), "utf8");
+    // #196: nothing reaches disk with a secret in it, whatever field it ended up in.
+    const write = (path: string, text: string): Promise<void> => writeFile(path, maskSecrets(text, secrets), "utf8");
+    await write(evidencePath, JSON.stringify(results, jsonSafe, 2));
 
     // API-4 (#134): report.json/report.md in the same shape/location the run summary and the TUI's
     // past-run browser already read for web runs — no parallel reporting layer.
-    const passed = results.filter((r) => r.passed).length;
+    const sent = results.filter((r) => !wasNotSent(r));
+    const passed = sent.filter((r) => r.passed).length;
+    const guardrails = guard.report();
     const runId = basename(outDir);
-    await writeFile(
+    await write(
       join(outDir, "report.json"),
       JSON.stringify(
         {
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
-          url: opts.baseUrl,
+          url: base.baseUrl,
           mode: "api",
-          api: { passed, total: results.length, endpointCount: model.endpoints.length },
+          api: { passed, total: sent.length, endpointCount: model.endpoints.length },
+          // #196: what the guardrails did — executed / skipped by reason / blocked, budget used.
+          guardrails,
           // API-5 (#135): methodology-tagged cases (technique + rationale) — the Plune-record payload.
           // `expectedSchema` is dropped: it's a raw pointer into the (possibly cyclic, e.g. `Pet.friends:
           // Pet[]`) dereferenced spec schema, not serialisable — the case's own contract is enough here.
@@ -350,13 +424,12 @@ export const apiModality: Modality = {
         jsonSafe,
         2,
       ),
-      "utf8",
     );
-    await writeFile(
+    await write(
       join(outDir, "report.md"),
       renderApiReportMd({
         runId,
-        baseUrl: opts.baseUrl,
+        baseUrl: base.baseUrl,
         source,
         results,
         endpointCount: model.endpoints.length,
@@ -364,8 +437,8 @@ export const apiModality: Modality = {
         coverage,
         coverageGate,
         scenarios: scenarioResults,
+        guardrails,
       }),
-      "utf8",
     );
 
     // API-5 (#135): emit the same ATC artifact boundary web runs write (`testcases/<id>.md`) so Plune
@@ -375,20 +448,33 @@ export const apiModality: Modality = {
     const caseDocs = buildApiTestCaseDocs(cases, results, suite);
     const testCasesDir = join(outDir, "testcases");
     await mkdir(testCasesDir, { recursive: true });
-    for (const d of caseDocs.docs) await writeFile(join(testCasesDir, `${d.id}.md`), d.md, "utf8");
+    for (const d of caseDocs.docs) await write(join(testCasesDir, `${d.id}.md`), d.md);
 
     for (const line of renderApiRun(results)) ctx.out(`${line}\n`);
     for (const line of renderApiScenarioRun(scenarioResults)) ctx.out(`${line}\n`);
     for (const line of renderApiCoverage(coverage)) ctx.out(`${line}\n`);
+    for (const line of renderGuardrails(guardrails)) ctx.out(`${line}\n`);
     for (const line of renderRunSummary({
       runDir: outDir,
-      api: { passed, total: results.length, endpointCount: model.endpoints.length, evidencePath },
+      api: { passed, total: sent.length, endpointCount: model.endpoints.length, evidencePath },
     })) {
       ctx.out(`${line}\n`);
     }
     ctx.out(`  Cases (ATC .md): ${displayPath(testCasesDir)}/\n`);
     // Any failed assertion (per-operation case or scenario step) → non-zero exit.
-    if (results.some((r) => !r.passed) || scenarioResults.some((r) => !r.passed)) process.exitCode = 1;
+    if (sent.some((r) => !r.passed) || scenarioResults.some((r) => !r.passed && !r.skipped)) process.exitCode = 1;
+    // Exit-code order when several things went wrong: 1 (failed test) > 3 (coverage gate) > 4 (budget) > 5 (nothing sent).
     emitGate(coverageGate);
+    // #196: a spent request budget is its own outcome (cases were left unsent); a failed test keeps code 1.
+    if (guardrails.budgetExhausted && !process.exitCode) process.exitCode = BUDGET_EXIT_CODE;
+    // #196: guardrails that kept EVERY case off the wire leave nothing tested - never a green run.
+    const notSent = Object.values(guardrails.skipped).reduce((a, b) => a + (b ?? 0), 0) + guardrails.blocked.length;
+    if (guardrails.executed === 0 && notSent > 0) {
+      ctx.err(
+        `✗ No request was sent: all ${notSent} case(s) were skipped or blocked by the guardrails (see Guardrails above), so nothing was tested.
+`,
+      );
+      if (!process.exitCode) process.exitCode = NOTHING_SENT_EXIT_CODE;
+    }
   },
 };

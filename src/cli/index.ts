@@ -158,6 +158,11 @@ export function buildProgram(): Command {
       "#197: exit 3 when fewer than <percent>% (0-100) of spec operations are covered; lists the uncovered ones",
     )
     .option("--count-partial", "#197: with --min-coverage, count partially covered operations as covered")
+    .option("--allow-mutations", "#196: with --base-url, also send POST/PUT/PATCH/DELETE (and the psycho/hacker styles); off by default — GET/HEAD/OPTIONS only")
+    .option("--allowed-methods <list>", "#196: comma-separated methods that may be sent (e.g. GET,HEAD); the rest are skipped as 'not allowed'")
+    .option("--allowed-paths <list>", "#196: comma-separated spec-path masks that may be sent (e.g. /pets/*,/health; * = one segment, ** = any); the rest are skipped")
+    .option("--max-requests <n>", "#196: request budget for the run, retries included (default 300); exit code 4 when it runs out")
+    .option("--rps <n>", "#196: requests per second for the whole run (default 5)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
     });

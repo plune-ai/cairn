@@ -15,6 +15,15 @@
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import type { ApiCase } from "./cases.js";
+import {
+  METHOD_OVERRIDE_HEADER,
+  METHOD_OVERRIDE_PARAM,
+  SENSITIVE,
+  maskDeep,
+  maskSecrets,
+  type RequestGuard,
+  type SkipReason,
+} from "./guard.js";
 
 /** Minimal response shape we read — satisfied by the global `fetch` Response. */
 export interface ResponseLike {
@@ -41,6 +50,10 @@ export interface RunnerOptions {
   baseDelayMs?: number;
   /** Per-request timeout (ms); 0 disables it (default 30s). */
   timeoutMs?: number;
+  /** #196: shared request guardrails (mutations, allow-lists, budget, rate). Absent = no limits. */
+  guard: RequestGuard; // #196: required — no guard, no requests (mutations, allow-lists, budget, rate)
+  /** #196: secret values to scrub from everything the run records (evidence, errors, response bodies). */
+  secrets?: string[];
 }
 
 /** What we sent and got back for one case — the evidence the report (API-4) renders. */
@@ -62,10 +75,16 @@ export interface ApiCaseResult {
   error?: string;
   /** statusOk && schemaOk && no transport error. */
   passed: boolean;
+  /** #196: the guardrails kept this case off the wire — nothing was sent (not a test failure). */
+  skipped?: SkipReason;
+  /** #196: the request was refused before sending (it would have left the base host or path). */
+  blocked?: string;
+  /** #196: the target answered with a redirect; it was recorded, not followed. */
+  redirect?: { status: number; location?: string };
 }
 
-/** Header names whose values are secrets — masked in captured evidence so tokens never hit disk/logs. */
-const SENSITIVE = /authorization|cookie|api[-_]?key|token|secret|password/i;
+/** A case the guardrails did not send (skipped by policy or blocked) — neither passed nor failed. */
+export const wasNotSent = (r: ApiCaseResult): boolean => r.skipped !== undefined || r.blocked !== undefined;
 
 function redactHeaders(headers: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
@@ -93,27 +112,46 @@ export async function runApiCases(cases: ApiCase[], opts: RunnerOptions): Promis
   return results;
 }
 
-async function runOne(c: ApiCase, opts: RunnerOptions): Promise<ApiCaseResult> {
+async function runOne(input: ApiCase, opts: RunnerOptions): Promise<ApiCaseResult> {
   const doFetch = opts.fetch ?? (globalThis.fetch as unknown as FetchLike);
   const retries = opts.retries ?? 2;
   const baseDelayMs = opts.baseDelayMs ?? 300;
   const timeoutMs = opts.timeoutMs ?? 30_000;
 
-  const url = buildUrl(opts.baseUrl, c);
+  const guard = opts.guard;
+  const secrets = opts.secrets ?? [];
+  const mask = <T,>(v: T): T => maskDeep(v, secrets);
+
+  // Read-only run: a GET must not be turned into another method by an override header or `?_method=`,
+  // whatever supplied it (--header, knowledge creds, the spec's own parameters).
+  let stripped = 0;
+  const c = guard.allowsMutations ? input : withoutMethodOverride(input, () => (stripped += 1));
   const headers = buildHeaders(c, opts.auth);
+  if (!guard.allowsMutations) {
+    for (const k of Object.keys(headers)) {
+      if (METHOD_OVERRIDE_HEADER.test(k)) {
+        delete headers[k];
+        stripped += 1;
+      }
+    }
+  }
+  if (stripped) guard.recordStripped(stripped);
+  const built = buildUrl(opts.baseUrl, c);
+  const url = built.url;
   const hasBody = c.body !== undefined;
   const isMultipart = c.bodyMediaType === "multipart/form-data";
   const init: RequestInit = {
     method: c.method,
     headers,
+    redirect: "manual", // #196: a redirect is recorded, never followed (it could leave the pinned host)
     ...(hasBody ? { body: isMultipart ? toFormData(c.body) : JSON.stringify(c.body) } : {}),
   };
 
   const evidence: ApiCaseResult = {
     name: c.name,
     method: c.method,
-    url,
-    request: { headers: redactHeaders(headers), ...(hasBody ? { body: c.body } : {}) },
+    url: mask(url),
+    request: { headers: mask(redactHeaders(headers)), ...(hasBody ? { body: mask(c.body) } : {}) },
     attempts: 0,
     expectedStatus: c.expectedStatus,
     statusOk: false,
@@ -122,11 +160,29 @@ async function runOne(c: ApiCase, opts: RunnerOptions): Promise<ApiCaseResult> {
     passed: false,
   };
 
+  const skip = guard.check(c);
+  if (skip) {
+    guard.recordSkip(skip);
+    return { ...evidence, skipped: skip };
+  }
+  if (built.blocked) {
+    guard.recordBlocked(c.name, built.blocked);
+    return { ...evidence, blocked: built.blocked };
+  }
+
   // Tiered recovery ladder (#90): send → transient (throw or 429/5xx) with retries left → backoff + resend
   // the SAME request → else stop. A non-transient response (4xx, or a status mismatch) is a real result.
   let res: ResponseLike | undefined;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // #196: every attempt (retries included) takes one slot of the budget and waits for the rate limit.
+    if (!(await guard.acquire())) {
+      if (attempt === 0) {
+        guard.recordSkip("budget exhausted");
+        return { ...evidence, skipped: "budget exhausted" };
+      }
+      break; // budget ran out mid-retry — assert on what we already have
+    }
     evidence.attempts = attempt + 1;
     try {
       res = await withTimeout(doFetch, url, init, timeoutMs);
@@ -143,14 +199,25 @@ async function runOne(c: ApiCase, opts: RunnerOptions): Promise<ApiCaseResult> {
     }
   }
 
+  guard.recordExecuted();
   if (!res) {
-    evidence.error = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    evidence.error = mask(lastErr instanceof Error ? lastErr.message : String(lastErr));
     return evidence; // no response → not passed
   }
 
   const bodyText = await res.text();
   const json = parseJson(bodyText);
-  evidence.response = { status: res.status, bodyText, ...(json.ok ? { json: json.value } : {}) };
+  // Assertions below use the real body; what is recorded is masked, so a server that echoes a secret leaks nothing.
+  evidence.response = {
+    status: res.status,
+    bodyText: maskSecrets(bodyText, secrets),
+    ...(json.ok ? { json: mask(json.value) } : {}),
+  };
+  if (res.status >= 300 && res.status < 400) {
+    const location = res.headers.get("location") ?? undefined;
+    evidence.redirect = { status: res.status, ...(location ? { location: maskSecrets(location, secrets) } : {}) };
+    guard.recordRedirect(c.name, res.status, evidence.redirect.location);
+  }
 
   evidence.statusOk = statusMatches(c.expectedStatus, res.status);
 
@@ -198,18 +265,76 @@ function parseJson(text: string): { ok: true; value: unknown } | { ok: false; er
   }
 }
 
-/** Build the request URL: substitute `{path}` params, append `query` params, join onto the base URL. */
-function buildUrl(baseUrl: string, c: ApiCase): string {
+/** Copy of the case without override params/headers (`?_method=`, `X-HTTP-Method-Override`); `onStrip` is called per removal. */
+function withoutMethodOverride(c: ApiCase, onStrip: () => void): ApiCase {
+  const keep = (bucket: Record<string, unknown>, drop: RegExp): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(bucket)) {
+      if (drop.test(k)) onStrip();
+      else out[k] = v;
+    }
+    return out;
+  };
+  return { ...c, params: { ...c.params, query: keep(c.params.query, METHOD_OVERRIDE_PARAM), header: keep(c.params.header, METHOD_OVERRIDE_HEADER) } };
+}
+
+/** Decode a path-param value until it stops changing, so `%252e%252e` (any depth) is seen as `..`. */
+function fullyDecoded(v: string): string {
+  let cur = v;
+  for (let i = 0; i < 64; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(cur);
+    } catch {
+      return cur; // not decodable any further (a stray %): what is left is what a server would see
+    }
+    if (next === cur) return cur;
+    cur = next;
+  }
+  return ".."; // still changing after 64 rounds — treat an endless encoding as hostile
+}
+
+/** A value that would act as a `.`/`..` path segment once a server or proxy decodes and normalises it. */
+function hasDotSegment(v: string): boolean {
+  return fullyDecoded(v)
+    .split(/[\\/]/)
+    .some((seg) => seg === "." || seg === "..");
+}
+
+/**
+ * Build the request URL: substitute `{path}` params, append `query` params, join onto the base URL.
+ * #196: the URL is always `baseUrl` + the spec path — never a `servers` entry — and a request that
+ * would leave the base host or base path (a dot-segment path-param value, or anything that parses to
+ * a different origin) is refused (`blocked`) instead of sent. Payloads inside param values stay legal.
+ */
+function buildUrl(baseUrl: string, c: ApiCase): { url: string; blocked?: string } {
   let path = c.path;
+  let traversal = false;
   for (const [k, v] of Object.entries(c.params.path)) {
-    path = path.replace(`{${k}}`, encodeURIComponent(String(v)));
+    if (!c.path.includes(`{${k}}`)) continue; // only a parameter that is really in the path can climb it
+    const value = String(v);
+    if (hasDotSegment(value)) traversal = true;
+    path = path.replace(`{${k}}`, encodeURIComponent(value));
   }
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(c.params.query)) qs.append(k, String(v));
   const query = qs.toString();
   const base = baseUrl.replace(/\/+$/, "");
   const sep = path.startsWith("/") ? "" : "/";
-  return `${base}${sep}${path}${query ? `?${query}` : ""}`;
+  const url = `${base}${sep}${path}${query ? `?${query}` : ""}`;
+  if (traversal) return { url, blocked: "path parameter contains a dot-segment (..) that would leave the base path" };
+  try {
+    const target = new URL(url);
+    const root = new URL(base);
+    const basePath = root.pathname.replace(/\/+$/, "");
+    if (target.origin !== root.origin) return { url, blocked: `request would leave the base host (${root.origin})` };
+    if (target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) {
+      return { url, blocked: `request would leave the base path (${basePath || "/"})` };
+    }
+  } catch {
+    return { url, blocked: "request URL is not valid" };
+  }
+  return { url };
 }
 
 /**
