@@ -22,7 +22,15 @@ import { runApiCases, type ApiCaseResult, type RunnerOptions } from "../../api/r
 import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
 import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
-import { computeApiCoverage, type ApiCoverageReport } from "../../api/coverage.js";
+import {
+  computeApiCoverage,
+  evaluateCoverageGate,
+  renderCoverageGate,
+  parseMinCoverage,
+  COVERAGE_GATE_EXIT_CODE,
+  type ApiCoverageReport,
+  type CoverageGateResult,
+} from "../../api/coverage.js";
 import { loadApiCreds } from "../../knowledge/index.js";
 import { defaultRunsBaseDir } from "../../fs/run-dir.js";
 import { ARTIFACT_SCHEMA_VERSION, stableCaseId } from "../../artifacts/contract.js";
@@ -48,6 +56,10 @@ interface ApiFlags {
   /** BORROW-07 (#95): also generate/run adversarial-style cases. `true` (bare flag) = all four
    * styles; a comma-separated string picks specific ones. */
   adversarial?: boolean | string;
+  /** #197: fail (exit 3) when the share of covered operations is below this percentage (0..100). */
+  minCoverage?: string;
+  /** #197: with --min-coverage, count `partial` operations as covered. */
+  countPartial?: boolean;
 }
 
 /**
@@ -231,6 +243,19 @@ export const apiModality: Modality = {
       // commander enforces requiredOption in the CLI; this guards programmatic/test callers.
       throw new Error("`cairn api` requires --spec <path|url> (an OpenAPI 3.x JSON/YAML spec).");
     }
+    // Validate before any work: a bad threshold must not look like a passing run.
+    const minCoverage = opts.minCoverage === undefined ? undefined : parseMinCoverage(opts.minCoverage);
+    if (opts.countPartial && minCoverage === undefined) {
+      ctx.err("⚠ --count-partial has no effect without --min-coverage.\n");
+    }
+    const evalGate = (coverage: ApiCoverageReport): CoverageGateResult | undefined =>
+      minCoverage === undefined ? undefined : evaluateCoverageGate(coverage, minCoverage, Boolean(opts.countPartial));
+    const emitGate = (gate: CoverageGateResult | undefined): void => {
+      if (!gate) return;
+      for (const line of renderCoverageGate(gate)) ctx.out(`${line}\n`);
+      // A failed test (exit 1) is reported first; the gate only sets its own code when nothing else did.
+      if (!gate.passed && !process.exitCode) process.exitCode = COVERAGE_GATE_EXIT_CODE;
+    };
     const source = isUrl(spec) ? spec : resolve(spec);
     ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
     let model: ApiModel;
@@ -271,7 +296,9 @@ export const apiModality: Modality = {
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
     if (!opts.baseUrl) {
       // API-6 (#136): coverage is meaningful even without a run — it's spec-vs-generated-cases.
-      for (const line of renderApiCoverage(computeApiCoverage(model, cases))) ctx.out(`${line}\n`);
+      const casesOnly = computeApiCoverage(model, cases);
+      for (const line of renderApiCoverage(casesOnly)) ctx.out(`${line}\n`);
+      emitGate(evalGate(casesOnly));
       ctx.out("Note: cases only. Pass --base-url <url> to execute them and assert responses (API-3).\n");
       return;
     }
@@ -286,6 +313,7 @@ export const apiModality: Modality = {
     const results = await runApiCases(cases, runnerOpts);
     // API-6 (#136): spec-vs-tested coverage, overlaid with this run's pass/fail per operation.
     const coverage = computeApiCoverage(model, cases, results);
+    const coverageGate = evalGate(coverage); // evaluated before the report files so they carry the verdict
 
     // API-9 (#146): scenario chains run after the per-operation cases — independent of them.
     const scenarioResults = scenarios.length ? await runApiScenarios(scenarios, runnerOpts) : [];
@@ -314,6 +342,7 @@ export const apiModality: Modality = {
           cases: cases.map((c) => omitExpectedSchema(c)),
           // API-6 (#136): spec-vs-tested coverage (playswag-style) — which operations/statuses are gaps.
           coverage,
+          ...(coverageGate ? { coverageGate } : {}),
           // API-9 (#146): per-scenario pass/fail alongside the per-operation results — opt-in, so the
           // key is only present when --scenarios generated something to report.
           ...(scenarioResults.length ? { scenarios: scenarioResults } : {}),
@@ -333,6 +362,7 @@ export const apiModality: Modality = {
         endpointCount: model.endpoints.length,
         evidencePath,
         coverage,
+        coverageGate,
         scenarios: scenarioResults,
       }),
       "utf8",
@@ -359,5 +389,6 @@ export const apiModality: Modality = {
     ctx.out(`  Cases (ATC .md): ${displayPath(testCasesDir)}/\n`);
     // Any failed assertion (per-operation case or scenario step) → non-zero exit.
     if (results.some((r) => !r.passed) || scenarioResults.some((r) => !r.passed)) process.exitCode = 1;
+    emitGate(coverageGate);
   },
 };

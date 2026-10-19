@@ -50,7 +50,7 @@ jobs:
 
 | Input            | Default                          | Description |
 | ---------------- | -------------------------------- | ----------- |
-| `url`            | — (**required**)                 | Page URL to generate tests for. |
+| `url`            | — (**required** unless `api-spec` is set) | Page URL to generate tests for. |
 | `mode`           | `explore`                        | `explore` (cases + code) or `design` (cases only). A follow-up PR needs `explore`. |
 | `session`        | —                                | Saved session name for authenticated targets. |
 | `checklist`      | —                                | Path to a checklist file that steers what to test. |
@@ -67,8 +67,34 @@ jobs:
 | `commit-message` | `test: update generated …`       | Commit message for the follow-up PR. |
 | `pr-title`       | (commit message)                 | Title for the follow-up PR. |
 | `github-token`   | `${{ github.token }}`            | Token for commenting / opening the follow-up PR. |
+| `api-spec`       | —                                | OpenAPI 3.x spec (path or URL). When set, runs `cairn api --spec` after the UI step; `url` may then be omitted for an API-only job. |
+| `min-coverage`   | —                                | Minimum share (0-100) of spec operations that must be covered; below it the step fails with exit code `3`. Needs `api-spec`. |
+| `count-partial`  | `false`                          | Count partially covered operations as covered for `min-coverage`. |
 | `cairn-version`  | `latest`                         | npm version/tag of `@plune-ai/cairn` to install. |
 | `install-browsers` | `true`                         | Install Playwright Chromium before running. |
+
+## Coverage gate
+
+Fail the job when too little of the OpenAPI spec is covered by the generated cases:
+
+```yaml
+- uses: plune-ai/cairn/action@v1
+  with:
+    api-spec: openapi.yaml
+    min-coverage: 80        # percent of operations that must be `covered`
+    count-partial: false    # true: operations covered only in part count too
+```
+
+The step runs `cairn api --spec openapi.yaml --min-coverage 80` and prints `n / N`, the percentage and the
+operations that are not counted in the log: the uncovered ones and, without `count-partial`, the partially covered
+ones. Below the threshold it exits with `3` (`1` is a failed test or a bad value). A spec with no operations passes at 100%.
+
+Notes:
+- The API step runs the cases-only path: it takes the spec and generated cases, with no `--base-url` and no headers, so
+  nothing is sent to your API. Coverage is spec versus generated cases.
+- It runs after the UI step; if the UI step fails, the API step is skipped. To get both verdicts regardless, use two
+  separate action steps (or jobs): one with `url`, one with `api-spec`.
+- `min-coverage` or `count-partial: true` without `api-spec` fails the job early, so a typo cannot silently disable the gate.
 
 ## Required secrets (set by a repo admin — the action does **not** set these)
 

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { ingestOpenApi, type ApiModel, type ApiEndpoint } from "../../src/api/openapi.js";
 import { generateApiCases, type ApiCase } from "../../src/api/cases.js";
-import { computeApiCoverage } from "../../src/api/coverage.js";
+import { computeApiCoverage, evaluateCoverageGate, parseMinCoverage, renderCoverageGate } from "../../src/api/coverage.js";
 import type { ApiCaseResult } from "../../src/api/runner.js";
 
 /**
@@ -146,5 +146,68 @@ describe("computeApiCoverage — result overlay (g)", () => {
     const r = computeApiCoverage(m, [], [result({ name: "other" })]);
     expect(r.endpoints[0]?.status).toBe("uncovered");
     expect(r.endpoints[0]?.passed).toBeUndefined();
+  });
+});
+
+describe("--min-coverage gate (#197)", () => {
+  // 2 covered (/p0,/p1), 1 partial (/p2: 200+404 declared, 200 tested), 1 uncovered (/p3: no case).
+  const report = () => {
+    const full = model(
+      endpoint({ path: "/p0" }),
+      endpoint({ path: "/p1" }),
+      endpoint({ path: "/p2", responses: [{ status: "200" }, { status: "404" }] }),
+      endpoint({ path: "/p3" }),
+    );
+    const tested = model(endpoint({ path: "/p0" }), endpoint({ path: "/p1" }), endpoint({ path: "/p2" }));
+    return computeApiCoverage(full, generateApiCases(tested));
+  };
+
+  it("79.9% fails a threshold of 80, 80% passes", () => {
+    const r = (counted: number) => ({
+      endpointCount: 1000, coveredCount: counted, partialCount: 0, uncoveredCount: 1000 - counted, ratio: counted / 1000, endpoints: [],
+    });
+    expect(evaluateCoverageGate(r(799), 80).passed).toBe(false);
+    expect(evaluateCoverageGate(r(800), 80).passed).toBe(true);
+  });
+
+  it("partial counts only with countPartial and uncovered ones are listed", () => {
+    const r = report();
+    expect(r.partialCount).toBe(1);
+    expect(r.uncoveredCount).toBe(1);
+    const strict = evaluateCoverageGate(r, 75);
+    expect(strict).toMatchObject({ counted: 2, total: 4, percent: 50, passed: false });
+    expect(strict.missing.map((e) => e.status)).toEqual(["partial", "uncovered"]);
+    const lenient = evaluateCoverageGate(r, 75, true);
+    expect(lenient).toMatchObject({ counted: 3, percent: 75, passed: true });
+    expect(lenient.missing.map((e) => e.status)).toEqual(["uncovered"]);
+  });
+
+  it("a spec without operations passes", () => {
+    expect(evaluateCoverageGate(computeApiCoverage(model(), []), 100).passed).toBe(true);
+  });
+
+  it("a fractional threshold is met by its exact fraction (79.9 with 799 / 1000)", () => {
+    const r = { endpointCount: 1000, coveredCount: 799, partialCount: 0, uncoveredCount: 201, ratio: 0.799, endpoints: [] };
+    expect(evaluateCoverageGate(r, 79.9).passed).toBe(true);
+    expect(evaluateCoverageGate({ ...r, coveredCount: 798 }, 79.9).passed).toBe(false);
+  });
+
+  it("never rounds a failing 79.96% up to 80% in the line it prints", () => {
+    const r = { endpointCount: 10000, coveredCount: 7996, partialCount: 0, uncoveredCount: 2004, ratio: 0.7996, endpoints: [] };
+    const text = renderCoverageGate(evaluateCoverageGate(r, 80)).join("\n");
+    expect(text).toContain("FAILED");
+    expect(text).toContain("= 79.9% (min 80%)");
+  });
+
+  it.each(["1e2", "+5", ".5", "0x10", " "])("rejects the odd form %j", (v) => {
+    expect(() => parseMinCoverage(v)).toThrow(/--min-coverage must be a number/);
+  });
+
+  it.each(["abc", "", "-1", "100.1", "NaN", "Infinity"])("rejects %j with a clear message", (v) => {
+    expect(() => parseMinCoverage(v)).toThrow(/--min-coverage must be a number from 0 to 100/);
+  });
+
+  it("accepts 0, 80, 99.5 and 100%", () => {
+    expect([0, "80", "99.5", "100%"].map(parseMinCoverage)).toEqual([0, 80, 99.5, 100]);
   });
 });

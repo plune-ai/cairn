@@ -7,7 +7,7 @@ import type { Score } from "../eval/scorers.js";
 import { METRIC_LEGEND, dirGlyph } from "../eval/legend.js";
 import type { CostReport } from "../llm/cost.js";
 import type { ApiCaseResult } from "../api/runner.js";
-import type { ApiCoverageReport } from "../api/coverage.js";
+import { renderCoverageGate, type ApiCoverageReport, type CoverageGateResult } from "../api/coverage.js";
 import type { ApiScenarioResult } from "../api/scenario-runner.js";
 import type { DeciderSummary } from "../decider/types.js";
 import type { TriageResult } from "../decider/uses/repair-triage.js";
@@ -238,6 +238,8 @@ export interface ApiReportInput {
   evidencePath: string;
   /** API-6 (#136): spec-vs-tested coverage (playswag-style) — rendered as a gaps section when present. */
   coverage?: ApiCoverageReport;
+  /** #197: the `--min-coverage` verdict, when the flag was given. */
+  coverageGate?: CoverageGateResult;
   /** API-9 (#146): multi-endpoint scenario chains — rendered as a section only when non-empty. */
   scenarios?: ApiScenarioResult[];
 }
@@ -292,6 +294,10 @@ export function renderApiReportMd(r: ApiReportInput): string {
       }
       lines.push("");
     }
+  }
+  // #197: the --min-coverage verdict with n / N, the percentage and the operations that are not counted.
+  if (r.coverageGate) {
+    lines.push(...renderCoverageGate(r.coverageGate).map((l) => (l.startsWith("=== ") ? `## ${l.slice(4, -4)}` : l)), "");
   }
   return lines.join("\n");
 }

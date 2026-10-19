@@ -119,3 +119,74 @@ function endpointCoverage(
     ...(passed !== undefined ? { passed } : {}),
   };
 }
+
+/** Process exit code when `--min-coverage` is not reached (1 stays "a test failed / bad input"). */
+export const COVERAGE_GATE_EXIT_CODE = 3;
+
+export interface CoverageGateResult {
+  passed: boolean;
+  /** Operations counted as covered (`covered`, plus `partial` with `--count-partial`). */
+  counted: number;
+  total: number;
+  /** counted / total as a percentage (100 when the spec has no operations). */
+  percent: number;
+  threshold: number;
+  countPartial: boolean;
+  /** Operations that are not counted, in the model's order — the reason for a failed gate. */
+  missing: ApiEndpointCoverage[];
+}
+
+/**
+ * Parse the `--min-coverage` value: a number from 0 to 100 (a trailing `%` is tolerated). Anything
+ * else throws a message that names the flag and the value, so a typo cannot silently disable the gate.
+ */
+export function parseMinCoverage(raw: unknown): number {
+  const text = typeof raw === "string" ? raw.trim() : raw;
+  // Strings: plain decimal digits with an optional trailing % (no signs, exponents, hex, "Infinity").
+  const n =
+    typeof text === "number" ? text : typeof text === "string" && /^\d+(\.\d+)?%?$/.test(text) ? Number(text.replace(/%$/, "")) : Number.NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    throw new Error(`--min-coverage must be a number from 0 to 100 (got "${String(raw)}").`);
+  }
+  return n;
+}
+
+/** Compare the share of covered operations (optionally + partial) with the threshold. Pure. */
+export function evaluateCoverageGate(
+  report: ApiCoverageReport,
+  threshold: number,
+  countPartial = false,
+): CoverageGateResult {
+  const counted = report.coveredCount + (countPartial ? report.partialCount : 0);
+  const total = report.endpointCount;
+  // Compare on 1e-6 integers so a fractional threshold (79.9) meets its exact fraction (799 / 1000).
+  const passed = total === 0 || Math.round(((counted * 100) / total) * 1e6) >= Math.round(threshold * 1e6);
+  return {
+    passed,
+    counted,
+    total,
+    percent: total === 0 ? 100 : (counted * 100) / total,
+    threshold,
+    countPartial,
+    missing: report.endpoints.filter((e) => e.status === "uncovered" || (e.status === "partial" && !countPartial)),
+  };
+}
+
+/** Floor to one decimal, so 79.96% is never shown as "80%" next to a threshold of 80. */
+const shownPercent = (p: number): string => `${Math.floor(p * 10 + 1e-9) / 10}%`;
+
+/** Render the `--min-coverage` verdict: "n / N", the percentage, and the operations that are not counted. */
+export function renderCoverageGate(g: CoverageGateResult): string[] {
+  const counted = g.countPartial ? "covered + partial" : "covered";
+  const lines = [
+    "",
+    `=== Coverage gate: ${g.passed ? "passed" : "FAILED"} — ${g.counted} / ${g.total} operation(s) ${counted} = ${shownPercent(g.percent)} (min ${g.threshold}%) ===`,
+  ];
+  if (!g.passed) {
+    for (const e of g.missing) {
+      const op = e.operationId ? ` (${e.operationId})` : "";
+      lines.push(`  ✗ ${e.status.padEnd(9)} ${e.method.padEnd(6)} ${e.path}${op}`);
+    }
+  }
+  return lines;
+}
