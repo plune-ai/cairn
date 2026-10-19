@@ -22,7 +22,14 @@ import { runApiCases, type ApiCaseResult, type RunnerOptions } from "../../api/r
 import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
 import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
-import { computeApiCoverage, type ApiCoverageReport } from "../../api/coverage.js";
+import {
+  computeApiCoverage,
+  evaluateCoverageGate,
+  parseMinCoverage,
+  COVERAGE_GATE_EXIT_CODE,
+  type ApiCoverageReport,
+  type CoverageGateResult,
+} from "../../api/coverage.js";
 import { loadApiCreds } from "../../knowledge/index.js";
 import { defaultRunsBaseDir } from "../../fs/run-dir.js";
 import { ARTIFACT_SCHEMA_VERSION, stableCaseId } from "../../artifacts/contract.js";
@@ -48,6 +55,10 @@ interface ApiFlags {
   /** BORROW-07 (#95): also generate/run adversarial-style cases. `true` (bare flag) = all four
    * styles; a comma-separated string picks specific ones. */
   adversarial?: boolean | string;
+  /** #197: fail (exit 3) when the share of covered operations is below this percentage (0..100). */
+  minCoverage?: string;
+  /** #197: with --min-coverage, count `partial` operations as covered. */
+  countPartial?: boolean;
 }
 
 /**
@@ -220,6 +231,23 @@ export function renderApiCoverage(coverage: ApiCoverageReport): string[] {
   return lines;
 }
 
+/** Render the `--min-coverage` verdict: "n / N", the percentage, and the operations that are not counted. */
+export function renderCoverageGate(g: CoverageGateResult): string[] {
+  const pct = `${Math.round(g.percent * 10) / 10}%`;
+  const counted = g.countPartial ? "covered + partial" : "covered";
+  const lines = [
+    "",
+    `=== Coverage gate: ${g.passed ? "passed" : "FAILED"} — ${g.counted} / ${g.total} operation(s) ${counted} = ${pct} (min ${g.threshold}%) ===`,
+  ];
+  if (!g.passed) {
+    for (const e of g.missing) {
+      const op = e.operationId ? ` (${e.operationId})` : "";
+      lines.push(`  ✗ ${e.status.padEnd(9)} ${e.method.padEnd(6)} ${e.path}${op}`);
+    }
+  }
+  return lines;
+}
+
 export const apiModality: Modality = {
   name: "api",
   gated: false,
@@ -231,6 +259,16 @@ export const apiModality: Modality = {
       // commander enforces requiredOption in the CLI; this guards programmatic/test callers.
       throw new Error("`cairn api` requires --spec <path|url> (an OpenAPI 3.x JSON/YAML spec).");
     }
+    // Validate before any work: a bad threshold must not look like a passing run.
+    const minCoverage = opts.minCoverage === undefined ? undefined : parseMinCoverage(opts.minCoverage);
+    const gateCoverage = (coverage: ApiCoverageReport): void => {
+      if (minCoverage === undefined) return;
+      const gate = evaluateCoverageGate(coverage, minCoverage, Boolean(opts.countPartial));
+      for (const line of renderCoverageGate(gate)) ctx.out(`${line}
+`);
+      // A failed test (exit 1) is reported first; the gate only sets its own code when nothing else did.
+      if (!gate.passed && !process.exitCode) process.exitCode = COVERAGE_GATE_EXIT_CODE;
+    };
     const source = isUrl(spec) ? spec : resolve(spec);
     ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
     let model: ApiModel;
@@ -271,7 +309,10 @@ export const apiModality: Modality = {
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
     if (!opts.baseUrl) {
       // API-6 (#136): coverage is meaningful even without a run — it's spec-vs-generated-cases.
-      for (const line of renderApiCoverage(computeApiCoverage(model, cases))) ctx.out(`${line}\n`);
+      const casesOnly = computeApiCoverage(model, cases);
+      for (const line of renderApiCoverage(casesOnly)) ctx.out(`${line}
+`);
+      gateCoverage(casesOnly);
       ctx.out("Note: cases only. Pass --base-url <url> to execute them and assert responses (API-3).\n");
       return;
     }
@@ -359,5 +400,6 @@ export const apiModality: Modality = {
     ctx.out(`  Cases (ATC .md): ${displayPath(testCasesDir)}/\n`);
     // Any failed assertion (per-operation case or scenario step) → non-zero exit.
     if (results.some((r) => !r.passed) || scenarioResults.some((r) => !r.passed)) process.exitCode = 1;
+    gateCoverage(coverage);
   },
 };

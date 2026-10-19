@@ -119,3 +119,53 @@ function endpointCoverage(
     ...(passed !== undefined ? { passed } : {}),
   };
 }
+
+/** Process exit code when `--min-coverage` is not reached (1 stays "a test failed / bad input"). */
+export const COVERAGE_GATE_EXIT_CODE = 3;
+
+export interface CoverageGateResult {
+  passed: boolean;
+  /** Operations counted as covered (`covered`, plus `partial` with `--count-partial`). */
+  counted: number;
+  total: number;
+  /** counted / total as a percentage (100 when the spec has no operations). */
+  percent: number;
+  threshold: number;
+  countPartial: boolean;
+  /** Operations that are not counted, in the model's order — the reason for a failed gate. */
+  missing: ApiEndpointCoverage[];
+}
+
+/**
+ * Parse the `--min-coverage` value: a number from 0 to 100 (a trailing `%` is tolerated). Anything
+ * else throws a message that names the flag and the value, so a typo cannot silently disable the gate.
+ */
+export function parseMinCoverage(raw: unknown): number {
+  const text = typeof raw === "string" ? raw.trim().replace(/%$/, "") : raw;
+  const n = typeof text === "number" ? text : text === "" ? Number.NaN : Number(text);
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    throw new Error(`--min-coverage must be a number from 0 to 100 (got "${String(raw)}").`);
+  }
+  return n;
+}
+
+/** Compare the share of covered operations (optionally + partial) with the threshold. Pure. */
+export function evaluateCoverageGate(
+  report: ApiCoverageReport,
+  threshold: number,
+  countPartial = false,
+): CoverageGateResult {
+  const counted = report.coveredCount + (countPartial ? report.partialCount : 0);
+  const total = report.endpointCount;
+  // Integer-style comparison avoids float drift at the boundary (80 / 100 vs 79.9 / 100).
+  const passed = total === 0 || counted * 100 >= threshold * total;
+  return {
+    passed,
+    counted,
+    total,
+    percent: total === 0 ? 100 : (counted * 100) / total,
+    threshold,
+    countPartial,
+    missing: report.endpoints.filter((e) => e.status === "uncovered" || (e.status === "partial" && !countPartial)),
+  };
+}

@@ -153,6 +153,11 @@ export function buildProgram(): Command {
       "--adversarial [styles]",
       "BORROW-07: also generate/run adversarial-style cases — normal,curious,psycho,hacker (bare flag = all four; comma-separated to pick specific styles)",
     )
+    .option(
+      "--min-coverage <percent>",
+      "#197: exit 3 when fewer than <percent>% (0-100) of spec operations are covered; lists the uncovered ones",
+    )
+    .option("--count-partial", "#197: with --min-coverage, count partially covered operations as covered")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
     });

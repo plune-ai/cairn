@@ -338,3 +338,43 @@ describe("cairn api source resolution (mocked ingest)", () => {
     expect(ingestOpenApi).toHaveBeenLastCalledWith(resolve("./spec.json"));
   });
 });
+
+describe("cairn api --min-coverage (#197)", () => {
+  const run = async (...extra: string[]) => {
+    const { buildProgram } = await import("../../src/cli/index.js");
+    await buildProgram().parseAsync(["node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"), ...extra]);
+  };
+
+  it("petstore is 3 / 4 covered (75%): --min-coverage 80 exits 3 and lists the gaps", async () => {
+    await run("--min-coverage", "80");
+    const out = outChunks.join("");
+    expect(out).toContain("Coverage gate: FAILED — 3 / 4 operation(s) covered = 75% (min 80%)");
+    expect(out).toMatch(/✗ partial\s+GET\s+\/pets\/\{id\} \(getPet\)/);
+    expect(process.exitCode).toBe(3);
+  });
+
+  it("--min-coverage 75 passes", async () => {
+    await run("--min-coverage", "75");
+    expect(outChunks.join("")).toContain("Coverage gate: passed — 3 / 4");
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("--count-partial adds the partial operation (4 / 4 = 100%)", async () => {
+    await run("--min-coverage", "100", "--count-partial");
+    expect(outChunks.join("")).toContain("4 / 4 operation(s) covered + partial = 100%");
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+
+  it("rejects a value outside 0..100 or not a number before any work", async () => {
+    for (const bad of ["101", "abc"]) {
+      await expect(run("--min-coverage", bad)).rejects.toThrow(/--min-coverage must be a number from 0 to 100/);
+    }
+    expect(outChunks.join("")).not.toContain("API spec:");
+  });
+
+  it("without the flag no gate line is printed", async () => {
+    await run();
+    expect(outChunks.join("")).not.toContain("Coverage gate");
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+});
