@@ -35,9 +35,12 @@ observe→design→code→validation→repair (keep-best)→Pilot verdict — a 
 
 ## 5. `automate` on an API run (API-7, #144)
 ```
-cairn api --spec ./openapi.yaml --base-url https://api.example.com --out runs/api-1
+cairn api --spec ./openapi.yaml --base-url https://staging.example.com --allow-mutations --out runs/api-1
 cairn automate --run runs/api-1
 ```
+(`--allow-mutations` because without it the POST/PUT/PATCH/DELETE cases are not executed and show as "Not run";
+use a disposable environment, never production.)
+
 `automate` detects an API run from `report.json`'s `mode: "api"` (written by `cairn api --base-url`,
 API-4) and generates `runs/api-1/tests/api.spec.ts` from the ATC cases (API-5) instead — one
 `@playwright/test` `test()` per case using the `request` fixture, asserting the declared success

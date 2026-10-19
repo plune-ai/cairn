@@ -26,7 +26,7 @@ export function buildApiTestCaseDocs(
   const docs = cases.map((c, i) => {
     const id = `ATC-${suite}-${String(i + 1).padStart(3, "0")}`;
     const result = resultByName.get(c.name);
-    const status = !result ? "❌ Not run" : result.passed ? "✅ Passed" : "❌ Failed";
+    const status = !result || result.skipped || result.blocked ? "❌ Not run" : result.passed ? "✅ Passed" : "❌ Failed";
     return { id, md: renderApiTestCaseMd(c, { id, suite, status }) };
   });
   return { docs };

@@ -1,3 +1,6 @@
+import { RequestGuard } from "../../src/api/guard.js";
+/** Open guard for runner tests that are not about the guardrails: mutations on, no waiting. */
+const openGuard = (): RequestGuard => new RequestGuard({ allowMutations: true, sleep: async () => undefined });
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -47,7 +50,7 @@ describe("runApiCases — execution + status assertion (a)", () => {
   it("substitutes path/query params, sends the request, and asserts the declared status", async () => {
     const { fetch, calls } = fakeFetch([res(200, { id: "7" })]);
     const c = caseOf({ params: { path: { id: "7" }, query: { detail: "full" }, header: {}, cookie: {} } });
-    const [r] = await runApiCases([c], { baseUrl: "https://api.test/v1/", fetch });
+    const [r] = await runApiCases([c], { baseUrl: "https://api.test/v1/", guard: openGuard(), fetch });
 
     expect(calls[0]!.url).toBe("https://api.test/v1/pets/7?detail=full");
     expect(calls[0]!.init.method).toBe("GET");
@@ -58,7 +61,7 @@ describe("runApiCases — execution + status assertion (a)", () => {
 
   it("fails the status assertion when the code does not match", async () => {
     const { fetch } = fakeFetch([res(404, { error: "nope" })]);
-    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(r!.statusOk).toBe(false);
     expect(r!.passed).toBe(false);
     expect(r!.attempts).toBe(1); // 4xx is NOT transient — no retry
@@ -67,7 +70,7 @@ describe("runApiCases — execution + status assertion (a)", () => {
   it("sends a JSON body with a content-type for body cases", async () => {
     const { fetch, calls } = fakeFetch([res(201, { id: "x" })]);
     const c = caseOf({ method: "POST", path: "/pets", expectedStatus: "201", body: { name: "Rex" }, params: { path: {}, query: {}, header: {}, cookie: {} } });
-    await runApiCases([c], { baseUrl: "https://api.test", fetch });
+    await runApiCases([c], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(calls[0]!.init.body).toBe(JSON.stringify({ name: "Rex" }));
     expect((calls[0]!.init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
   });
@@ -84,7 +87,7 @@ describe("multipart/form-data encoding (API-10, #150)", () => {
       body: { file: Buffer.from("hello"), description: "a file" },
       params: { path: {}, query: {}, header: {}, cookie: {} },
     });
-    const [r] = await runApiCases([c], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([c], { baseUrl: "https://api.test", guard: openGuard(), fetch });
 
     const sentBody = calls[0]!.init.body as FormData;
     expect(sentBody).toBeInstanceOf(FormData);
@@ -101,7 +104,7 @@ describe("multipart/form-data encoding (API-10, #150)", () => {
   it("still JSON-encodes a case with no bodyMediaType (default, unchanged behaviour)", async () => {
     const { fetch, calls } = fakeFetch([res(201, { id: "x" })]);
     const c = caseOf({ method: "POST", path: "/pets", expectedStatus: "201", body: { name: "Rex" }, params: { path: {}, query: {}, header: {}, cookie: {} } });
-    await runApiCases([c], { baseUrl: "https://api.test", fetch });
+    await runApiCases([c], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(calls[0]!.init.body).toBe(JSON.stringify({ name: "Rex" }));
     expect((calls[0]!.init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
   });
@@ -112,7 +115,7 @@ describe("multipart/form-data encoding (API-10, #150)", () => {
     expect(c!.bodyMediaType).toBe("multipart/form-data");
 
     const { fetch, calls } = fakeFetch([res(201, { id: "f2" })]);
-    const [r] = await runApiCases([c!], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([c!], { baseUrl: "https://api.test", guard: openGuard(), fetch });
 
     const sentBody = calls[0]!.init.body as FormData;
     const filePart = sentBody.get("file") as File;
@@ -127,14 +130,14 @@ describe("response-schema conformance (b)", () => {
 
   it("passes when the body conforms to the declared success schema", async () => {
     const { fetch } = fakeFetch([res(200, { id: "7", name: "Rex" })]);
-    const [r] = await runApiCases([caseOf({ expectedSchema: schema })], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([caseOf({ expectedSchema: schema })], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(r!.schemaOk).toBe(true);
     expect(r!.passed).toBe(true);
   });
 
   it("fails (with errors) when a required field is missing or mistyped", async () => {
     const { fetch } = fakeFetch([res(200, { id: 7 })]);
-    const [r] = await runApiCases([caseOf({ expectedSchema: schema })], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([caseOf({ expectedSchema: schema })], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(r!.schemaOk).toBe(false);
     expect(r!.schemaErrors).toEqual(
       expect.arrayContaining([expect.stringContaining("name: required property missing"), expect.stringContaining("expected string, got number")]),
@@ -144,7 +147,7 @@ describe("response-schema conformance (b)", () => {
 
   it("flags a non-JSON body when a schema is expected", async () => {
     const { fetch } = fakeFetch([res(200, "<html>not json</html>")]);
-    const [r] = await runApiCases([caseOf({ expectedSchema: schema })], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([caseOf({ expectedSchema: schema })], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(r!.schemaOk).toBe(false);
     expect(r!.schemaErrors[0]).toMatch(/not valid JSON/);
   });
@@ -196,7 +199,7 @@ describe("response-schema conformance (b)", () => {
 describe("auth / headers application (c)", () => {
   it("applies configured auth headers to every request", async () => {
     const { fetch, calls } = fakeFetch([res(200, {})]);
-    await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, auth: { headers: { Authorization: "Bearer t0ken", "X-Api-Key": "k" } } });
+    await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch, auth: { headers: { Authorization: "Bearer t0ken", "X-Api-Key": "k" } } });
     const sent = calls[0]!.init.headers as Record<string, string>;
     expect(sent["Authorization"]).toBe("Bearer t0ken");
     expect(sent["X-Api-Key"]).toBe("k");
@@ -204,7 +207,7 @@ describe("auth / headers application (c)", () => {
 
   it("redacts sensitive headers in captured evidence (no secrets on disk/logs)", async () => {
     const { fetch } = fakeFetch([res(200, {})]);
-    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, auth: { headers: { Authorization: "Bearer secret" } } });
+    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch, auth: { headers: { Authorization: "Bearer secret" } } });
     expect(r!.request.headers["Authorization"]).toBe("***");
   });
 });
@@ -213,7 +216,7 @@ describe("auth stripping (BORROW-07, #95 hacker style)", () => {
   it("omits configured auth headers entirely when the case sets stripAuth", async () => {
     const { fetch, calls } = fakeFetch([res(401, { error: "unauthorized" })]);
     const c = caseOf({ stripAuth: true, expectedStatus: "401" });
-    const [r] = await runApiCases([c], { baseUrl: "https://api.test", fetch, auth: { headers: { Authorization: "Bearer t0ken" } } });
+    const [r] = await runApiCases([c], { baseUrl: "https://api.test", guard: openGuard(), fetch, auth: { headers: { Authorization: "Bearer t0ken" } } });
     const sent = calls[0]!.init.headers as Record<string, string>;
     expect(sent["Authorization"]).toBeUndefined();
     expect(r!.passed).toBe(true); // 401 matches the case's own expectedStatus
@@ -221,7 +224,7 @@ describe("auth stripping (BORROW-07, #95 hacker style)", () => {
 
   it("still applies auth headers normally when stripAuth is absent (unchanged default)", async () => {
     const { fetch, calls } = fakeFetch([res(200, {})]);
-    await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, auth: { headers: { Authorization: "Bearer t0ken" } } });
+    await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch, auth: { headers: { Authorization: "Bearer t0ken" } } });
     expect((calls[0]!.init.headers as Record<string, string>)["Authorization"]).toBe("Bearer t0ken");
   });
 });
@@ -229,7 +232,7 @@ describe("auth stripping (BORROW-07, #95 hacker style)", () => {
 describe("transient recovery then fail (d) — reuses the #90 ladder", () => {
   it("retries on a 5xx and passes once the service recovers", async () => {
     const { fetch, calls } = fakeFetch([res(503), res(503), res(200, {})]);
-    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, baseDelayMs: 0 });
+    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch, baseDelayMs: 0 });
     expect(calls).toHaveLength(3);
     expect(r!.attempts).toBe(3);
     expect(r!.passed).toBe(true);
@@ -237,7 +240,7 @@ describe("transient recovery then fail (d) — reuses the #90 ladder", () => {
 
   it("retries a transient throw (ECONNRESET) and gives up after retries → recorded error, not passed", async () => {
     const { fetch, calls } = fakeFetch([new Error("read ECONNRESET"), new Error("read ECONNRESET"), new Error("read ECONNRESET")]);
-    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, retries: 2, baseDelayMs: 0 });
+    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch, retries: 2, baseDelayMs: 0 });
     expect(calls).toHaveLength(3); // initial + 2 retries
     expect(r!.error).toMatch(/ECONNRESET/);
     expect(r!.passed).toBe(false);
@@ -246,7 +249,7 @@ describe("transient recovery then fail (d) — reuses the #90 ladder", () => {
 
   it("does NOT retry a fatal throw (DNS / connection refused)", async () => {
     const { fetch, calls } = fakeFetch([new Error("getaddrinfo ENOTFOUND api.test")]);
-    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch, baseDelayMs: 0 });
+    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch, baseDelayMs: 0 });
     expect(calls).toHaveLength(1); // fatal → fail fast
     expect(r!.error).toMatch(/ENOTFOUND/);
   });
@@ -255,7 +258,7 @@ describe("transient recovery then fail (d) — reuses the #90 ladder", () => {
 describe("evidence capture (e)", () => {
   it("captures request + response per case", async () => {
     const { fetch } = fakeFetch([res(200, { id: "7" })]);
-    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", fetch });
+    const [r] = await runApiCases([caseOf()], { baseUrl: "https://api.test", guard: openGuard(), fetch });
     expect(r!.url).toBe("https://api.test/pets/7");
     expect(r!.method).toBe("GET");
     expect(r!.response).toEqual({ status: 200, bodyText: JSON.stringify({ id: "7" }), json: { id: "7" } });

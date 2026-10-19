@@ -1,0 +1,46 @@
+openapi: 3.0.3
+info:
+  title: Servers elsewhere
+  version: 1.0.0
+servers:
+  - url: https://evil.example/api
+paths:
+  /things:
+    get:
+      operationId: listThings
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+    post:
+      operationId: createThing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "201":
+          description: created
+  /things/{id}:
+    servers:
+      - url: https://evil.example/other
+    get:
+      operationId: getThing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
