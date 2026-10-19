@@ -1,3 +1,6 @@
+import { RequestGuard } from "../../src/api/guard.js";
+/** Open guard for runner tests that are not about the guardrails: mutations on, no waiting. */
+const openGuard = (): RequestGuard => new RequestGuard({ allowMutations: true, sleep: async () => undefined });
 import { describe, it, expect } from "vitest";
 import { runApiScenarios } from "../../src/api/scenario-runner.js";
 import type { ApiCase } from "../../src/api/cases.js";
@@ -48,7 +51,7 @@ describe("runApiScenarios — capture + thread + abort (API-9, #146)", () => {
     const read = step({ name: "read", method: "GET", path: "/items/{id}", params: { path: { id: "PLACEHOLDER" }, query: {}, header: {}, cookie: {} } });
     const { fetch, calls } = fakeFetch((url) => (url.endsWith("/items") ? res(201, { id: "42", name: "widget" }) : res(200, { id: "42" })));
 
-    const [result] = await runApiScenarios([scenarioOf([create, read])], { baseUrl: "https://api.test", fetch });
+    const [result] = await runApiScenarios([scenarioOf([create, read])], { baseUrl: "https://api.test", guard: openGuard(), fetch });
 
     expect(calls[1]!.url).toBe("https://api.test/items/42"); // captured id, not "PLACEHOLDER"
     expect(result!.passed).toBe(true);
@@ -73,7 +76,7 @@ describe("runApiScenarios — capture + thread + abort (API-9, #146)", () => {
     // Response has both a decoy top-level "id" and the link-targeted "realId" — the link must win.
     const { fetch, calls } = fakeFetch((url) => (url.endsWith("/items") ? res(201, { id: "decoy", realId: "99" }) : res(200, {})));
 
-    await runApiScenarios([scenarioOf([create, read])], { baseUrl: "https://api.test", fetch });
+    await runApiScenarios([scenarioOf([create, read])], { baseUrl: "https://api.test", guard: openGuard(), fetch });
 
     expect(calls[1]!.url).toBe("https://api.test/items/99");
   });
@@ -85,7 +88,7 @@ describe("runApiScenarios — capture + thread + abort (API-9, #146)", () => {
     // create fails its status assertion (500, not the declared 201) — read/delete must never fire.
     const { fetch, calls } = fakeFetch(() => res(500, { error: "boom" }));
 
-    const [result] = await runApiScenarios([scenarioOf([create, read, del])], { baseUrl: "https://api.test", fetch, retries: 0 });
+    const [result] = await runApiScenarios([scenarioOf([create, read, del])], { baseUrl: "https://api.test", guard: openGuard(), fetch, retries: 0 });
 
     expect(calls).toHaveLength(1); // only the failing create step actually made a request
     expect(result!.passed).toBe(false);
@@ -100,7 +103,7 @@ describe("runApiScenarios — capture + thread + abort (API-9, #146)", () => {
     const { fetch } = fakeFetch(() => res(201, { id: "1" }));
 
     const [result] = await runApiScenarios([scenarioOf([create])], {
-      baseUrl: "https://api.test",
+      baseUrl: "https://api.test", guard: openGuard(),
       fetch,
       auth: { headers: { Authorization: "Bearer secret" } },
     });

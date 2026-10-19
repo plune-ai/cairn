@@ -96,7 +96,7 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       const { buildProgram } = await import("../../src/cli/index.js");
       await buildProgram().parseAsync([
         "node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"),
-        "--base-url", "https://api.test", "--knowledge-dir", kdir, "--out", out,
+        "--base-url", "https://api.test", "--allow-mutations", "--rps", "1000", "--knowledge-dir", kdir, "--out", out,
         "--header", "Authorization: Bearer SECRET", "--header", "X-Key: CONFIG",
       ]);
 
@@ -178,7 +178,7 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       const { buildProgram } = await import("../../src/cli/index.js");
       await buildProgram().parseAsync([
         "node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"),
-        "--base-url", "https://api.test", "--out", out,
+        "--base-url", "https://api.test", "--allow-mutations", "--rps", "1000", "--out", out,
       ]);
       expect(outChunks.join("")).toMatch(/0\/4 case\(s\) passed/);
       expect(process.exitCode).toBe(1);
@@ -208,7 +208,7 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       const { buildProgram } = await import("../../src/cli/index.js");
       await buildProgram().parseAsync([
         "node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"),
-        "--base-url", "https://api.test", "--out", out, "--negative",
+        "--base-url", "https://api.test", "--allow-mutations", "--rps", "1000", "--out", out, "--negative",
       ]);
 
       const out0 = outChunks.join("");
@@ -269,7 +269,7 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       const { buildProgram } = await import("../../src/cli/index.js");
       await buildProgram().parseAsync([
         "node", "cairn", "api", "--spec", join(fixtures, "crud-store.yaml"),
-        "--base-url", "https://api.test", "--out", out, "--scenarios",
+        "--base-url", "https://api.test", "--allow-mutations", "--rps", "1000", "--out", out, "--scenarios",
       ]);
 
       const out0 = outChunks.join("");
@@ -303,7 +303,7 @@ describe("cairn api --base-url run path (API-3, mocked network)", () => {
       const { buildProgram } = await import("../../src/cli/index.js");
       await buildProgram().parseAsync([
         "node", "cairn", "api", "--spec", join(fixtures, "crud-store.yaml"),
-        "--base-url", "https://api.test", "--out", out, "--scenarios",
+        "--base-url", "https://api.test", "--allow-mutations", "--rps", "1000", "--out", out, "--scenarios",
       ]);
 
       expect(process.exitCode).toBe(1);
@@ -446,5 +446,246 @@ describe("cairn api --min-coverage (#197)", () => {
     await run();
     expect(outChunks.join("")).not.toContain("Coverage gate");
     expect(process.exitCode ?? 0).toBe(0);
+  });
+});
+describe("cairn api --base-url guardrails (#196)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stubAll = (respond: (init: RequestInit, url: string) => { status: number; body?: string }) => {
+    const calls: { url: string; method?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, method: init.method });
+        const { status, body = "" } = respond(init, url);
+        return { status, headers: { get: () => null }, text: async () => body } as unknown as Response;
+      }),
+    );
+    return calls;
+  };
+  const run = async (out: string, ...extra: string[]) => {
+    const { buildProgram } = await import("../../src/cli/index.js");
+    await buildProgram().parseAsync([
+      "node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"),
+      "--base-url", "https://api.test", "--out", out, "--rps", "1000", ...extra,
+    ]);
+  };
+
+  it("without extra flags sends no mutation and reports the skipped ones with their count", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard-"));
+    try {
+      const calls = stubAll((init) => ({ status: 200, body: init.method === "GET" ? "[]" : "" }));
+      await run(out);
+      expect(calls.map((c) => c.method).every((m) => m === "GET")).toBe(true);
+      const text = outChunks.join("");
+      expect(text).toContain("skipped: mutations disabled");
+      expect(text).toMatch(/executed 2 · skipped 2 \(mutations disabled: 2\) · blocked 0/);
+      expect(text).toContain("request budget: 2/300 used");
+      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as { guardrails: { skipped: Record<string, number> } };
+      expect(report.guardrails.skipped).toEqual({ "mutations disabled": 2 });
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("--allow-mutations sends them", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard-"));
+    try {
+      const calls = stubAll((init) => ({ status: init.method === "POST" ? 201 : init.method === "DELETE" ? 204 : 200, body: init.method === "GET" ? "[]" : "" }));
+      await run(out, "--allow-mutations");
+      expect(calls.map((c) => c.method)).toContain("POST");
+      expect(calls.map((c) => c.method)).toContain("DELETE");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("warns that psycho/hacker need --allow-mutations and does not send their mutations", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard-"));
+    try {
+      const calls = stubAll(() => ({ status: 200, body: "[]" }));
+      await run(out, "--adversarial", "psycho,hacker");
+      expect(errChunks.join("")).toContain("psycho/hacker styles need --allow-mutations");
+      expect(calls.some((c) => c.method !== "GET")).toBe(false);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("--max-requests 3 stops at 3 requests and exits with 4 (not the test-failure code)", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard-"));
+    try {
+      const calls = stubAll((init, url) => ({ status: init.method === "POST" ? 201 : init.method === "DELETE" ? 204 : 200, body: init.method !== "GET" ? "" : url.endsWith("/pets") ? "[]" : "{}" }));
+      await run(out, "--allow-mutations", "--max-requests", "3");
+      expect(calls).toHaveLength(3);
+      expect(outChunks.join("")).toContain("skipped: budget exhausted");
+      expect(process.exitCode).toBe(4);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("a token given by --header is nowhere in the output, the evidence or the reports, and an echoed one is masked", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard-"));
+    try {
+      stubAll(() => ({ status: 200, body: JSON.stringify(["Bearer TOPSECRET123", "TOPSECRET123"]) }));
+      await run(out, "--header", "Authorization: Bearer TOPSECRET123");
+      const all = [outChunks.join(""), errChunks.join("")];
+      for (const f of ["api-evidence.json", "report.json", "report.md"]) all.push(await readFile(join(out, f), "utf8"));
+      expect(all.join("\n")).not.toContain("TOPSECRET123");
+      expect(all[2]).toContain("***");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects bad guardrail values before doing any work", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard-"));
+    try {
+      stubAll(() => ({ status: 200 }));
+      await expect(run(out, "--max-requests", "0")).rejects.toThrow(/--max-requests must be a whole number/);
+      await expect(run(out, "--rps", "abc")).rejects.toThrow(/--rps must be a number/);
+      await expect(run(out, "--allowed-methods", " , ")).rejects.toThrow(/--allowed-methods needs at least one method/);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("without --base-url nothing changes: cases are generated and no guardrail section appears", async () => {
+    const { buildProgram } = await import("../../src/cli/index.js");
+    await buildProgram().parseAsync(["node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml")]);
+    expect(outChunks.join("")).not.toContain("Guardrails");
+    expect(process.exitCode ?? 0).toBe(0);
+  });
+});
+
+describe("cairn api --base-url guardrails, review follow-ups (#196)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stubAll = (respond: (init: RequestInit, url: string) => { status: number; body?: string }) => {
+    const calls: { url: string; method?: string; headers: Record<string, string> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, method: init.method, headers: { ...(init.headers as Record<string, string>) } });
+        const { status, body = "" } = respond(init, url);
+        return { status, headers: { get: () => null }, text: async () => body } as unknown as Response;
+      }),
+    );
+    return calls;
+  };
+  const okPets = (init: RequestInit, url: string) => ({
+    status: init.method === "POST" ? 201 : init.method === "DELETE" ? 204 : 200,
+    body: init.method !== "GET" ? "" : url.split("?")[0]!.endsWith("/pets") ? "[]" : "{}",
+  });
+  const run = async (out: string, spec: string, baseUrl: string, ...extra: string[]) => {
+    const { buildProgram } = await import("../../src/cli/index.js");
+    await buildProgram().parseAsync(["node", "cairn", "api", "--spec", spec, "--base-url", baseUrl, "--out", out, "--rps", "1000", ...extra]);
+  };
+  const withOut = async (fn: (out: string) => Promise<void>): Promise<void> => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-guard2-"));
+    try {
+      await fn(out);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  };
+
+  it("a run where every case is skipped is not green: exit 5 and a loud message", async () => {
+    await withOut(async (out) => {
+      const calls = stubAll(() => ({ status: 201 }));
+      await run(out, join(fixtures, "post-only.yaml"), "https://api.test");
+      expect(calls).toHaveLength(0);
+      expect(errChunks.join("")).toContain("No request was sent: all 1 case(s) were skipped or blocked");
+      expect(process.exitCode).toBe(5);
+    });
+  });
+
+  it("--allowed-paths that match nothing is not green either", async () => {
+    await withOut(async (out) => {
+      const calls = stubAll(okPets);
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test", "--allowed-paths", "/nothing/**");
+      expect(calls).toHaveLength(0);
+      expect(process.exitCode).toBe(5);
+    });
+  });
+
+  it("a failed test keeps exit 1 even when the budget ran out (1 beats 4)", async () => {
+    await withOut(async (out) => {
+      stubAll(() => ({ status: 404 }));
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test", "--max-requests", "1");
+      expect(outChunks.join("")).toContain("budget exhausted");
+      expect(process.exitCode).toBe(1);
+    });
+  });
+
+  it("--allowed-methods and --allowed-paths skip the rest with the reason in the report", async () => {
+    await withOut(async (out) => {
+      const calls = stubAll(okPets);
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test", "--allow-mutations", "--allowed-methods", "get", "--allowed-paths", "/pets");
+      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(["GET https://api.test/pets"]);
+      const text = outChunks.join("");
+      expect(text).toContain("skipped: not allowed");
+      expect(text).toMatch(/executed 1 · skipped 3 \(not allowed: 3\)/);
+    });
+  });
+
+  it("userinfo in --base-url is moved to a Basic header, never sent in the URL, and never printed or written", async () => {
+    await withOut(async (out) => {
+      const calls = stubAll(okPets);
+      await run(out, join(fixtures, "petstore.yaml"), "https://bob:s3cret-pw@api.test/v1");
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.every((c) => c.url.startsWith("https://api.test/v1/") && !c.url.includes("@"))).toBe(true);
+      expect(calls[0]!.headers["Authorization"]).toBe(`Basic ${Buffer.from("bob:s3cret-pw").toString("base64")}`);
+      const all = [outChunks.join(""), errChunks.join("")];
+      for (const f of ["api-evidence.json", "report.json", "report.md"]) all.push(await readFile(join(out, f), "utf8"));
+      expect(all.join("\n")).not.toContain("s3cret-pw");
+      expect(all.join("\n")).not.toContain(Buffer.from("bob:s3cret-pw").toString("base64"));
+    });
+  });
+
+  it("a secret in a --base-url query string is masked in the log and the reports", async () => {
+    await withOut(async (out) => {
+      stubAll(okPets);
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test/v1?api_key=QUERYKEY123");
+      const all = [outChunks.join(""), errChunks.join("")];
+      for (const f of ["api-evidence.json", "report.json", "report.md"]) all.push(await readFile(join(out, f), "utf8"));
+      expect(all.join("\n")).not.toContain("QUERYKEY123");
+    });
+  });
+
+  it("`https://api.test@evil.example` targets evil.example (that is the host), and `//evil.example` is rejected", async () => {
+    await withOut(async (out) => {
+      const calls = stubAll(okPets);
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test@evil.example/v1");
+      expect(calls.every((c) => c.url.startsWith("https://evil.example/v1/"))).toBe(true);
+      await expect(run(out, join(fixtures, "petstore.yaml"), "//evil.example/v1")).rejects.toThrow(/--base-url must be an absolute http\(s\) URL/);
+    });
+  });
+
+  it("warns when a secret is too short to be masked", async () => {
+    await withOut(async (out) => {
+      stubAll(okPets);
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test", "--header", "X-Api-Key: abc");
+      expect(errChunks.join("")).toContain("X-Api-Key is shorter than 4 characters and will NOT be masked");
+    });
+  });
+
+  it("rejects an absurdly low --rps", async () => {
+    await withOut(async (out) => {
+      stubAll(okPets);
+      await expect(run(out, join(fixtures, "petstore.yaml"), "https://api.test", "--rps", "0.001")).rejects.toThrow(/--rps must be a number of 0.01 or more/);
+    });
+  });
+
+  it("the token is also absent from every testcases/*.md file", async () => {
+    await withOut(async (out) => {
+      stubAll((init, url) => ({ ...okPets(init, url), body: JSON.stringify(["TOPSECRET123"]) }));
+      await run(out, join(fixtures, "petstore.yaml"), "https://api.test", "--header", "Authorization: Bearer TOPSECRET123");
+      const { readdir } = await import("node:fs/promises");
+      const files = await readdir(join(out, "testcases"));
+      expect(files.length).toBeGreaterThan(0);
+      for (const f of files) expect(await readFile(join(out, "testcases", f), "utf8")).not.toContain("TOPSECRET123");
+    });
   });
 });
