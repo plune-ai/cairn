@@ -141,8 +141,10 @@ export interface CoverageGateResult {
  * else throws a message that names the flag and the value, so a typo cannot silently disable the gate.
  */
 export function parseMinCoverage(raw: unknown): number {
-  const text = typeof raw === "string" ? raw.trim().replace(/%$/, "") : raw;
-  const n = typeof text === "number" ? text : text === "" ? Number.NaN : Number(text);
+  const text = typeof raw === "string" ? raw.trim() : raw;
+  // Strings: plain decimal digits with an optional trailing % (no signs, exponents, hex, "Infinity").
+  const n =
+    typeof text === "number" ? text : typeof text === "string" && /^\d+(\.\d+)?%?$/.test(text) ? Number(text.replace(/%$/, "")) : Number.NaN;
   if (!Number.isFinite(n) || n < 0 || n > 100) {
     throw new Error(`--min-coverage must be a number from 0 to 100 (got "${String(raw)}").`);
   }
@@ -157,8 +159,8 @@ export function evaluateCoverageGate(
 ): CoverageGateResult {
   const counted = report.coveredCount + (countPartial ? report.partialCount : 0);
   const total = report.endpointCount;
-  // Integer-style comparison avoids float drift at the boundary (80 / 100 vs 79.9 / 100).
-  const passed = total === 0 || counted * 100 >= threshold * total;
+  // Compare on 1e-6 integers so a fractional threshold (79.9) meets its exact fraction (799 / 1000).
+  const passed = total === 0 || Math.round(((counted * 100) / total) * 1e6) >= Math.round(threshold * 1e6);
   return {
     passed,
     counted,
@@ -168,4 +170,23 @@ export function evaluateCoverageGate(
     countPartial,
     missing: report.endpoints.filter((e) => e.status === "uncovered" || (e.status === "partial" && !countPartial)),
   };
+}
+
+/** Floor to one decimal, so 79.96% is never shown as "80%" next to a threshold of 80. */
+const shownPercent = (p: number): string => `${Math.floor(p * 10 + 1e-9) / 10}%`;
+
+/** Render the `--min-coverage` verdict: "n / N", the percentage, and the operations that are not counted. */
+export function renderCoverageGate(g: CoverageGateResult): string[] {
+  const counted = g.countPartial ? "covered + partial" : "covered";
+  const lines = [
+    "",
+    `=== Coverage gate: ${g.passed ? "passed" : "FAILED"} — ${g.counted} / ${g.total} operation(s) ${counted} = ${shownPercent(g.percent)} (min ${g.threshold}%) ===`,
+  ];
+  if (!g.passed) {
+    for (const e of g.missing) {
+      const op = e.operationId ? ` (${e.operationId})` : "";
+      lines.push(`  ✗ ${e.status.padEnd(9)} ${e.method.padEnd(6)} ${e.path}${op}`);
+    }
+  }
+  return lines;
 }
