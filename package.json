@@ -82,7 +82,7 @@
     "react": "^18.3.1"
   },
   "peerDependencies": {
-    "@langfuse/client": "^5.4.1",
+    "@langfuse/client": "^6.0.0",
     "@langfuse/langchain": "^5.4.1",
     "@langfuse/otel": "^5.4.1",
     "@langfuse/tracing": "^5.4.1",
@@ -114,7 +114,7 @@
     }
   },
   "devDependencies": {
-    "@langfuse/client": "^5.4.1",
+    "@langfuse/client": "^6.0.0",
     "@langfuse/langchain": "^5.4.1",
     "@langfuse/otel": "^5.4.1",
     "@langfuse/tracing": "^5.4.1",
