@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **`cairn api --base-url` no longer sends mutating requests unless `--allow-mutations` is given (#196).** A run
+  that used to execute every generated `POST`/`PUT`/`PATCH`/`DELETE` now lists them as
+  `skipped: mutations disabled`, and a run in which nothing at all could be sent (a spec with only mutating
+  operations, `--allowed-paths` matching nothing) fails with exit code `5` instead of reporting `0/0 passed`.
+  Add `--allow-mutations` to restore the old behaviour against an environment you own. The same change brings the
+  rest of the guardrails below, all on by default (`--max-requests 300`, `--rps 5`, pinned host, no redirects).
+- **`cairn api --base-url` is safe by default: guardrails on what is sent (#196).** A run against a target could
+  send any generated `POST`/`PUT`/`PATCH`/`DELETE`, follow redirects and send as fast as the target answered. Now
+  mutating cases are generated and listed but not sent unless `--allow-mutations` is given (reported
+  `skipped: mutations disabled`, with their count); the `psycho` and `hacker` styles need it explicitly.
+  `--allowed-methods` and `--allowed-paths` (masks) skip everything outside the lists as `not allowed`;
+  `--max-requests` (default 300, retries counted) stops the run and exits with code `4` when spent, the rest
+  reported `skipped: budget exhausted`; `--rps` (default 5) limits the whole run whatever the concurrency. Requests
+  always go to the `--base-url` host (`servers` from the spec are ignored), redirects are recorded and not followed,
+  and a path parameter that is or decodes to a `..` segment is refused instead of leaving the base path; payloads
+  inside values still go out. Tokens passed as headers are masked in the console, evidence, reports and in response
+  bodies that echo them. The report gains a guardrail summary (executed / skipped by reason / blocked, budget used).
+  Without `--base-url` (cases only) nothing changes; with it, the defaults above apply, so a run that relied on
+  mutations needs `--allow-mutations`.
+  With `--base-url`, coverage is computed from what was actually sent: a case that was skipped or blocked does not count
+  as covering its operation, so `--min-coverage` can fail on a run without `--allow-mutations` (the mutating operations
+  are then uncovered).
+
 ### Added
 
 - **`cairn api --min-coverage <percent>` fails CI when the spec is under-covered (#197).** The share is the
