@@ -310,8 +310,7 @@ export const apiModality: Modality = {
     if (!opts.baseUrl) {
       // API-6 (#136): coverage is meaningful even without a run — it's spec-vs-generated-cases.
       const casesOnly = computeApiCoverage(model, cases);
-      for (const line of renderApiCoverage(casesOnly)) ctx.out(`${line}
-`);
+      for (const line of renderApiCoverage(casesOnly)) ctx.out(`${line}\n`);
       gateCoverage(casesOnly);
       ctx.out("Note: cases only. Pass --base-url <url> to execute them and assert responses (API-3).\n");
       return;
