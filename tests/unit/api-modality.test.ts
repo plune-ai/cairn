@@ -413,7 +413,7 @@ describe("cairn api --min-coverage (#197)", () => {
       const out = await mkdtemp(join(tmpdir(), "qa-api-gate-"));
       try {
         stub(false);
-        await runBase(out, "--min-coverage", "80");
+        await runBase(out, "--allow-mutations", "--rps", "1000", "--min-coverage", "80");
         expect(process.exitCode).toBe(1);
         expect(outChunks.join("")).toContain("Coverage gate: FAILED — 3 / 4");
         const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
@@ -687,5 +687,53 @@ describe("cairn api --base-url guardrails, review follow-ups (#196)", () => {
       expect(files.length).toBeGreaterThan(0);
       for (const f of files) expect(await readFile(join(out, "testcases", f), "utf8")).not.toContain("TOPSECRET123");
     });
+  });
+});
+
+describe("cairn api exit-code order: 1 > 3 > 4 > 5", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const stubOk = () =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        const status = init.method === "POST" ? 201 : init.method === "DELETE" ? 204 : 200;
+        const body = init.method !== "GET" ? "" : String(url).endsWith("/pets") ? "[]" : "{}";
+        return { status, headers: { get: () => null }, text: async () => body } as unknown as Response;
+      }),
+    );
+  const code = async (spec: string, ...extra: string[]): Promise<number | string | undefined> => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-order-"));
+    try {
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync(["node", "cairn", "api", "--spec", join(fixtures, spec), "--base-url", "https://api.test", "--out", out, "--rps", "1000", ...extra]);
+      return process.exitCode;
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  };
+
+  it("4 alone: the budget ran out and nothing else went wrong", async () => {
+    stubOk();
+    expect(await code("petstore.yaml", "--allow-mutations", "--max-requests", "3")).toBe(4);
+  });
+
+  it("3 beats 4: the skipped case is uncovered, so the gate fails as well", async () => {
+    stubOk();
+    expect(await code("petstore.yaml", "--allow-mutations", "--max-requests", "3", "--min-coverage", "100")).toBe(3);
+  });
+
+  it("3 beats 5: nothing was sent, so nothing is covered and the gate fails", async () => {
+    stubOk();
+    expect(await code("post-only.yaml", "--min-coverage", "100")).toBe(3);
+  });
+
+  it("5 alone: nothing was sent", async () => {
+    stubOk();
+    expect(await code("post-only.yaml")).toBe(5);
+  });
+
+  it("1 beats 3: a failed test wins over the gate", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ status: 404, headers: { get: () => null }, text: async () => "" }) as unknown as Response));
+    expect(await code("petstore.yaml", "--allow-mutations", "--min-coverage", "100")).toBe(1);
   });
 });
