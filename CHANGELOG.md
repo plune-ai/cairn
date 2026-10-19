@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`cairn api --min-coverage <percent>` fails CI when the spec is under-covered (#197).** The share is the
   `covered` operations over all operations of the spec; `partial` operations count only with `--count-partial`.
-  Below the threshold the run prints `n / N`, the percentage and the operations that are not covered, and exits
+  Below the threshold the run prints `n / N`, the percentage and the operations that are not counted (uncovered and,
+  without `--count-partial`, partial; a spec with no operations passes at 100%), writes the verdict to
+  `report.json` (`coverageGate`) and `report.md` for runs with `--base-url`, and exits
   with code `3` (`1` stays a failed test or a bad input; a value that is not a number from 0 to 100 is rejected
   with a message). The GitHub Action gains `api-spec`, `min-coverage` and `count-partial` inputs that run
   `cairn api` with the flags. Without the flag nothing changes.

@@ -48,9 +48,9 @@ operations are `covered` (covered operations / all operations). `partial` operat
 unless you add `--count-partial`. Works with or without `--base-url`: coverage is spec-vs-generated cases.
 
 - **Report:** a `=== Coverage gate: … — n / N operation(s) covered = P% (min M%) ===` line, followed on
-  failure by every operation that was not counted (status, method, path), so the reason is visible in the log.
+  failure by every operation that was not counted (uncovered, and partial unless `--count-partial`; status, method, path), so the reason is visible in the log.
 - **Exit codes:** `0` ok, `1` failed tests or bad input (including a `--min-coverage` outside 0..100 or not a
-  number), `3` coverage below the threshold. When tests also fail, `1` wins.
+  number; the message is printed and the exit code is 1), `3` coverage below the threshold. An empty spec passes at 100%. With `--base-url` the verdict is also in `report.json` (`coverageGate`) and `report.md`. When tests also fail, `1` wins.
 - **GitHub Action:** set `api-spec` with `min-coverage` (and `count-partial`) — see `action/README.md`.
 - Without the flag nothing changes.
 

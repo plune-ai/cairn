@@ -372,6 +372,76 @@ describe("cairn api --min-coverage (#197)", () => {
     expect(outChunks.join("")).not.toContain("API spec:");
   });
 
+  it("warns that --count-partial does nothing without --min-coverage", async () => {
+    await run("--count-partial");
+    expect(errChunks.join("")).toContain("--count-partial has no effect without --min-coverage");
+  });
+
+  it("a bad value through the real top-level handler prints one clean line and exits 1", async () => {
+    const { runCli } = await import("../../src/cli/index.js");
+    const argv = process.argv;
+    process.argv = ["node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"), "--min-coverage", "abc"];
+    try {
+      await runCli();
+    } finally {
+      process.argv = argv;
+    }
+    expect(errChunks.join("")).toContain('--min-coverage must be a number from 0 to 100 (got "abc").');
+    expect(process.exitCode).toBe(1);
+  });
+
+  describe("with --base-url", () => {
+    afterEach(() => vi.unstubAllGlobals());
+    const stub = (ok: boolean) =>
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string, init: RequestInit) => {
+          const status = !ok ? 404 : init.method === "POST" ? 201 : init.method === "DELETE" ? 204 : 200;
+          const body = !ok || init.method !== "GET" ? "" : String(url).endsWith("/pets") ? "[]" : "{}";
+          return { status, headers: { get: () => null }, text: async () => body } as unknown as Response;
+        }),
+      );
+    const runBase = async (out: string, ...extra: string[]) => {
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync([
+        "node", "cairn", "api", "--spec", join(fixtures, "petstore.yaml"),
+        "--base-url", "https://api.test", "--out", out, ...extra,
+      ]);
+    };
+
+    it("failing tests plus a failing gate: exit 1, the gate line is still printed and written to both reports", async () => {
+      const out = await mkdtemp(join(tmpdir(), "qa-api-gate-"));
+      try {
+        stub(false);
+        await runBase(out, "--min-coverage", "80");
+        expect(process.exitCode).toBe(1);
+        expect(outChunks.join("")).toContain("Coverage gate: FAILED — 3 / 4");
+        const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+          coverageGate: { passed: boolean; counted: number; total: number; percent: number; threshold: number; missing: unknown[] };
+        };
+        expect(report.coverageGate).toMatchObject({ passed: false, counted: 3, total: 4, percent: 75, threshold: 80 });
+        expect(report.coverageGate.missing).toHaveLength(1);
+        const md = await readFile(join(out, "report.md"), "utf8");
+        expect(md).toContain("## Coverage gate: FAILED — 3 / 4");
+        expect(md).toMatch(/GET\s+\/pets\/\{id\}/);
+      } finally {
+        await rm(out, { recursive: true, force: true });
+      }
+    });
+
+    it("passing tests plus a failing gate: exit 3", async () => {
+      const out = await mkdtemp(join(tmpdir(), "qa-api-gate-"));
+      try {
+        stub(true);
+        await runBase(out, "--min-coverage", "80");
+        expect(outChunks.join("")).toContain("Coverage gate: FAILED");
+        expect(process.exitCode).toBe(3);
+      } finally {
+        await rm(out, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("without the flag no gate line is printed", async () => {
     await run();
     expect(outChunks.join("")).not.toContain("Coverage gate");

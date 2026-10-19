@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { ingestOpenApi, type ApiModel, type ApiEndpoint } from "../../src/api/openapi.js";
 import { generateApiCases, type ApiCase } from "../../src/api/cases.js";
-import { computeApiCoverage, evaluateCoverageGate, parseMinCoverage } from "../../src/api/coverage.js";
+import { computeApiCoverage, evaluateCoverageGate, parseMinCoverage, renderCoverageGate } from "../../src/api/coverage.js";
 import type { ApiCaseResult } from "../../src/api/runner.js";
 
 /**
@@ -184,6 +184,23 @@ describe("--min-coverage gate (#197)", () => {
 
   it("a spec without operations passes", () => {
     expect(evaluateCoverageGate(computeApiCoverage(model(), []), 100).passed).toBe(true);
+  });
+
+  it("a fractional threshold is met by its exact fraction (79.9 with 799 / 1000)", () => {
+    const r = { endpointCount: 1000, coveredCount: 799, partialCount: 0, uncoveredCount: 201, ratio: 0.799, endpoints: [] };
+    expect(evaluateCoverageGate(r, 79.9).passed).toBe(true);
+    expect(evaluateCoverageGate({ ...r, coveredCount: 798 }, 79.9).passed).toBe(false);
+  });
+
+  it("never rounds a failing 79.96% up to 80% in the line it prints", () => {
+    const r = { endpointCount: 10000, coveredCount: 7996, partialCount: 0, uncoveredCount: 2004, ratio: 0.7996, endpoints: [] };
+    const text = renderCoverageGate(evaluateCoverageGate(r, 80)).join("\n");
+    expect(text).toContain("FAILED");
+    expect(text).toContain("= 79.9% (min 80%)");
+  });
+
+  it.each(["1e2", "+5", ".5", "0x10", " "])("rejects the odd form %j", (v) => {
+    expect(() => parseMinCoverage(v)).toThrow(/--min-coverage must be a number/);
   });
 
   it.each(["abc", "", "-1", "100.1", "NaN", "Infinity"])("rejects %j with a clear message", (v) => {
