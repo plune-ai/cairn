@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Test mailbox and TOTP for browser scenarios (#206, ADR-0023).** A `MailsacProvider` configured only from
+  `MAILSAC_API_KEY` (plus optional `MAILSAC_ADDRESS` / `MAILSAC_DOMAIN`) and a `MailboxSession` with the steps
+  `mailbox.create`, `mailbox.waitFor`, `mailbox.extractLink`, `mailbox.extractCode`, `mailbox.openLink` and
+  `totp.code` (secret read from a named environment variable). Addresses, extracted links and codes and the TOTP
+  secret are registered as secrets and masked in progress, `run.log` and validation errors. Off by default:
+  `ExploreInput.mailbox` is absent unless passed, and existing scenarios are unchanged. See `docs/mailbox.md`.
+
 - **Environment description for browser runs: Basic Auth → login → start path → scenario (#204).** `explore`,
   `design` and `automate --validate` take `--env-file <path>` (or `CAIRN_ENV_FILE` / `CAIRN_ENV_*`) with `baseUrl`,
   optional `basicAuth`, optional `user` and `startPath`. The stages run in that fixed order and a stage without

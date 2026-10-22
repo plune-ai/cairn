@@ -3,6 +3,10 @@ import { redact } from "../decider/redact.js";
 
 export type { MailboxProvider, MailMessage, MessageFilter, WaitOptions } from "./types.js";
 export { FakeMailbox } from "./fake.js";
+export { MailsacProvider, mailsacFromEnv } from "./mailsac.js";
+export type { MailsacOptions } from "./mailsac.js";
+export { MailboxSession } from "./session.js";
+export type { MailboxStep, MailboxSessionOptions, Navigator } from "./session.js";
 
 const matches = (m: MailMessage, f: MessageFilter): boolean =>
   (!f.subject || m.subject.toLowerCase().includes(f.subject.toLowerCase())) &&
