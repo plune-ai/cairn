@@ -43,6 +43,7 @@ number and gains a `Revised:` date in its header (see ADR-0002, ADR-0006).
 | [0020](0020-untrusted-llm-verdicts-and-data-protection.md) | An LLM verdict is untrusted; only self-created data is disposable | 2026-06-23 | Accepted |
 | [0021](0021-human-authored-case-as-input-boundary-unchanged.md) | A human-authored case is a first-class input; platform boundary (ADR-0010) unchanged; steps compile to cached deterministic actions | 2026-09-02 | Accepted |
 | [0022](0022-optional-decision-layer.md) | An optional decision layer (System One: Jev / Laya) — a separate seam, off by default, never trusted | 2026-09-24 | Accepted |
+| [0023](0023-test-mailbox-and-totp.md) | Тестова поштова скринька і TOTP для браузерних сценаріїв — окремий шов, вимкнений за замовчуванням | 2026-10-22 | Proposed |
 
 Note the dates: 0014 is numbered after 0015–0020 but was decided later. Numbers are assigned when an ADR is
 **written**; the `Date` field is when the decision was **made**. Records 0015–0020 were written on 2026-08-02
