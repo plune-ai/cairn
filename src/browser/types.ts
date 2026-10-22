@@ -42,6 +42,14 @@ export interface Observation {
   capturedBy: BackendKind;
   /** Page JS errors (console.error + uncaught) — a signal for error-aware design/repair. */
   consoleErrors?: string[];
+  /** HTTP status of the navigation made by this observe() (only when `url` was given; lib backend only). */
+  status?: number;
+}
+
+/** HTTP Basic Auth for the browser context (values come from environment variables, never from a file). */
+export interface HttpCredentials {
+  username: string;
+  password: string;
 }
 
 export type BackendKind = "lib" | "cli";

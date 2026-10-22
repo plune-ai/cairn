@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Environment description for browser runs: Basic Auth → login → start path → scenario (#204).** `explore`,
+  `design` and `automate --validate` take `--env-file <path>` (or `CAIRN_ENV_FILE` / `CAIRN_ENV_*`) with `baseUrl`,
+  optional `basicAuth`, optional `user` and `startPath`. The stages run in that fixed order and a stage without
+  input is skipped. Secrets are read only from the environment variables the file names and are masked in logs,
+  reports and errors; a failed stage is reported as `Basic Auth rejected`, `Login failed` or `Start page
+  unreachable`. Runs without the new flags behave exactly as before. See `docs/environment.md`.
+
 ### Changed (breaking)
 
 - **`cairn api --base-url` no longer sends mutating requests unless `--allow-mutations` is given (#196).** A run

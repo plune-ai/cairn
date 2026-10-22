@@ -64,6 +64,8 @@ export interface ValidateOptions {
   workers?: number;
   /** #94 (BORROW-05): record a `.webm` per scenario for the review gate. Off by default. */
   screencast?: boolean;
+  /** Basic Auth for the run: environment variable NAMES (values are read from process.env by the runner). */
+  httpCredentialsEnv?: { usernameVar: string; passwordVar: string };
 }
 
 /**
@@ -86,6 +88,7 @@ export async function validateSuite(
         channel: opts.channel,
         workers: opts.workers,
         screencastDir,
+        httpCredentialsEnv: opts.httpCredentialsEnv,
       }),
     );
   }

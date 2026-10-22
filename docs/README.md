@@ -13,6 +13,7 @@ Start at the [root README](../README.md) for the 30-second pitch; this page is t
 |---|---|
 | To install it and get a first suite out | [`getting-started.md`](./getting-started.md) |
 | To point it at an app behind a login | [`sessions.md`](./sessions.md) |
+| To describe the environment (Basic Auth → login → start path) | [`environment.md`](./environment.md) |
 | To configure providers, profiles and role routing | [`configuration.md`](./configuration.md) |
 | To change the house style of generated cases | [`prompts-and-styles.md`](./prompts-and-styles.md) |
 | To drive it from a terminal UI | [`tui.md`](./tui.md) |
