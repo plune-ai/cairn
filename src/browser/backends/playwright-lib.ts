@@ -7,6 +7,7 @@ import type {
   Action,
   ElementRef,
   ElementState,
+  HttpCredentials,
   Observation,
   ObserveOptions,
   SessionApi,
@@ -25,6 +26,8 @@ export interface PlaywrightLibOptions {
   storageState?: StorageState;
   /** Browser channel (chrome/msedge) — for bypassing automation detection (e.g. Google OAuth). */
   channel?: string;
+  /** HTTP Basic Auth for the context (environment-description feature). */
+  httpCredentials?: HttpCredentials;
 }
 
 /**
@@ -37,6 +40,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private page?: Page;
   private readonly refMap = new Map<string, { role: string; name?: string }>();
   private currentUrl = "";
+  private lastStatus: number | undefined;
   private readonly consoleErrors: string[] = [];
 
   constructor(private readonly opts: PlaywrightLibOptions = {}) {}
@@ -60,11 +64,10 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private async ensurePage(): Promise<Page> {
     this.browser ??= await this.launch();
     if (!this.context) {
-      this.context = await this.browser.newContext(
-        this.opts.storageState
-          ? { storageState: this.opts.storageState as unknown as PwStorageState }
-          : {},
-      );
+      this.context = await this.browser.newContext({
+        ...(this.opts.storageState ? { storageState: this.opts.storageState as unknown as PwStorageState } : {}),
+        ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
+      });
     }
     if (!this.page) {
       this.page = await this.context.newPage();
@@ -85,7 +88,8 @@ export class PlaywrightLibBackend implements BrowserBackend {
     await this.ensurePage();
     await navigateWithRecovery({
       goto: async () => {
-        await this.page!.goto(url, { waitUntil: "domcontentloaded" });
+        const response = await this.page!.goto(url, { waitUntil: "domcontentloaded" });
+        this.lastStatus = response?.status();
       },
       settle: async () => {
         await this.page!.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
@@ -110,8 +114,11 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async observe(opts: ObserveOptions): Promise<Observation> {
+    let status: number | undefined;
     if (opts.url) {
+      this.lastStatus = undefined;
       await this.navigate(opts.url);
+      status = this.lastStatus;
       this.currentUrl = opts.url;
     }
     const page = await this.ensurePage(); // after navigate: picks up a recreated page if recovery ran
@@ -145,6 +152,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       ariaSnapshot,
       capturedBy: "lib",
       consoleErrors: [...this.consoleErrors],
+      ...(status !== undefined ? { status } : {}),
     };
   }
 
@@ -214,6 +222,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
         this.browser ??= await this.launch();
         this.context = await this.browser.newContext({
           storageState: state as unknown as PwStorageState,
+          ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
         });
         this.page = await this.context.newPage();
       },

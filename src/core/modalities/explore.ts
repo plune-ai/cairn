@@ -6,6 +6,7 @@
  * so its output is identical to the pre-extraction inline action (locked by the C1-02 parity test).
  */
 import { readInputFile } from "../../fs/run-dir.js";
+import { environmentForRun } from "../../environment/index.js";
 import { runExploration } from "../../agent/index.js";
 import { resolveStyleText } from "../../design/style.js";
 import { renderRunSummary, displayPath } from "../../agent/summary.js";
@@ -17,7 +18,8 @@ import type { Modality, ModalityContext } from "../modality.js";
 
 /** Parsed flags for `cairn explore` (mirrors the command's option definitions). */
 interface ExploreFlags {
-  url: string;
+  url?: string;
+  envFile?: string;
   backend?: string;
   channel?: string;
   session?: string;
@@ -57,14 +59,16 @@ export const exploreModality: Modality = {
     // #80: --style resolves to a house-style pack (prompts/styles/<v>.md or a path) → {{style}} slot,
     // else the built-in inline hint. Methodology / assertion-safety are never touched.
     const styleText = await resolveStyleText(opts.style);
+    const { url, environment } = await environmentForRun({ url: opts.url, envFile: opts.envFile });
     ctx.err(
-      `▸ Exploring ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}${opts.goal ? ` (goal: "${opts.goal}")` : ""}…\n`,
+      `▸ Exploring ${url}${opts.session ? ` (session: ${opts.session})` : ""}${opts.checklist ? ` (checklist: ${opts.checklist})` : ""}${opts.goal ? ` (goal: "${opts.goal}")` : ""}…\n`,
     );
     // Progress UX: animate the current step in a TTY (long LLM steps emit no events for ~a minute, so the
     // CLI looked frozen). In a pipe/CI this falls back to one plain `  ▸ <event>` line per event.
     const progress = makeCliProgress({ write: ctx.err, isTTY: Boolean(ctx.isTTY), now: Date.now });
     const result = await runExploration({
-      url: opts.url,
+      url,
+      environment,
       config,
       sessionName: opts.session,
       sessionFile: opts.sessionFile,

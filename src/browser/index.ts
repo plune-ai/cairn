@@ -10,6 +10,7 @@ import type {
   Observation,
   ObserveOptions,
   SessionApi,
+  HttpCredentials,
   StorageState,
   TestRunReport,
   VerifiedElement,
@@ -26,6 +27,8 @@ export interface GatewayConfig {
   storageState?: StorageState;
   /** Browser channel (chrome/msedge) — bypasses automation detection. */
   channel?: string;
+  /** HTTP Basic Auth applied to the browser context (lib backend). */
+  httpCredentials?: HttpCredentials;
 }
 
 /**
@@ -70,6 +73,7 @@ export function makeGateway(cfg: GatewayConfig): BrowserGateway {
     headless: cfg.headless ?? true,
     storageState: cfg.storageState,
     channel: cfg.channel,
+    httpCredentials: cfg.httpCredentials,
   });
   if (cfg.backend === "cli") {
     // observe/act → cli (token-efficient); session/runTests → lib (ADR-0003).

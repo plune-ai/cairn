@@ -25,6 +25,17 @@ export type {
   ExploreOutcome,
 } from "./agent/index.js";
 
+// Environment description: Basic Auth → login → start path (ExploreInput.environment).
+export { loadEnvironment, parseEnvironment, applyEnvironment } from "./environment/index.js";
+export {
+  EnvironmentError,
+  EnvironmentConfigError,
+  BasicAuthRejectedError,
+  LoginFailedError,
+  StartPageUnreachableError,
+} from "./environment/index.js";
+export type { Environment, AppliedEnvironment } from "./environment/index.js";
+
 // Config.
 export { loadConfig } from "./config/index.js";
 export { resolveConfig } from "./core/index.js";

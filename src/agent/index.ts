@@ -3,6 +3,8 @@ import { resolve, dirname, basename, join } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
+import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
+import type { AppliedEnvironment, Environment } from "../environment/index.js";
 import { ensureBrowsersInstalled } from "../browser/preflight.js";
 import { RoleRouter, type CostReport } from "../llm/index.js";
 import { CallBudget } from "../llm/structured.js";
@@ -99,6 +101,52 @@ export interface ExploreInput {
   projectDir?: string;
   /** #94 (BORROW-05): record a `.webm` per scenario during validation (review-gate affordance). Default off. */
   screencast?: boolean;
+  /**
+   * Environment description (src/environment): Basic Auth → login → start path, applied in that order before the
+   * run starts (`url` is where the run then explores — the CLI defaults it to the start URL). Absent = as before.
+   */
+  environment?: Environment;
+}
+
+/** What a run takes from an applied environment (see {@link startEnvironment}). */
+interface EnvRun {
+  applied: AppliedEnvironment;
+  /** Temp file with the post-login session, for the validation runner. */
+  sessionPath?: string;
+}
+
+/**
+ * Applies `input.environment` (if any) before the browser work: Basic Auth → login → start path. The `cli` backend
+ * cannot carry a Basic Auth / login context, so that combination is refused up front instead of half-working.
+ */
+async function startEnvironment(
+  input: { environment?: Environment; headed?: boolean; sessionName?: string; sessionFile?: string },
+  cfg: AppConfig,
+  onProgress: (event: string) => void,
+): Promise<EnvRun | undefined> {
+  const env = input.environment;
+  if (!env) return undefined;
+  if (cfg.browser.backend === "cli" && (env.basicAuth || env.user)) {
+    throw new EnvironmentConfigError(
+      "An environment with basicAuth or user needs the lib browser backend (the cli backend cannot carry Basic Auth or a login session). Use --backend lib.",
+    );
+  }
+  const applied = await applyEnvironment(env, {
+    onProgress,
+    headless: !input.headed,
+    channel: cfg.browser.channel,
+    skipLogin: Boolean(input.sessionFile || input.sessionName),
+  });
+  return { applied, sessionPath: applied.storageState ? writeTempSession(applied.storageState) : undefined };
+}
+
+/** Failure texts of a validation run can echo what a test typed — mask the environment's secret values. */
+function redactValidation(report: ValidationReport, secrets: readonly string[]): ValidationReport {
+  if (secrets.length === 0) return report;
+  return {
+    ...report,
+    results: report.results.map((r) => (r.error ? { ...r, error: redact(r.error, secrets, false) } : r)),
+  };
 }
 
 export interface ExploreResult {
@@ -183,7 +231,9 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   // still leaves the log on disk (#38). `persistLog` is wired once the run dir exists.
   const logLines: string[] = [];
   let persistLog: () => void = () => undefined; // no-op until the run dir exists
-  const onProgress = (event: string): void => {
+  let envSecrets: string[] = []; // secret values of an applied environment — masked in every progress line / run.log
+  const onProgress = (raw: string): void => {
+    const event = redact(raw, envSecrets, false);
     logLines.push(`${new Date().toISOString()}  ${event}`);
     input.onProgress?.(event);
     persistLog();
@@ -208,9 +258,15 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     telemetry.callbackHandler ? [telemetry.callbackHandler] : undefined, // Task 2: thread handler into each LLM call
   ); // L1-01: routing + cost ledger
 
+  // Environment (Basic Auth → login → start path) runs first; the caller passes the start URL as `url` unless --url overrides it.
+  const envRun = await startEnvironment(input, cfg, onProgress);
+  if (envRun) {
+    envSecrets = envRun.applied.secrets;
+  }
+
   // Auth: load storageState into the gateway (observe) and pass the path to the runner (validate).
-  let storageState: StorageState | undefined;
-  let sessionPath: string | undefined;
+  let storageState: StorageState | undefined = envRun?.applied.storageState;
+  let sessionPath: string | undefined = envRun?.sessionPath;
   const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
   if (input.sessionFile) {
     sessionPath = resolve(input.sessionFile);
@@ -226,6 +282,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     storageState,
     channel: cfg.browser.channel,
     headless: !input.headed,
+    httpCredentials: envRun?.applied.httpCredentials,
   });
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
@@ -289,7 +346,17 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     styleText,
     languageText,
     runWriter,
-    validate: (runDir: string) => validateSuite(runDir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
+    validate: async (runDir: string) =>
+      redactValidation(
+        await validateSuite(runDir, {
+          storageStatePath: sessionPath,
+          channel: cfg.browser.channel,
+          workers: cfg.playwrightWorkers,
+          screencast: input.screencast,
+          httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
+        }),
+        envSecrets,
+      ),
     maxRepair: cfg.maxRepair,
     onProgress,
     // #38: persist study + snapshots the moment observe succeeds, so a mid-run kill still leaves
@@ -627,7 +694,9 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   // Parity with runExploration (#38): buffer progress into run.log, flushed incrementally so a
   // mid-run kill leaves the log on disk. `persistLog` is wired once the run dir exists.
   let persistLog: () => void = () => undefined; // no-op until the run dir exists
-  const onProgress = (event: string): void => {
+  let envSecrets: string[] = []; // secret values of an applied environment — masked in every progress line / run.log
+  const onProgress = (raw: string): void => {
+    const event = redact(raw, envSecrets, false);
     logLines.push(`${new Date().toISOString()}  ${event}`);
     input.onProgress?.(event);
     persistLog();
@@ -644,7 +713,12 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     telemetry.callbackHandler ? [telemetry.callbackHandler] : undefined, // Task 2: thread handler into each LLM call
   ); // L1-01: per-role routing + cost ledger
 
-  let storageState: StorageState | undefined;
+  const envRun = await startEnvironment(input, cfg, onProgress);
+  if (envRun) {
+    envSecrets = envRun.applied.secrets;
+  }
+
+  let storageState: StorageState | undefined = envRun?.applied.storageState;
   const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
   if (input.sessionFile) storageState = await sessionStore.loadFile(resolve(input.sessionFile));
   // load() (not loadFile): actionable message on a missing named session, not a raw ENOENT (L1-05).
@@ -655,6 +729,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     storageState,
     channel: cfg.browser.channel,
     headless: !input.headed,
+    httpCredentials: envRun?.applied.httpCredentials,
   });
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
@@ -931,12 +1006,17 @@ export async function runAutomate(input: {
   projectDir?: string;
   /** #94 (BORROW-05): record a `.webm` per scenario during --validate (review-gate affordance). Default off. */
   screencast?: boolean;
+  /** Environment description (Basic Auth → login → start path) for the --validate run; ignored without --validate. */
+  environment?: Environment;
+  headed?: boolean;
   onProgress?: (event: string) => void;
 }): Promise<AutomateResult> {
   const cfg = input.config;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
-  const onProgress = input.onProgress ?? ((): void => undefined);
+  let envSecrets: string[] = [];
+  const emit = input.onProgress ?? ((): void => undefined);
+  const onProgress = (raw: string): void => emit(redact(raw, envSecrets, false));
   // #40: automate now repairs (multiple codegen calls) → warn as it nears the budget, like explore.
   let warnedBudget = false;
   const onCharge = (used: number, max: number): void => {
@@ -1008,6 +1088,13 @@ export async function runAutomate(input: {
       sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
     }
 
+    // Environment for the validation run: Basic Auth for the context, the post-login session for use.storageState.
+    const envRun = input.validate ? await startEnvironment(input, cfg, onProgress) : undefined;
+    if (envRun) {
+      envSecrets = envRun.applied.secrets;
+      if (envRun.sessionPath) sessionPath = envRun.sessionPath;
+    }
+
     if (input.validate) {
       // Onboarding guardrail: validation runs the generated suite → fail fast with a copy-paste fix
       // before spending LLM calls on codegen. FIX B (0.3.3): pass the channel — skipped when a system
@@ -1021,6 +1108,7 @@ export async function runAutomate(input: {
               backend: "lib",
               storageState: sessionPath ? await new SessionStore(resolve(input.sessionsDir ?? ".auth")).loadFile(sessionPath) : undefined,
               channel: cfg.browser.channel,
+              httpCredentials: envRun?.applied.httpCredentials,
             }),
           )
         : undefined;
@@ -1034,7 +1122,17 @@ export async function runAutomate(input: {
             await runWriter.writeSuite(s);
             return s;
           },
-          validate: () => validateSuite(runWriter.dir, { storageStatePath: sessionPath, channel: cfg.browser.channel, workers: cfg.playwrightWorkers, screencast: input.screencast }),
+          validate: async () =>
+            redactValidation(
+              await validateSuite(runWriter.dir, {
+                storageStatePath: sessionPath,
+                channel: cfg.browser.channel,
+                workers: cfg.playwrightWorkers,
+                screencast: input.screencast,
+                httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
+              }),
+              envSecrets,
+            ),
           maxRepair: cfg.maxRepair,
           onProgress,
           lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair

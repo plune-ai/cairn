@@ -33,6 +33,7 @@ import type { PageStudy } from "../observe/index.js";
 // C1-01 — shared umbrella core: flag→config, the cost footer, and the modality registry/dispatch.
 import { resolveConfig, printCost, runModality, MODALITIES, makeCliProgress } from "../core/index.js";
 import { dirGlyph } from "../eval/legend.js";
+import { ENV_FILE_HELP, environmentForRun, loadEnvironment } from "../environment/index.js";
 
 /**
  * Shared capture action for `cairn session capture` and the flat `cairn login` alias.
@@ -109,7 +110,8 @@ export function buildProgram(): Command {
   program
     .command("explore")
     .description("Explore a page and generate methodology-based test cases (Sprint 2: no code)")
-    .requiredOption("--url <url>", "page URL")
+    .option("--url <url>", "page URL (required unless --env-file gives a baseUrl)")
+    .option("--env-file <path>", ENV_FILE_HELP)
     .option("--backend <kind>", "lib | cli (overrides BROWSER_BACKEND)")
     .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download; helps OAuth)")
     .option("--session <name>", "name of the saved session (.auth/<name>.storageState.json)")
@@ -264,7 +266,8 @@ export function buildProgram(): Command {
   program
     .command("design")
     .description("Explore a page and WRITE test cases in ATC format (.md, with selectors), WITHOUT code")
-    .requiredOption("--url <url>", "page URL")
+    .option("--url <url>", "page URL (required unless --env-file gives a baseUrl)")
+    .option("--env-file <path>", ENV_FILE_HELP)
     .option("--session <name>", "name of the saved session")
     .option("--session-file <path>", "path to a storageState file")
     .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download; helps OAuth)")
@@ -282,7 +285,8 @@ export function buildProgram(): Command {
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(
       async (opts: {
-        url: string;
+        url?: string;
+        envFile?: string;
         session?: string;
         sessionFile?: string;
         channel?: string;
@@ -304,14 +308,16 @@ export function buildProgram(): Command {
         // #80: --style resolves to a house-style pack file (prompts/styles/<v>.md or a path) → {{style}} slot,
         // else the built-in inline hint (happy/negative/coverage). Methodology is never touched.
         const styleText = await resolveStyleText(opts.style);
-        process.stderr.write(`▸ Designing test cases for ${opts.url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
+        const { url, environment } = await environmentForRun({ url: opts.url, envFile: opts.envFile });
+        process.stderr.write(`▸ Designing test cases for ${url}${opts.session ? ` (session: ${opts.session})` : ""}…\n`);
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
           isTTY: Boolean(process.stderr.isTTY),
           now: Date.now,
         });
         const result = await runDesign({
-          url: opts.url,
+          url,
+          environment,
           config,
           sessionName: opts.session,
           sessionFile: opts.sessionFile,
@@ -352,6 +358,7 @@ export function buildProgram(): Command {
     .description("Generate @playwright/test from ready cases (runs/<id>/testcases/*.md)")
     .requiredOption("--run <dir>", "run folder: runs/<id>, a bare <id>, or an absolute path (Git Bash: quote or use /)")
     .option("--validate", "run the generated tests (a session is required)")
+    .option("--env-file <path>", ENV_FILE_HELP + " — applied for --validate")
     .option("--session <name>", "session name for validation")
     .option("--session-file <path>", "path to storageState for validation")
     .option("--channel <channel>", "system browser channel, e.g. chrome — validate on your installed Chrome (no bundled-Chromium download)")
@@ -361,7 +368,7 @@ export function buildProgram(): Command {
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(
-      async (opts: { run: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; decider?: string; deciderShadow?: boolean }) => {
+      async (opts: { run: string; envFile?: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; decider?: string; deciderShadow?: boolean }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider, deciderShadow: opts.deciderShadow });
         process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
         const progress = makeCliProgress({
@@ -369,9 +376,11 @@ export function buildProgram(): Command {
           isTTY: Boolean(process.stderr.isTTY),
           now: Date.now,
         });
+        const environment = opts.validate ? await loadEnvironment({ file: opts.envFile }) : undefined;
         const result = await runAutomate({
           runDir: opts.run,
           config,
+          environment,
           validate: opts.validate,
           sessionName: opts.session,
           sessionFile: opts.sessionFile,

@@ -20,12 +20,19 @@ export interface RawTestResult {
   error?: string;
 }
 
+/** Names of the environment variables that hold Basic Auth (never the values). */
+export interface HttpCredentialsEnv {
+  usernameVar: string;
+  passwordVar: string;
+}
+
 export function configContent(
   runDir: string,
   storageStatePath?: string,
   channel?: string,
   workers = 5,
   screencastDir?: string,
+  httpCredentialsEnv?: HttpCredentialsEnv,
 ): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
@@ -36,6 +43,14 @@ export function configContent(
   // #94 (BORROW-05): opt-in per-scenario screencast — Playwright's built-in video. One .webm per test,
   // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
   if (screencastDir) parts.push(`video: 'on'`);
+  // Basic Auth: the generated config only NAMES the variables; the runner process reads the values from its own
+  // environment, so no secret is ever written to disk.
+  if (httpCredentialsEnv) {
+    const read = (name: string): string => `process.env[${JSON.stringify(name)}] ?? ''`;
+    parts.push(
+      `httpCredentials: { username: ${read(httpCredentialsEnv.usernameVar)}, password: ${read(httpCredentialsEnv.passwordVar)} }`,
+    );
+  }
   parts.push(launchOpts);
   const use = `{ ${parts.join(", ")} }`;
   const outputDir = screencastDir ? `\n  outputDir: ${JSON.stringify(screencastDir)},` : "";
@@ -63,6 +78,8 @@ export interface RunSpecsOptions {
    * step-chapter sidecar (`<dir>/screencasts.json`) for the review gate. Opt-in; off when undefined.
    */
   screencastDir?: string;
+  /** Basic Auth for the generated suite: variable NAMES; the runner reads the values from process.env. */
+  httpCredentialsEnv?: HttpCredentialsEnv;
 }
 
 /** #94: one chapter marker — a scenario step title at its offset (ms) from the start of the `.webm`. */
@@ -194,7 +211,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   const screencastDir = opts.screencastDir ? resolve(opts.screencastDir) : undefined;
   await writeFile(
     configPath,
-    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir),
+    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv),
     "utf8",
   );
 
