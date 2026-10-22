@@ -36,6 +36,10 @@ export {
 } from "./environment/index.js";
 export type { Environment, AppliedEnvironment } from "./environment/index.js";
 
+// Test mailbox + TOTP for browser scenarios (ExploreInput.mailbox; off unless a session is passed).
+export { MailboxSession, MailsacProvider, mailsacFromEnv } from "./mailbox/index.js";
+export type { MailboxStep } from "./mailbox/index.js";
+
 // Config.
 export { loadConfig } from "./config/index.js";
 export { resolveConfig } from "./core/index.js";

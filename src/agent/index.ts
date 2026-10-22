@@ -5,6 +5,7 @@ import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
 import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
 import type { AppliedEnvironment, Environment } from "../environment/index.js";
+import type { MailboxSession } from "../mailbox/index.js";
 import { ensureBrowsersInstalled } from "../browser/preflight.js";
 import { RoleRouter, type CostReport } from "../llm/index.js";
 import { CallBudget } from "../llm/structured.js";
@@ -106,6 +107,8 @@ export interface ExploreInput {
    * run starts (`url` is where the run then explores — the CLI defaults it to the start URL). Absent = as before.
    */
   environment?: Environment;
+  /** Mailbox/TOTP session (src/mailbox, ADR-0023): its addresses, links, codes and TOTP secret are masked in progress, run.log and validation errors. Off when absent. */
+  mailbox?: MailboxSession;
 }
 
 /** What a run takes from an applied environment (see {@link startEnvironment}). */
@@ -233,7 +236,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   let persistLog: () => void = () => undefined; // no-op until the run dir exists
   let envSecrets: string[] = []; // secret values of an applied environment — masked in every progress line / run.log
   const onProgress = (raw: string): void => {
-    const event = redact(raw, envSecrets, false);
+    const event = redact(raw, [...envSecrets, ...(input.mailbox?.secrets ?? [])], false);
     logLines.push(`${new Date().toISOString()}  ${event}`);
     input.onProgress?.(event);
     persistLog();
@@ -355,7 +358,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           screencast: input.screencast,
           httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
         }),
-        envSecrets,
+        [...envSecrets, ...(input.mailbox?.secrets ?? [])],
       ),
     maxRepair: cfg.maxRepair,
     onProgress,
@@ -696,7 +699,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   let persistLog: () => void = () => undefined; // no-op until the run dir exists
   let envSecrets: string[] = []; // secret values of an applied environment — masked in every progress line / run.log
   const onProgress = (raw: string): void => {
-    const event = redact(raw, envSecrets, false);
+    const event = redact(raw, [...envSecrets, ...(input.mailbox?.secrets ?? [])], false);
     logLines.push(`${new Date().toISOString()}  ${event}`);
     input.onProgress?.(event);
     persistLog();
@@ -1008,6 +1011,8 @@ export async function runAutomate(input: {
   screencast?: boolean;
   /** Environment description (Basic Auth → login → start path) for the --validate run; ignored without --validate. */
   environment?: Environment;
+  /** Mailbox/TOTP session (src/mailbox, ADR-0023): its addresses, links, codes and TOTP secret are masked in progress, run.log and validation errors. Off when absent. */
+  mailbox?: MailboxSession;
   headed?: boolean;
   onProgress?: (event: string) => void;
 }): Promise<AutomateResult> {
@@ -1016,7 +1021,7 @@ export async function runAutomate(input: {
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   let envSecrets: string[] = [];
   const emit = input.onProgress ?? ((): void => undefined);
-  const onProgress = (raw: string): void => emit(redact(raw, envSecrets, false));
+  const onProgress = (raw: string): void => emit(redact(raw, [...envSecrets, ...(input.mailbox?.secrets ?? [])], false));
   // #40: automate now repairs (multiple codegen calls) → warn as it nears the budget, like explore.
   let warnedBudget = false;
   const onCharge = (used: number, max: number): void => {
@@ -1131,7 +1136,7 @@ export async function runAutomate(input: {
                 screencast: input.screencast,
                 httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
               }),
-              envSecrets,
+              [...envSecrets, ...(input.mailbox?.secrets ?? [])],
             ),
           maxRepair: cfg.maxRepair,
           onProgress,
