@@ -83,7 +83,7 @@
   },
   "peerDependencies": {
     "@langfuse/client": "^6.0.0",
-    "@langfuse/langchain": "^5.4.1",
+    "@langfuse/langchain": "^6.0.1",
     "@langfuse/otel": "^6.0.1",
     "@langfuse/tracing": "^6.0.1",
     "@opentelemetry/api": "^1.9.1",
@@ -115,7 +115,7 @@
   },
   "devDependencies": {
     "@langfuse/client": "^6.0.0",
-    "@langfuse/langchain": "^5.4.1",
+    "@langfuse/langchain": "^6.0.1",
     "@langfuse/otel": "^6.0.1",
     "@langfuse/tracing": "^6.0.1",
     "@opentelemetry/api": "^1.9.1",
