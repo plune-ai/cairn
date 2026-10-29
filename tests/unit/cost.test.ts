@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CostLedger, extractUsage, priceFor, DEFAULT_PRICING } from "../../src/llm/cost.js";
+import { PROFILES, ROUTING_PRESETS } from "../../src/config/profiles.js";
 
 describe("CostLedger — explicit price (ADR-0022 decider)", () => {
   it("an explicit price wins over the table; the role appears only once recorded", () => {
@@ -36,6 +37,24 @@ describe("priceFor", () => {
   });
   it("unknown Groq model → undefined price (graceful; tokens still counted, ADR-0002)", () => {
     expect(priceFor("groq/does-not-exist", DEFAULT_PRICING)).toBeUndefined();
+  });
+});
+
+describe("the models the profiles and routing presets name (#212)", () => {
+  // The price table is the list of models Cairn knows: a model a profile names must be priced there. A retired
+  // model is caught only once it leaves the table (or by name below) - the live list is not read in a test.
+  const named = [...Object.values(PROFILES), ...Object.values(ROUTING_PRESETS)]
+    .flatMap((tiers) => Object.values(tiers))
+    .flatMap((tier) => (tier ? [tier.model] : []));
+  it("every one has a price in the default table", () => {
+    expect(named.filter((model) => priceFor(model, DEFAULT_PRICING) === undefined)).toEqual([]);
+  });
+  it("none is a model OpenRouter no longer serves", () => {
+    // Retired by 2026-10: deepseek-r1 answers 404; qwen-2-vl-72b is only an alias of qwen2.5-vl-72b.
+    for (const gone of ["deepseek/deepseek-r1", "qwen/qwen-2-vl-72b-instruct"]) {
+      expect(named).not.toContain(gone);
+      expect(priceFor(gone, DEFAULT_PRICING)).toBeUndefined();
+    }
   });
 });
 

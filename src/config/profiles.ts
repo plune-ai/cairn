@@ -13,11 +13,12 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
     vision: { provider: "anthropic", model: "claude-haiku-4-5", supportsVision: true },
   },
   // Economical: DeepSeek/Qwen. reasoning has no vision → the vision-tier provides Qwen-VL.
+  // #212: deepseek-r1 is gone from OpenRouter (404) → its R1 successor; qwen-2-vl-72b only aliases qwen2.5-vl-72b.
   openrouter: {
-    reasoning: { provider: "openrouter", model: "deepseek/deepseek-r1", supportsVision: false },
+    reasoning: { provider: "openrouter", model: "deepseek/deepseek-r1-0528", supportsVision: false },
     bulk: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
     judge: { provider: "openrouter", model: "qwen/qwen-2.5-72b-instruct", supportsVision: false },
-    vision: { provider: "openrouter", model: "qwen/qwen-2-vl-72b-instruct", supportsVision: true },
+    vision: { provider: "openrouter", model: "qwen/qwen2.5-vl-72b-instruct", supportsVision: true },
   },
   // Balanced: high-quality reasoning+vision on Anthropic, cheap bulk+judge on OpenRouter.
   mixed: {
