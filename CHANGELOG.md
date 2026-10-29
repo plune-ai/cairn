@@ -67,6 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model `qwen/qwen-2-vl-72b-instruct` had become an alias of `qwen/qwen2.5-vl-72b-instruct`, and the profile now names
   that model directly. The default price table follows the OpenRouter list of 2026-10-29 for both, and a test fails when
   a profile or a routing preset names a model the table does not know, or either of the two retired ids.
+- **`screencasts.json` names each video with `/` on any OS (#214).** On Windows the path was written with
+  backslashes (`screencasts\login\video.webm`), which a reader on another OS cannot resolve. The chapter offsets
+  are unchanged here: they still count from the first step, not from the video's first frame (#214, with #210).
 - **The destructive-action filters know Ukrainian and Russian, not English only (#185).** The crawler's
   destructive-link filter and the deletion-intent check matched English words, so on an app in another language
   neither refused anything: `--flow` followed a link named `Вийти`, which can end the saved session mid-run, a
