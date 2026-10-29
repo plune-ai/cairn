@@ -61,6 +61,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The TUI names a timed-out LLM step as itself, with its advice (#194).** A step past `STEP_TIMEOUT_MS` showed as
+  `Failed: unknown` after `explore` or `design`, and after `automate` - whose error reaches the TUI unwrapped and
+  names the Anthropic profile - as `Failed: config` with advice to check an API key. It is now `Failed: llm-timeout`, told by the same check the CLI's run summary uses, with the advice to try
+  `--routing volume-fast`, `LLM_PROFILE=anthropic`, or a higher `STEP_TIMEOUT_MS`.
 - **The `openrouter` profile no longer names models OpenRouter has retired (#212).** Its reasoning model
   `deepseek/deepseek-r1` answered `404 ... is no longer available on OpenRouter`, so every run on the profile failed
   on its first design call; it is now `deepseek/deepseek-r1-0528`, the R1 successor that OpenRouter serves. The vision

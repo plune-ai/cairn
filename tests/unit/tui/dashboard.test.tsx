@@ -10,7 +10,10 @@ vi.mock("../../../src/index.js", () => ({
   runAutomate: vi.fn(),
 }));
 
-import { runExploration, resolveConfig } from "../../../src/index.js";
+import { runExploration, runAutomate, resolveConfig } from "../../../src/index.js";
+import { timeoutInvoke } from "../../../src/llm/structured.js";
+import { finalizeFailure } from "../../../src/agent/finalize.js";
+import type { RunWriter } from "../../../src/artifacts/index.js";
 import { RunDashboardScreen } from "../../../src/tui/screens/run-dashboard-screen.js";
 import { RouterProvider, type RouterApi } from "../../../src/tui/router-context.js";
 
@@ -121,5 +124,55 @@ describe("RunDashboardScreen", () => {
     await waitFor(() => expect(lastFrame() ?? "").toContain("Failed: session"));
     expect(lastFrame() ?? "").toContain("recapture"); // ERROR_HINTS.session
     unmount();
+  });
+
+  /** The error a timed-out step really throws (timeoutInvoke); its label names an OpenRouter model of the Anthropic family. */
+  async function stepTimeout(): Promise<Error> {
+    const slow = timeoutInvoke(() => new Promise<never>(() => undefined), {
+      timeoutMs: 1,
+      label: "role 'reasoner', model 'anthropic/claude-3.5-sonnet'",
+    });
+    return slow(undefined as never, []).catch((e: unknown) => e as Error);
+  }
+
+  async function shown(command: "explore" | "automate"): Promise<string> {
+    const values = command === "automate" ? { runDir: "/tmp/runs/r1", validate: true } : { url: "https://x", style: "all", headed: false };
+    const { lastFrame, unmount } = render(
+      <RouterProvider value={routerApi({})}>
+        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+        <RunDashboardScreen command={command} values={values as any} />
+      </RouterProvider>,
+    );
+    await waitFor(() => expect(lastFrame() ?? "").toContain("Failed: "));
+    const frame = (lastFrame() ?? "").replace(/\s+/g, " ");
+    unmount();
+    return frame;
+  }
+
+  function expectTimeoutAdvice(frame: string): void {
+    expect(frame).toContain("Failed: llm-timeout");
+    expect(frame).toContain("--routing volume-fast");
+    expect(frame).toContain("LLM_PROFILE=anthropic");
+    expect(frame).toContain("STEP_TIMEOUT_MS");
+    expect(frame).not.toContain("Check your API key"); // ERROR_HINTS.config
+  }
+
+  it("explore: a step past STEP_TIMEOUT_MS, as the run's failure path wraps it, is its own kind, not unknown (#194)", async () => {
+    const nowhere = { runId: "r1", dir: "/tmp/runs/r1", writeReport: async () => undefined, writeReportMd: async () => undefined, writeLog: async () => undefined } as unknown as RunWriter;
+    const wrapped = await finalizeFailure(nowhere, { runId: "r1", url: "https://x", mode: "explore", error: await stepTimeout(), logLines: [] });
+    vi.mocked(runExploration).mockImplementation((async () => {
+      throw wrapped;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any);
+    expectTimeoutAdvice(await shown("explore"));
+  });
+
+  it("automate: the step timeout as it is thrown, naming the Anthropic profile, is its own kind, not a missing key (#194)", async () => {
+    const raw = await stepTimeout();
+    vi.mocked(runAutomate).mockImplementation((async () => {
+      throw raw;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any);
+    expectTimeoutAdvice(await shown("automate"));
   });
 });
