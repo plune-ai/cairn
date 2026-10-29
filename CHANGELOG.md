@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--screencast` keeps a Playwright trace beside each video (#210).** The validation config now records
+  `trace: 'on'` next to `video: 'on'`, so `runs/<id>/screencasts/` holds a `trace.zip` per scenario, and each
+  `screencasts.json` entry names it in `trace` (relative to the run dir, with `/`). A trace weighs about six times the
+  video: 2.19 MiB against 359 KiB for four scenarios on a local Plune stand (plune-ai/plune#1880). Runs without
+  `--screencast` are unchanged.
+
 - **Test mailbox and TOTP for browser scenarios (#206, ADR-0023).** A `MailsacProvider` configured only from
   `MAILSAC_API_KEY` (plus optional `MAILSAC_ADDRESS` / `MAILSAC_DOMAIN`) and a `MailboxSession` with the steps
   `mailbox.create`, `mailbox.waitFor`, `mailbox.extractLink`, `mailbox.extractCode`, `mailbox.openLink` and
@@ -60,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cairn api` with the flags. Without the flag nothing changes.
 
 ### Fixed
+
+- **Screencast chapters start where the step is in the video (#214).** A chapter's `atMs` was the sum of the step
+  durations before it, while the `.webm` starts at the browser's first frame: in the first scenario of a worker, whose
+  hooks launch the browser, chapters ran up to seconds late and could point past the end of the video. The offsets now
+  come from the trace - each step's start against the first frame's swap time, the clock Playwright places video frames
+  by - and a step that began before the first frame sits at 0. An entry says which it has in `timing`: `trace`, or
+  `estimated` when its trace is missing, unreadable or lists other steps.
 
 - **The TUI names a timed-out LLM step as itself, with its advice (#194).** A step past `STEP_TIMEOUT_MS` showed as
   `Failed: unknown` after `explore` or `design`, and after `automate` - whose error reaches the TUI unwrapped and

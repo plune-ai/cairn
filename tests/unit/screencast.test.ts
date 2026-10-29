@@ -1,9 +1,19 @@
 import { describe, it, expect } from "vitest";
+import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   configContent,
   screencastsFromRunnerOutput,
   screencastsFromJson,
+  withTraceTiming,
+  type ScreencastEntry,
 } from "../../src/validate/runner.js";
+import { stepsFromTrace } from "../../src/validate/trace-chapters.js";
+import { readFileSync } from "node:fs";
+
+/** #214: the first scenario of a worker - its first step 2 211 ms before the video's first frame (see the fixture's builder note). */
+const FIRST_IN_WORKER = join(import.meta.dirname, "../fixtures/trace/first-in-worker.zip");
 
 // A Playwright JSON-reporter result with a recorded video + step timeline. The top-level steps include
 // the two fixed hook steps (which advance the clock but are NOT scenario chapters) plus two test.step()s.
@@ -49,6 +59,11 @@ describe("#94 configContent — opt-in screencast recording", () => {
     expect(cfg).toMatch(/video:\s*'on'/);
     expect(cfg).toMatch(/outputDir:\s*"\/runs\/x\/screencasts"/);
   });
+
+  it("#210: records a trace beside each video, and none without recording", () => {
+    expect(configContent("/runs/x", undefined, undefined, 5, "/runs/x/screencasts")).toMatch(/trace:\s*'on'/);
+    expect(configContent("/runs/x")).not.toMatch(/trace:/);
+  });
 });
 
 describe("#94 screencastsFromJson — .webm + step chapters", () => {
@@ -71,6 +86,15 @@ describe("#94 screencastsFromJson — .webm + step chapters", () => {
     expect(e.chapters[1]!.atMs).toBe(500 + 1200);
   });
 
+  it("#210: keeps the trace's path relative to the run dir with /, and marks the offsets estimated until the trace is read", () => {
+    const json = JSON.parse(RECORDED_JSON);
+    json.suites[0].specs[0].tests[0].results[0].attachments.push({ name: "trace", contentType: "application/zip", path: "/runs/abc/screencasts/login/trace.zip" });
+    const e = screencastsFromJson(json, "/runs/abc")[0]!;
+    expect(e.trace).toBe("screencasts/login/trace.zip");
+    expect(e.timing).toBe("estimated");
+    expect(screencastsFromJson(JSON.parse(RECORDED_JSON), "/runs/abc")[0]!.trace).toBeUndefined();
+  });
+
   it("skips a test with no video attachment (nothing to link)", () => {
     const json = {
       suites: [{ specs: [{ title: "no recording", tests: [{ results: [{ status: "passed", steps: [] }] }] }] }],
@@ -88,5 +112,46 @@ describe("#94 screencastsFromRunnerOutput — tolerant parsing (recorder failure
   it("parses the video + chapters out of real reporter stdout", () => {
     const out = screencastsFromRunnerOutput(`noise before json\n${RECORDED_JSON}`, "/runs/abc");
     expect(out[0]?.chapters).toHaveLength(2);
+  });
+});
+
+describe("#214 chapter offsets from the trace", () => {
+  it("counts from the video's first frame: steps before it sit at 0, the next one where it really is", () => {
+    // The estimate put «see it added» at 2 231 ms of a 1.2 s video; the trace puts it 20 ms in.
+    expect(stepsFromTrace(readFileSync(FIRST_IN_WORKER))).toEqual([
+      { title: "open the shop", atMs: 0 },
+      { title: "add an item", atMs: 0 },
+      { title: "see it added", atMs: 20 },
+    ]);
+  });
+
+  it("withTraceTiming: an entry whose trace has the same steps takes its offsets; a different list, a missing trace or none keep the estimate", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "cairn-214-"));
+    try {
+      await mkdir(join(runDir, "screencasts", "shop"), { recursive: true });
+      await copyFile(FIRST_IN_WORKER, join(runDir, "screencasts", "shop", "trace.zip"));
+      const estimated = (titles: string[], trace?: string): ScreencastEntry => ({
+        test: "shop",
+        video: "screencasts/shop/video.webm",
+        ...(trace ? { trace } : {}),
+        timing: "estimated",
+        chapters: titles.map((title, i) => ({ title, atMs: 1000 * i })),
+      });
+      const steps = ["open the shop", "add an item", "see it added"];
+      const [exact, other, gone, none] = await withTraceTiming(
+        [
+          estimated(steps, "screencasts/shop/trace.zip"),
+          estimated(["open the shop", "pay"], "screencasts/shop/trace.zip"),
+          estimated(steps, "screencasts/missing/trace.zip"),
+          estimated(steps),
+        ],
+        runDir,
+      );
+      expect(exact).toMatchObject({ timing: "trace", chapters: [{ atMs: 0 }, { atMs: 0 }, { title: "see it added", atMs: 20 }] });
+      for (const kept of [other, gone, none]) expect(kept!.timing).toBe("estimated");
+      expect(other!.chapters.map((c) => c.atMs)).toEqual([0, 1000]);
+    } finally {
+      await rm(runDir, { recursive: true, force: true });
+    }
   });
 });

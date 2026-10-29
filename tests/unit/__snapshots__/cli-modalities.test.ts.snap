@@ -88,8 +88,9 @@ Options:
   --into-project [dir]   write specs into an existing Playwright project's
                          testDir (detect playwright.config.*; respects
                          testDir/naming) instead of runs/<id>/tests
-  --screencast           record a .webm per scenario (with step chapters) during
-                         validation → runs/<id>/screencasts/ for the review gate
+  --screencast           record a .webm and a trace per scenario (with step
+                         chapters) during validation → runs/<id>/screencasts/
+                         for the review gate
   --decider <provider>   opt-in decision layer: off | jev | laya | compat (sets
                          DECIDER; see docs/decider.md)
   --decider-shadow       with a decider: record its answers next to the current
