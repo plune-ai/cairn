@@ -27,9 +27,9 @@ export const DEFAULT_PRICING: Record<string, ModelPrice> = {
   "claude-haiku-4-5": { inputPer1M: 1, outputPer1M: 5 },
   // OpenRouter — approximate, movable (ADR-0002, self-hosted Langfuse needs custom pricing).
   "deepseek/deepseek-chat": { inputPer1M: 0.28, outputPer1M: 0.88 },
-  "deepseek/deepseek-r1": { inputPer1M: 0.55, outputPer1M: 2.19 },
+  "deepseek/deepseek-r1-0528": { inputPer1M: 0.5, outputPer1M: 2.15 },
   "qwen/qwen-2.5-72b-instruct": { inputPer1M: 0.35, outputPer1M: 0.4 },
-  "qwen/qwen-2-vl-72b-instruct": { inputPer1M: 0.4, outputPer1M: 0.4 },
+  "qwen/qwen2.5-vl-72b-instruct": { inputPer1M: 0.8, outputPer1M: 1 },
   // Groq — approximate, movable (L1-02; the lowest-latency `fast`-preset worker).
   // Any Groq model absent here still yields a null cost (graceful), tokens are still counted.
   "llama-3.3-70b-versatile": { inputPer1M: 0.59, outputPer1M: 0.79 },
