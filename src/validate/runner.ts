@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
+import { stepsFromTrace } from "./trace-chapters.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -33,6 +34,7 @@ export function configContent(
   workers = 5,
   screencastDir?: string,
   httpCredentialsEnv?: HttpCredentialsEnv,
+  secretsInRun = false,
 ): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
@@ -42,7 +44,11 @@ export function configContent(
   if (channel) parts.push(`channel: ${JSON.stringify(channel)}`);
   // #94 (BORROW-05): opt-in per-scenario screencast — Playwright's built-in video. One .webm per test,
   // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
+  // #210: a trace beside each video - its steps and frames give the chapters their exact offsets (#214).
+  // Playwright writes the context options (Basic Auth in the clear), every request's headers and cookies and every
+  // typed value into it, so a run with a session, Basic Auth, environment secrets or a mailbox keeps the video alone.
   if (screencastDir) parts.push(`video: 'on'`);
+  if (screencastDir && !storageStatePath && !httpCredentialsEnv && !secretsInRun) parts.push(`trace: 'on'`);
   // Basic Auth: the generated config only NAMES the variables; the runner process reads the values from its own
   // environment, so no secret is ever written to disk.
   if (httpCredentialsEnv) {
@@ -80,6 +86,8 @@ export interface RunSpecsOptions {
   screencastDir?: string;
   /** Basic Auth for the generated suite: variable NAMES; the runner reads the values from process.env. */
   httpCredentialsEnv?: HttpCredentialsEnv;
+  /** The suite types environment or mailbox secrets: no trace is recorded, since it would keep them (#210). */
+  secretsInRun?: boolean;
 }
 
 /** #94: one chapter marker — a scenario step title at its offset (ms) from the start of the `.webm`. */
@@ -92,6 +100,14 @@ export interface ScreencastEntry {
   test: string;
   /** Path to the `.webm`, relative to runDir (the artifact travels with the run dir), with `/` on any OS (#214). */
   video: string;
+  /** #210: the Playwright trace of the same test, relative to runDir with `/`; absent when none was written. */
+  trace?: string;
+  /**
+   * #214: where the chapter offsets come from. `trace` — the steps' start times against the video's first frame;
+   * `estimated` — the sum of the step durations before each, which runs late by the hooks' time before the first frame.
+   * Absent in a `screencasts.json` written before it existed: read that as `estimated`.
+   */
+  timing?: "trace" | "estimated";
   chapters: ScreencastChapter[];
 }
 
@@ -139,6 +155,7 @@ export function screencastsFromJson(json: PwJson, runDir: string): ScreencastEnt
       const result = spec.tests?.[0]?.results?.[0];
       const videoPath = result?.attachments?.find((a) => a.name === "video" && a.path)?.path;
       if (!videoPath) continue; // no recording for this test → nothing to link
+      const tracePath = result?.attachments?.find((a) => a.name === "trace" && a.path)?.path;
       const chapters: ScreencastChapter[] = [];
       let atMs = 0;
       for (const step of result?.steps ?? []) {
@@ -147,7 +164,8 @@ export function screencastsFromJson(json: PwJson, runDir: string): ScreencastEnt
         }
         atMs += step.duration ?? 0; // hooks still advance the clock so offsets stay aligned to the video
       }
-      out.push({ test: spec.title, video: relative(runDir, videoPath).split(sep).join("/"), chapters });
+      const fromRun = (p: string): string => relative(runDir, p).split(sep).join("/");
+      out.push({ test: spec.title, video: fromRun(videoPath), ...(tracePath ? { trace: fromRun(tracePath) } : {}), timing: "estimated", chapters });
     }
     for (const child of s.suites ?? []) walk(child);
   };
@@ -164,6 +182,26 @@ export function screencastsFromRunnerOutput(stdout: string, runDir: string): Scr
   } catch {
     return [];
   }
+}
+
+/**
+ * #214: each entry with a trace takes its chapter offsets from it. The titles and their order stay the reporter's; the
+ * trace's times replace the estimate only when its top-level steps are the same list, so a mismatch keeps `estimated`.
+ * A trace that cannot be read keeps the estimate too: the chapters are a review aid and never fail the run.
+ */
+export async function withTraceTiming(entries: ScreencastEntry[], runDir: string): Promise<ScreencastEntry[]> {
+  return Promise.all(
+    entries.map(async (entry) => {
+      if (entry.trace === undefined) return entry;
+      try {
+        const steps = stepsFromTrace(await readFile(join(runDir, entry.trace)));
+        const same = steps !== undefined && steps.length === entry.chapters.length && steps.every((s, i) => s.title === entry.chapters[i]!.title);
+        return same ? { ...entry, timing: "trace" as const, chapters: steps } : entry;
+      } catch {
+        return entry;
+      }
+    }),
+  );
 }
 
 /**
@@ -211,7 +249,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   const screencastDir = opts.screencastDir ? resolve(opts.screencastDir) : undefined;
   await writeFile(
     configPath,
-    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv),
+    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv, opts.secretsInRun),
     "utf8",
   );
 
@@ -243,7 +281,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   // logs nothing-fatal and never sinks the run (the tests still ran — only the review affordance is lost).
   if (screencastDir) {
     try {
-      const entries = screencastsFromRunnerOutput(stdout, absRunDir);
+      const entries = await withTraceTiming(screencastsFromRunnerOutput(stdout, absRunDir), absRunDir);
       await writeFile(join(screencastDir, "screencasts.json"), JSON.stringify(entries, null, 2), "utf8");
     } catch {
       // screencast is an optional review affordance — never fail the run over it

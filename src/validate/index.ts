@@ -66,6 +66,8 @@ export interface ValidateOptions {
   screencast?: boolean;
   /** Basic Auth for the run: environment variable NAMES (values are read from process.env by the runner). */
   httpCredentialsEnv?: { usernameVar: string; passwordVar: string };
+  /** The suite types environment or mailbox secrets: a screencast then keeps no trace (#210). */
+  secretsInRun?: boolean;
 }
 
 /**
@@ -89,6 +91,7 @@ export async function validateSuite(
         workers: opts.workers,
         screencastDir,
         httpCredentialsEnv: opts.httpCredentialsEnv,
+        secretsInRun: opts.secretsInRun,
       }),
     );
   }
