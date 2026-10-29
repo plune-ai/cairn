@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { sep } from "node:path";
 import {
   configContent,
   screencastsFromRunnerOutput,
@@ -58,8 +57,9 @@ describe("#94 screencastsFromJson — .webm + step chapters", () => {
     expect(entries).toHaveLength(1);
     const e = entries[0]!;
     expect(e.test).toBe("login flow");
-    // path is stored relative to the run dir so the artifact travels with it
-    expect(e.video).toBe(["screencasts", "login", "video.webm"].join(sep));
+    // path is stored relative to the run dir so the artifact travels with it - in POSIX form on any OS (#214),
+    // so a reader on another OS resolves it (Windows wrote `screencasts\login\video.webm`)
+    expect(e.video).toBe("screencasts/login/video.webm");
     // hook steps are dropped from chapters; the two scenario steps remain, in order
     expect(e.chapters.map((c) => c.title)).toEqual(["Navigate to login", "Submit credentials"]);
   });
