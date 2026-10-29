@@ -41,8 +41,8 @@ describe("priceFor", () => {
 });
 
 describe("the models the profiles and routing presets name (#212)", () => {
-  // The price table is the list of models Cairn knows. A model a provider retires leaves it, so a profile
-  // that still names one fails here, not on its first call with a 404 "no longer available".
+  // The price table is the list of models Cairn knows: a model a profile names must be priced there. A retired
+  // model is caught only once it leaves the table (or by name below) - the live list is not read in a test.
   const named = [...Object.values(PROFILES), ...Object.values(ROUTING_PRESETS)]
     .flatMap((tiers) => Object.values(tiers))
     .flatMap((tier) => (tier ? [tier.model] : []));
