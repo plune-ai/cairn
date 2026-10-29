@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`probeInteractions` has an end, and says how far it got (#213).** After `exploreStates` the step was handed the
+  elements of every view, while the page was back on the first one; reading the state of a checkbox or switch that
+  is not on the page waited Playwright's 30 s default, element after element, which is how a page of views could
+  go quiet in `run.log` for 13+ minutes. The state of an element that is not visible is no longer read (and a visible one is
+  read for at most 2 s). Each act→observe now has 10 s, after which the element is skipped with a line in the log;
+  the whole step stops after 2 minutes with the count of elements tried; and a progress line comes every 10 safe
+  elements.
 - **The destructive-action filters know Ukrainian and Russian, not English only (#185).** The crawler's
   destructive-link filter and the deletion-intent check matched English words, so on an app in another language
   neither refused anything: `--flow` followed a link named `Вийти`, which can end the saved session mid-run, a

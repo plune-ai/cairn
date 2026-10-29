@@ -260,7 +260,11 @@ export async function runExploreGraph(
 
   // ── probeInteractions ─────────────────────────────────────────────────────
   deps.onProgress?.("probeInteractions — act→observe of safe elements…");
-  const transitions = await probeTransitions(deps.gateway, verified.filter((v) => v.verified));
+  const transitions = await probeTransitions(
+    deps.gateway,
+    verified.filter((v) => v.verified),
+    deps.onProgress ? { onProgress: deps.onProgress } : {},
+  );
   deps.onProgress?.(`probeInteractions — transitions observed: ${transitions.length}`);
 
   // ── documentarian: build + cache + persist the reusable interaction map (#93) ─────────────────
