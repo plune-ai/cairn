@@ -128,7 +128,7 @@ export function buildProgram(): Command {
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
-    .option("--screencast", "record a .webm and a trace per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
+    .option("--screencast", "record a .webm per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(async (opts: Record<string, unknown>) => {
@@ -364,7 +364,7 @@ export function buildProgram(): Command {
     .option("--channel <channel>", "system browser channel, e.g. chrome — validate on your installed Chrome (no bundled-Chromium download)")
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen, cheap judge on OpenRouter) (sets LLM_ROUTING)")
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
-    .option("--screencast", "with --validate: record a .webm and a trace per scenario (with step chapters) → runs/<id>/screencasts/ for the review gate")
+    .option("--screencast", "with --validate: record a .webm per scenario (with step chapters) → runs/<id>/screencasts/ for the review gate")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(

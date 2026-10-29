@@ -12,7 +12,10 @@ import {
 import { stepsFromTrace } from "../../src/validate/trace-chapters.js";
 import { readFileSync } from "node:fs";
 
-/** #214: the first scenario of a worker - its first step 2 211 ms before the video's first frame (see the fixture's builder note). */
+/**
+ * #214: the first scenario of a worker - its first step 2 211 ms before the video's first frame. Hand-built with a
+ * stored entry, a deflated one and an archive comment; a real Playwright trace is read in tests/integration/screencast-trace.test.ts.
+ */
 const FIRST_IN_WORKER = join(import.meta.dirname, "../fixtures/trace/first-in-worker.zip");
 
 // A Playwright JSON-reporter result with a recorded video + step timeline. The top-level steps include
@@ -63,6 +66,18 @@ describe("#94 configContent — opt-in screencast recording", () => {
   it("#210: records a trace beside each video, and none without recording", () => {
     expect(configContent("/runs/x", undefined, undefined, 5, "/runs/x/screencasts")).toMatch(/trace:\s*'on'/);
     expect(configContent("/runs/x")).not.toMatch(/trace:/);
+  });
+
+  it("#210: no trace when the run carries a session, Basic Auth or typed secrets - the trace would keep them in the clear", () => {
+    const basic = { usernameVar: "U", passwordVar: "P" };
+    for (const cfg of [
+      configContent("/runs/x", "/auth/s.json", undefined, 5, "/runs/x/screencasts"),
+      configContent("/runs/x", undefined, undefined, 5, "/runs/x/screencasts", basic),
+      configContent("/runs/x", undefined, undefined, 5, "/runs/x/screencasts", undefined, true),
+    ]) {
+      expect(cfg).toMatch(/video:\s*'on'/);
+      expect(cfg).not.toMatch(/trace:/);
+    }
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
-import { readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { ArtifactStore } from "../../src/artifacts/index.js";
 import { applyEnvironment, writeTempSession } from "../../src/environment/apply.js";
@@ -50,12 +50,25 @@ test('start page is reachable with the environment', async ({ page }) => {
         storageStatePath: sessionPath,
         httpCredentialsEnv: applied.httpCredentialsEnv,
         workers: 1,
+        screencastDir: join(run.dir, "screencasts"),
       });
       expect(results.map((r) => r.status)).toEqual(["passed"]);
 
       const config = await readFile(join(run.dir, "playwright.config.cjs"), "utf8");
       for (const v of Object.values(secrets)) expect(config).not.toContain(v);
       expect(config).toContain('process.env["VB_P"]');
+
+      // #210: a screencast keeps the video only. A trace would hold the Basic Auth password in the clear, the
+      // Authorization header and the session cookie.
+      const files = (await readdir(run.dir, { recursive: true })).map((f) => join(run.dir, f));
+      expect(files.some((f) => f.endsWith(".webm"))).toBe(true);
+      expect(files.filter((f) => f.endsWith(".zip"))).toEqual([]);
+      const basic = Buffer.from(`${secrets.VB_U}:${secrets.VB_P}`).toString("base64");
+      for (const f of files) {
+        if (!(await stat(f)).isFile()) continue;
+        const bytes = await readFile(f);
+        for (const v of [secrets.VB_P, secrets.VA_P, basic]) expect(bytes.includes(v), `${v} in ${f}`).toBe(false);
+      }
     } finally {
       for (const k of ["VB_U", "VB_P", "VA_U", "VA_P"]) delete process.env[k];
     }

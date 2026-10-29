@@ -34,6 +34,7 @@ export function configContent(
   workers = 5,
   screencastDir?: string,
   httpCredentialsEnv?: HttpCredentialsEnv,
+  secretsInRun = false,
 ): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
@@ -44,7 +45,10 @@ export function configContent(
   // #94 (BORROW-05): opt-in per-scenario screencast — Playwright's built-in video. One .webm per test,
   // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
   // #210: a trace beside each video - its steps and frames give the chapters their exact offsets (#214).
-  if (screencastDir) parts.push(`video: 'on'`, `trace: 'on'`);
+  // Playwright writes the context options (Basic Auth in the clear), every request's headers and cookies and every
+  // typed value into it, so a run with a session, Basic Auth or environment secrets keeps the video alone.
+  if (screencastDir) parts.push(`video: 'on'`);
+  if (screencastDir && !storageStatePath && !httpCredentialsEnv && !secretsInRun) parts.push(`trace: 'on'`);
   // Basic Auth: the generated config only NAMES the variables; the runner process reads the values from its own
   // environment, so no secret is ever written to disk.
   if (httpCredentialsEnv) {
@@ -82,6 +86,8 @@ export interface RunSpecsOptions {
   screencastDir?: string;
   /** Basic Auth for the generated suite: variable NAMES; the runner reads the values from process.env. */
   httpCredentialsEnv?: HttpCredentialsEnv;
+  /** The suite types environment or mailbox secrets: no trace is recorded, since it would keep them (#210). */
+  secretsInRun?: boolean;
 }
 
 /** #94: one chapter marker — a scenario step title at its offset (ms) from the start of the `.webm`. */
@@ -99,8 +105,9 @@ export interface ScreencastEntry {
   /**
    * #214: where the chapter offsets come from. `trace` — the steps' start times against the video's first frame;
    * `estimated` — the sum of the step durations before each, which runs late by the hooks' time before the first frame.
+   * Absent in a `screencasts.json` written before it existed: read that as `estimated`.
    */
-  timing: "trace" | "estimated";
+  timing?: "trace" | "estimated";
   chapters: ScreencastChapter[];
 }
 
@@ -242,7 +249,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   const screencastDir = opts.screencastDir ? resolve(opts.screencastDir) : undefined;
   await writeFile(
     configPath,
-    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv),
+    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv, opts.secretsInRun),
     "utf8",
   );
 
