@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
 
 const execFileAsync = promisify(execFile);
@@ -90,7 +90,7 @@ export interface ScreencastChapter {
 /** #94: a recorded scenario screencast — the `.webm` (relative to runDir) + its step chapters. */
 export interface ScreencastEntry {
   test: string;
-  /** Path to the `.webm`, relative to runDir (the artifact travels with the run dir). */
+  /** Path to the `.webm`, relative to runDir (the artifact travels with the run dir), with `/` on any OS (#214). */
   video: string;
   chapters: ScreencastChapter[];
 }
@@ -147,7 +147,7 @@ export function screencastsFromJson(json: PwJson, runDir: string): ScreencastEnt
         }
         atMs += step.duration ?? 0; // hooks still advance the clock so offsets stay aligned to the video
       }
-      out.push({ test: spec.title, video: relative(runDir, videoPath), chapters });
+      out.push({ test: spec.title, video: relative(runDir, videoPath).split(sep).join("/"), chapters });
     }
     for (const child of s.suites ?? []) walk(child);
   };
