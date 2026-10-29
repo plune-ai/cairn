@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`screencasts.json` names each video with `/` on any OS (#214).** On Windows the path was written with
   backslashes (`screencasts\login\video.webm`), which a reader on another OS cannot resolve. The chapter offsets
   are unchanged here: they still count from the first step, not from the video's first frame (#214, with #210).
+- **`probeInteractions` has an end, and says how far it got (#213).** After `exploreStates` the step was handed the
+  elements of the views it had opened, while the page was back on the first one; reading the state of a checkbox or
+  switch that is not on the page waited Playwright's 30 s default, element after element, which is how a page of
+  views could go quiet in `run.log` for 13+ minutes. The state of an element that is not visible is no longer read
+  (and a visible one is read for at most 2 s); a probe click waits at most 2 s. An element that still does not
+  answer within 15 s is skipped with a line in the log; no new element is started after 2 minutes, and the log says
+  how many were tried; a progress line comes every 10 safe elements.
 - **The destructive-action filters know Ukrainian and Russian, not English only (#185).** The crawler's
   destructive-link filter and the deletion-intent check matched English words, so on an app in another language
   neither refused anything: `--flow` followed a link named `Вийти`, which can end the saved session mid-run, a

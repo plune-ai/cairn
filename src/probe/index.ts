@@ -27,27 +27,87 @@ export function formatTransitions(transitions: Transition[]): string {
     .join("\n");
 }
 
+export interface ProbeOptions {
+  /** Where the step says how far it got and what it skipped (the run's progress → run.log). */
+  onProgress?: (event: string) => void;
+  /** The most one act→observe may take; past it the element is skipped (#213). */
+  elementTimeoutMs?: number;
+  /** After this long no new element is started; the one in hand finishes or is skipped (#213). */
+  budgetMs?: number;
+}
+
+/** A probe click waits this long for the element to be actionable, not the backend's default 30 s (#213). */
+const CLICK_TIMEOUT_MS = 2_000;
+/** Above a probe's own bounded reads (getState ≤ 4 s each) and click: a backstop for a call that hangs anyway. */
+const ELEMENT_TIMEOUT_MS = 15_000;
+const BUDGET_MS = 120_000;
+/** A progress line every this many safe elements, so a slow step is seen to move. */
+const PROGRESS_EVERY = 10;
+
+class ProbeTimeout extends Error {}
+
+function within<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ProbeTimeout()), ms);
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
+/** Click, observe; the revert is the caller's, so a slow revert never costs the transition already seen. */
+async function probeOne(gateway: BrowserGateway, el: ElementRef, skipped: () => boolean): Promise<Transition | undefined> {
+  const before = await gateway.getState(el);
+  if (!before.visible || !before.enabled) return undefined; // don't touch hidden/disabled
+  if (skipped()) return undefined; // a read that came back after the limit: no click nobody would revert
+
+  const clicked = await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS });
+  if (!clicked.ok) return undefined;
+  const after = await gateway.getState(el);
+  return { ref: el.ref, role: el.role, name: el.name, before, after };
+}
+
 /**
  * Stage B grounding: for safe (reversible) elements, perform a click, OBSERVE the state transition,
  * and revert it. Does NOT touch buttons (submit/delete), links (navigation), or file inputs.
  * Gives the designer real transitions instead of guessed ones → grounds state-transition assertions.
+ *
+ * #213: the step has an end. A probe click waits at most 2 s; an element that does not answer within
+ * `elementTimeoutMs` is skipped; no element is started after `budgetMs` - each said through `onProgress`, with a
+ * line every 10 elements.
  */
 export async function probeTransitions(
   gateway: BrowserGateway,
   elements: ElementRef[],
+  { onProgress, elementTimeoutMs = ELEMENT_TIMEOUT_MS, budgetMs = BUDGET_MS }: ProbeOptions = {},
 ): Promise<Transition[]> {
+  const safe = elements.filter((el) => SAFE_ROLES.has(el.role));
+  const started = Date.now();
   const out: Transition[] = [];
-  for (const el of elements) {
-    if (!SAFE_ROLES.has(el.role)) continue;
-    const before = await gateway.getState(el);
-    if (!before.visible || !before.enabled) continue; // don't touch hidden/disabled
-
-    const clicked = await gateway.act({ kind: "click", ref: el.ref });
-    if (!clicked.ok) continue;
-    const after = await gateway.getState(el);
-    await gateway.act({ kind: "click", ref: el.ref }).catch(() => undefined); // revert (reversibility)
-
-    out.push({ ref: el.ref, role: el.role, name: el.name, before, after });
+  for (const [i, el] of safe.entries()) {
+    if (Date.now() - started >= budgetMs) {
+      onProgress?.(`probeInteractions — stopped at the ${budgetMs} ms limit: ${i} of ${safe.length} safe elements tried`);
+      break;
+    }
+    if (i > 0 && i % PROGRESS_EVERY === 0) onProgress?.(`probeInteractions — ${i} of ${safe.length} safe elements tried`);
+    try {
+      // ponytail: a skipped element's browser call is not cancelled - its reads and click are bounded, so it ends
+      // within seconds on the same page. Cancel it (an AbortSignal through the gateway) if it ever interferes.
+      let skipped = false;
+      const transition = await within(
+        probeOne(gateway, el, () => skipped),
+        elementTimeoutMs,
+      ).catch((e: unknown) => {
+        skipped = true;
+        throw e;
+      });
+      if (transition) {
+        out.push(transition);
+        await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS }).catch(() => undefined); // revert (reversibility)
+      }
+    } catch (e) {
+      if (!(e instanceof ProbeTimeout)) throw e;
+      onProgress?.(`probeInteractions — skipped ${el.ref} (${el.role}${el.name ? ` "${el.name}"` : ""}): no answer in ${elementTimeoutMs} ms`);
+    }
   }
   return out;
 }

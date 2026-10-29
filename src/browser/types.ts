@@ -68,7 +68,8 @@ export interface ObserveOptions {
 
 export type Action =
   | { kind: "navigate"; url: string }
-  | { kind: "click"; ref: string }
+  /** `timeoutMs`: how long the click may wait for the element to be actionable (the backend's default otherwise). */
+  | { kind: "click"; ref: string; timeoutMs?: number }
   | { kind: "fill"; ref: string; value: string };
 
 export interface ActResult {

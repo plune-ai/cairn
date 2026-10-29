@@ -34,6 +34,9 @@ export interface PlaywrightLibOptions {
  * PRIMARY backend (ADR-0003): in-process Playwright. Owns storageState; captures ariaSnapshot+screenshot;
  * runs tests (Sprint 3). act() resolves ref→getByRole(role,{name}) based on the last observe().
  */
+/** How long getState waits on a visible element that detaches mid-read (#213). */
+const STATE_READ_TIMEOUT_MS = 2_000;
+
 export class PlaywrightLibBackend implements BrowserBackend {
   private browser?: Browser;
   private context?: BrowserContext;
@@ -171,7 +174,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       const locator = page
         .getByRole(target.role as PwRole, target.name ? { name: target.name, exact: true } : {})
         .first();
-      if (action.kind === "click") await locator.click();
+      if (action.kind === "click") await locator.click(action.timeoutMs === undefined ? undefined : { timeout: action.timeoutMs });
       else await locator.fill(action.value);
       return { ok: true, ref: action.ref };
     } catch (e) {
@@ -203,12 +206,16 @@ export class PlaywrightLibBackend implements BrowserBackend {
       .getByRole(el.role as PwRole, el.name ? { name: el.name, exact: true } : {})
       .first();
     const visible = await loc.isVisible().catch(() => false);
-    const enabled = visible ? await loc.isEnabled().catch(() => false) : false;
+    // #213: an element of another view (exploreStates) is not on the page, and isEnabled/isChecked wait for it
+    // with Playwright's 30 s default - per element, minutes for a page of views. A hidden element is not read.
+    const enabled = visible ? await loc.isEnabled({ timeout: STATE_READ_TIMEOUT_MS }).catch(() => false) : false;
     let checked: boolean | undefined;
-    try {
-      checked = await loc.isChecked();
-    } catch {
-      checked = undefined; // not checkable
+    if (visible) {
+      try {
+        checked = await loc.isChecked({ timeout: STATE_READ_TIMEOUT_MS });
+      } catch {
+        checked = undefined; // not checkable, or gone since isVisible
+      }
     }
     return { visible, enabled, checked };
   }
