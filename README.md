@@ -88,8 +88,9 @@ validation into `runs/<id>/screencasts/`, with a Playwright `trace.zip` beside e
 sidecar mapping each scenario's step chapters (step → timecode). The timecodes come from the trace, counted
 from the video's first frame (`"timing": "trace"`); when a trace cannot be read they are estimated from the step
 durations (`"timing": "estimated"`). A run with a session, Basic Auth, environment secrets or a mailbox keeps no
-trace, since Playwright would write them into it in the clear: its timecodes are estimated. It's a review-gate affordance — watch what the agent did before approving a
-case. Off by default; the recorded `.webm` paths are linked from the run summary and the TUI result screen.
+trace, since Playwright would write them into it in the clear: its timecodes are estimated, and in the first
+scenario of a worker they can run seconds late. It's a review-gate affordance — watch what the agent did before
+approving a case. Off by default; the recorded `.webm` paths are linked from the run summary and the TUI result screen.
 
 ## Interactive TUI
 

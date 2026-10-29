@@ -70,13 +70,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Screencast chapters start where the step is in the video (#214).** A chapter's `atMs` was the sum of the step
+- **Screencast chapters start where the step is in the video, in a run without credentials (#214).** A chapter's `atMs` was the sum of the step
   durations before it, while the `.webm` starts at the browser's first frame: in the first scenario of a worker, whose
   hooks launch the browser, chapters ran up to seconds late and could point past the end of the video. The offsets now
   come from the trace - each step's start against the first frame's swap time, the clock Playwright places video frames
   by - and a step that began before the first frame sits at 0. An entry says which it has in `timing`: `trace`, or
-  `estimated` when there is no trace (a run with credentials), or it is unreadable or lists other steps. A
-  `screencasts.json` written before has no `timing`: read it as `estimated`.
+  `estimated` when there is no trace (a run with credentials), or it is unreadable, lists other steps or holds no
+  frame (a scenario of a few milliseconds). An estimate is the old sum and in the first scenario of a worker can
+  still run seconds late. A `screencasts.json` written before has no `timing`: read it as `estimated`.
 
 - **The TUI names a timed-out LLM step as itself, with its advice (#194).** A step past `STEP_TIMEOUT_MS` showed as
   `Failed: unknown` after `explore` or `design`, and after `automate` - whose error reaches the TUI unwrapped and

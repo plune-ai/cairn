@@ -46,7 +46,7 @@ export function configContent(
   // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
   // #210: a trace beside each video - its steps and frames give the chapters their exact offsets (#214).
   // Playwright writes the context options (Basic Auth in the clear), every request's headers and cookies and every
-  // typed value into it, so a run with a session, Basic Auth or environment secrets keeps the video alone.
+  // typed value into it, so a run with a session, Basic Auth, environment secrets or a mailbox keeps the video alone.
   if (screencastDir) parts.push(`video: 'on'`);
   if (screencastDir && !storageStatePath && !httpCredentialsEnv && !secretsInRun) parts.push(`trace: 'on'`);
   // Basic Auth: the generated config only NAMES the variables; the runner process reads the values from its own

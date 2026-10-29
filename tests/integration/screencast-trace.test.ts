@@ -1,25 +1,16 @@
-import { describe, it, expect, afterAll } from "vitest";
-import { readFile, rm, stat } from "node:fs/promises";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { ArtifactStore } from "../../src/artifacts/index.js";
 import { runSpecs, type ScreencastEntry } from "../../src/validate/runner.js";
+import { validateSuite } from "../../src/validate/index.js";
 
 // Run directories must live INSIDE the project: spec files resolve @playwright/test via node_modules.
 const BASE = join(process.cwd(), "runs", ".itest-screencast-trace");
 
-describe("#214 screencast chapters from a real Playwright trace", () => {
-  afterAll(async () => {
-    await rm(BASE, { recursive: true, force: true });
-  });
-
-  it("takes the offsets from the trace; a step inside a hook and a nested step are not chapters", async () => {
-    await rm(BASE, { recursive: true, force: true });
-    const run = await new ArtifactStore(BASE).openRun("trace");
-    await run.writeSuite({
-      files: [
-        {
-          path: "shop.spec.ts",
-          content: `import { test, expect } from '@playwright/test';
+const SHOP = {
+  path: "shop.spec.ts",
+  content: `import { test, expect } from '@playwright/test';
 test.beforeEach(async ({ page }) => {
   await test.step('open the shop', async () => {
     await page.setContent('<h1>Shop</h1><p id="n">0</p>');
@@ -37,9 +28,19 @@ test('shop', async ({ page }) => {
     await page.waitForTimeout(500);
   });
 });`,
-        },
-      ],
-    });
+};
+
+describe("#214 screencast chapters from a real Playwright trace", () => {
+  beforeAll(async () => {
+    await rm(BASE, { recursive: true, force: true });
+  });
+  afterAll(async () => {
+    await rm(BASE, { recursive: true, force: true });
+  });
+
+  it("takes the offsets from the trace; a step inside a hook and a nested step are not chapters", async () => {
+    const run = await new ArtifactStore(BASE).openRun("trace");
+    await run.writeSuite({ files: [SHOP] });
 
     const screencastDir = join(run.dir, "screencasts");
     const results = await runSpecs(run.dir, { screencastDir, workers: 1 });
@@ -54,5 +55,19 @@ test('shop', async ({ page }) => {
     const offsets = entry!.chapters.map((c) => c.atMs);
     expect(offsets[0]).toBeGreaterThanOrEqual(0);
     expect(offsets[1]).toBeGreaterThanOrEqual(offsets[0]!);
+  }, 120_000);
+
+  it("#210: a run that types secrets (environment or mailbox) keeps the video alone, through validateSuite", async () => {
+    const run = await new ArtifactStore(BASE).openRun("secrets");
+    await run.writeSuite({ files: [SHOP] });
+
+    const report = await validateSuite(run.dir, { screencast: true, secretsInRun: true, reruns: 1, workers: 1 });
+    expect(report.results.map((r) => r.status)).toEqual(["passed"]);
+    const [entry] = report.screencasts!;
+    expect(entry!.video).toMatch(/\.webm$/);
+    expect(entry!.trace).toBeUndefined();
+    expect(entry!.timing).toBe("estimated");
+    const files = await readdir(run.dir, { recursive: true });
+    expect(files.filter((f) => f.endsWith(".zip"))).toEqual([]);
   }, 120_000);
 });
