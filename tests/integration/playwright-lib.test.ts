@@ -42,4 +42,15 @@ describe("playwright-lib backend (integration, real Chromium)", () => {
     expect(ls?.value).toBe("active");
     expect(state.cookies.some((c) => c.name === "qa_demo")).toBe(true);
   });
+
+  it("getState reads a visible checkbox, and answers at once for one that is not on the page (#213)", async () => {
+    await backend.observe({ url: `${server.url}/login.html` });
+    const remember = await backend.getState({ ref: "e1", role: "checkbox", name: "Remember me", interactive: true, rank: 3 });
+    expect(remember).toEqual({ visible: true, enabled: true, checked: false });
+    // A checkbox exploreStates saw in another view: not attached here. Playwright's default wait is 30 s per read.
+    const started = Date.now();
+    const elsewhere = await backend.getState({ ref: "e2", role: "checkbox", name: "Only in another view", interactive: true, rank: 3 });
+    expect(elsewhere).toEqual({ visible: false, enabled: false, checked: undefined });
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
 });
