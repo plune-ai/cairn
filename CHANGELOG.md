@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`report.json` of a `design` run keeps `testCaseFiles` relative to the run dir (#219).** It stored the absolute
+  paths of the machine that ran it (on Windows with backslashes), so a run dir copied to a CI artifact or into Plune
+  pointed nowhere. The report now has `testcases/ATC-….md`, with `/`, like `video` in `screencasts.json`. The
+  `testCaseFiles` of the `runDesign` result, which the CLI and MCP print, stay absolute. The field keeps its type,
+  and no reader in the Plune line opens these paths, so `schemaVersion` stays 1: `plune ingest` refuses any
+  version it does not know.
+
 - **The `openrouter` profile no longer names models OpenRouter has retired (#212).** Its reasoning model
   `deepseek/deepseek-r1` answered `404 ... is no longer available on OpenRouter`, so every run on the profile failed
   on its first design call; it is now `deepseek/deepseek-r1-0528`, the R1 successor that OpenRouter serves. The vision

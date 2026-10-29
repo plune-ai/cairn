@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { resolve, dirname, basename, join } from "node:path";
+import { resolve, dirname, basename, join, relative, sep } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
@@ -921,7 +921,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           suite,
           pageSemantics: out.analysis.pageSemantics,
           testCases: out.testCases,
-          testCaseFiles,
+          // #219: the run dir moves (CI artifact, Plune), so the report keeps each case file relative to it, with /.
+          testCaseFiles: testCaseFiles.map((f) => relative(runWriter.dir, f).split(sep).join("/")),
           scores,
           cost,
           critique: out.critique, // #82: prune/top-up delta (undefined when the pass didn't run)
