@@ -11,6 +11,7 @@ vi.mock("../../../src/index.js", () => ({
 }));
 
 import { runExploration, resolveConfig } from "../../../src/index.js";
+import { timeoutInvoke } from "../../../src/llm/structured.js";
 import { RunDashboardScreen } from "../../../src/tui/screens/run-dashboard-screen.js";
 import { RouterProvider, type RouterApi } from "../../../src/tui/router-context.js";
 
@@ -120,6 +121,33 @@ describe("RunDashboardScreen", () => {
 
     await waitFor(() => expect(lastFrame() ?? "").toContain("Failed: session"));
     expect(lastFrame() ?? "").toContain("recapture"); // ERROR_HINTS.session
+    unmount();
+  });
+
+  it("a step past STEP_TIMEOUT_MS is its own kind, with the routing and profile advice — not a missing key (#194)", async () => {
+    // The very error timeoutInvoke throws; its label names an OpenRouter model of the Anthropic family.
+    const slow = timeoutInvoke(() => new Promise<never>(() => undefined), {
+      timeoutMs: 1,
+      label: "role 'reasoner', model 'anthropic/claude-3.5-sonnet'",
+    });
+    const thrown = await slow(undefined as never, []).catch((e: unknown) => e as Error);
+    vi.mocked(runExploration).mockImplementation((async () => {
+      throw thrown;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any);
+
+    const { lastFrame, unmount } = render(
+      <RouterProvider value={routerApi({})}>
+        <RunDashboardScreen command="explore" values={{ url: "https://x", style: "all", headed: false }} />
+      </RouterProvider>,
+    );
+
+    await waitFor(() => expect(lastFrame() ?? "").toContain("Failed: llm-timeout"));
+    const frame = (lastFrame() ?? "").replace(/\s+/g, " ");
+    expect(frame).toContain("--routing volume-fast");
+    expect(frame).toContain("LLM_PROFILE=anthropic");
+    expect(frame).toContain("STEP_TIMEOUT_MS");
+    expect(frame).not.toContain("Check your API key"); // ERROR_HINTS.config
     unmount();
   });
 });

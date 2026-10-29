@@ -98,7 +98,7 @@ export type RunErrorKind = "navigation" | "session" | "budget" | "config" | "llm
 export interface RunErrorInfo {
   kind: RunErrorKind;
   /** A one-line, user-facing description. Session, budget and config keep the keyword the TUI classifier
-   * (tui/hooks/use-runner.ts) sorts by; llm-timeout deliberately has none (see its branch). */
+   * (tui/hooks/use-runner.ts) sorts by; llm-timeout the TUI takes from this function itself (#194). */
   line: string;
   /** An actionable next step (e.g. where the partial results were saved). */
   hint: string;
@@ -125,8 +125,8 @@ export function classifyRunError(
     return {
       kind: "llm-timeout",
       line: "An LLM step timed out — the model provider was too slow to answer.",
-      // No provider names here: the TUI sorts the thrown text by keyword (use-runner.ts) and would take a provider's
-      // name for a missing API key. The full message, with its profile advice, stays in `detail`.
+      // No provider names in this one line; the full message, with its profile advice, stays in `detail`. The TUI
+      // asks this function first (#194), so its keyword sort no longer takes the advice for a missing API key.
       hint: `Try a faster routing (e.g. --routing volume-fast), or raise STEP_TIMEOUT_MS.${where}`,
       detail: first,
     };
