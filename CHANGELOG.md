@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The TUI names a timed-out LLM step as itself, with its advice (#194).** A step past `STEP_TIMEOUT_MS` showed as
+  `Failed: unknown` after `explore` or `design`, and after `automate` - whose error reaches the TUI unwrapped and
+  names the Anthropic profile - as `Failed: config` with advice to check an API key. It is now `Failed: llm-timeout`, told by the same check the CLI's run summary uses, with the advice to try
+  `--routing volume-fast`, `LLM_PROFILE=anthropic`, or a higher `STEP_TIMEOUT_MS`.
+
 - **`report.json` of a `design` run keeps `testCaseFiles` relative to the run dir (#219).** It stored the absolute
   paths of the machine that ran it (on Windows with backslashes), so a run dir copied to a CI artifact or into Plune
   pointed nowhere. The report now has `testcases/ATC-….md`, with `/`, like `video` in `screencasts.json`. The

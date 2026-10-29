@@ -1,11 +1,13 @@
 import { useReducer, useRef } from "react";
 import { readFile } from "node:fs/promises";
 import { resolveConfig, runExploration, runDesign, runAutomate } from "../../index.js";
+// The run summary's own classifier, so a step timeout has one signature in the code (#194).
+import { classifyRunError } from "../../agent/summary.js";
 import type { Command, FormValues, AnyResult, NodeStatus } from "../types.js";
 import { nodesFor, seedNodes, parseNode, advanceNodes, completeNodes } from "../theme.js";
 
 export type RunPhase = "idle" | "running" | "done" | "error";
-export type ErrorKind = "session" | "rate-limit" | "budget" | "config" | "unknown";
+export type ErrorKind = "session" | "rate-limit" | "budget" | "config" | "llm-timeout" | "unknown";
 
 export interface RunnerState {
   phase: RunPhase;
@@ -49,6 +51,8 @@ function reducer(state: RunnerState, action: Action): RunnerState {
 
 /** Classify a thrown error by message substring → a friendly recovery hint on screen. */
 function classify(message: string): ErrorKind {
+  // #194: a step past STEP_TIMEOUT_MS first - its text names a model and the Anthropic profile, which read as a missing key.
+  if (classifyRunError(new Error(message)).kind === "llm-timeout") return "llm-timeout";
   const m = message.toLowerCase();
   if (m.includes("storagestate") || m.includes("session") || m.includes("expired") || m.includes("login"))
     return "session";

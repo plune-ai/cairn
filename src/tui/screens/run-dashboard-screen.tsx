@@ -11,6 +11,8 @@ const ERROR_HINTS: Record<string, string> = {
   "rate-limit": "Rate-limited (429). The SDK retried; try again shortly.",
   budget: "Call budget exceeded — the run hit the cost guardrail.",
   config: "Check your API key env (ANTHROPIC_API_KEY / OPENROUTER_API_KEY).",
+  "llm-timeout":
+    "An LLM step ran past STEP_TIMEOUT_MS: try a faster --routing volume-fast, the Anthropic profile (LLM_PROFILE=anthropic), or raise STEP_TIMEOUT_MS.",
   unknown: "Unexpected error — see the message above.",
 };
 
