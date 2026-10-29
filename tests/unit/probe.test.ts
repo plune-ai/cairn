@@ -115,6 +115,21 @@ describe("probeTransitions has an end (#213)", () => {
     ]);
   });
 
+  it("a read that answers after the element was skipped clicks nothing", async () => {
+    vi.useFakeTimers();
+    const acts: unknown[] = [];
+    const gw = stuckGateway(new Set());
+    gw.getState = () => new Promise((resolve) => setTimeout(() => resolve({ visible: true, enabled: true, checked: false }), 5_000));
+    gw.act = async (action) => {
+      acts.push(action);
+      return { ok: true };
+    };
+    const run = probeTransitions(gw, switches(1), { elementTimeoutMs: 1_000 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await run).toEqual([]);
+    expect(acts).toEqual([]);
+  });
+
   it("an error that is not the limit still reaches the caller", async () => {
     const gw = stuckGateway(new Set());
     gw.getState = () => Promise.reject(new Error("browser closed"));

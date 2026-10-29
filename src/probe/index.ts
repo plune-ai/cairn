@@ -55,9 +55,10 @@ function within<T>(work: Promise<T>, ms: number): Promise<T> {
 }
 
 /** Click, observe; the revert is the caller's, so a slow revert never costs the transition already seen. */
-async function probeOne(gateway: BrowserGateway, el: ElementRef): Promise<Transition | undefined> {
+async function probeOne(gateway: BrowserGateway, el: ElementRef, skipped: () => boolean): Promise<Transition | undefined> {
   const before = await gateway.getState(el);
   if (!before.visible || !before.enabled) return undefined; // don't touch hidden/disabled
+  if (skipped()) return undefined; // a read that came back after the limit: no click nobody would revert
 
   const clicked = await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS });
   if (!clicked.ok) return undefined;
@@ -91,7 +92,14 @@ export async function probeTransitions(
     try {
       // ponytail: a skipped element's browser call is not cancelled - its reads and click are bounded, so it ends
       // within seconds on the same page. Cancel it (an AbortSignal through the gateway) if it ever interferes.
-      const transition = await within(probeOne(gateway, el), elementTimeoutMs);
+      let skipped = false;
+      const transition = await within(
+        probeOne(gateway, el, () => skipped),
+        elementTimeoutMs,
+      ).catch((e: unknown) => {
+        skipped = true;
+        throw e;
+      });
       if (transition) {
         out.push(transition);
         await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS }).catch(() => undefined); // revert (reversibility)
