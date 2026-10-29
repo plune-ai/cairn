@@ -174,7 +174,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       const locator = page
         .getByRole(target.role as PwRole, target.name ? { name: target.name, exact: true } : {})
         .first();
-      if (action.kind === "click") await locator.click();
+      if (action.kind === "click") await locator.click(action.timeoutMs === undefined ? undefined : { timeout: action.timeoutMs });
       else await locator.fill(action.value);
       return { ok: true, ref: action.ref };
     } catch (e) {

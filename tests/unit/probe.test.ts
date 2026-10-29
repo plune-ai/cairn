@@ -101,6 +101,26 @@ describe("probeTransitions has an end (#213)", () => {
     expect(log).toContain("probeInteractions — stopped at the 2500 ms limit: 3 of 5 safe elements tried");
   });
 
+  it("clicks with a 2 s limit, not the backend's 30 s default, the revert too", async () => {
+    const acts: unknown[] = [];
+    const gw = stuckGateway(new Set());
+    gw.act = async (action) => {
+      acts.push(action);
+      return { ok: true };
+    };
+    await probeTransitions(gw, switches(1));
+    expect(acts).toEqual([
+      { kind: "click", ref: "e1", timeoutMs: 2_000 },
+      { kind: "click", ref: "e1", timeoutMs: 2_000 },
+    ]);
+  });
+
+  it("an error that is not the limit still reaches the caller", async () => {
+    const gw = stuckGateway(new Set());
+    gw.getState = () => Promise.reject(new Error("browser closed"));
+    await expect(probeTransitions(gw, switches(1))).rejects.toThrow("browser closed");
+  });
+
   it("says how far it got every 10 safe elements, so a slow step is seen to move", async () => {
     const log: string[] = [];
     await probeTransitions(stuckGateway(new Set()), switches(21), { onProgress: (e) => log.push(e) });
