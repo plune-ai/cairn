@@ -293,7 +293,9 @@ export class PlaywrightLibBackend implements BrowserBackend {
         return { ok: true };
       }
       if (action.kind === "click-outside") {
-        await page.mouse.click(2, 2);
+        const point = await this.safePointOutside(page, action.scope);
+        if (!point) return { ok: false, error: "no point outside the overlay that is safe to click; click outside not tried" };
+        await page.mouse.click(point.x, point.y);
         return { ok: true };
       }
       const target = this.refMap.get(action.ref);
@@ -329,6 +331,53 @@ export class PlaywrightLibBackend implements BrowserBackend {
     } finally {
       this.acting = false;
     }
+  }
+
+  /**
+   * #225 review: a point to click "outside" the overlay `scope`. A blind corner click pressed a fixed «Sign out» link,
+   * so each candidate point is checked first: what `elementFromPoint` finds there must lie outside the overlay and be
+   * nothing a click acts on — no link, button, field, label, summary, element with a click role, a tabindex, an inline
+   * handler, or a pointer cursor. Corners first, then the edges, then a grid; undefined when none is safe.
+   */
+  private async safePointOutside(page: Page, scope: OverlayScope): Promise<{ x: number; y: number } | undefined> {
+    const overlay = locate(page, scope).first();
+    const point = await overlay
+      .evaluate(
+        (node: unknown) => {
+          type El = { contains(o: unknown): boolean; closest(s: string): unknown; parentElement: El | null };
+          const doc = (globalThis as unknown as { document: { elementFromPoint(x: number, y: number): El | null } }).document;
+          const win = globalThis as unknown as { innerWidth: number; innerHeight: number; getComputedStyle(e: unknown): { cursor: string } };
+          const overlayEl = node as El;
+          const ACTS =
+            "a[href],button,input,select,textarea,label,summary,option,[contenteditable=''],[contenteditable='true'],[onclick],[tabindex]:not([tabindex='-1'])," +
+            ["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "treeitem", "gridcell", "combobox", "textbox", "slider", "spinbutton", "searchbox"]
+              .map((r) => `[role='${r}']`)
+              .join(",");
+          const w = win.innerWidth;
+          const h = win.innerHeight;
+          const xs = [2, w - 3, Math.round(w / 2)];
+          const ys = [2, h - 3, Math.round(h / 2)];
+          const points: [number, number][] = [];
+          for (const y of [ys[0]!, ys[1]!]) for (const x of [xs[0]!, xs[1]!]) points.push([x, y]);
+          for (const [x, y] of [[xs[2]!, ys[0]!], [xs[2]!, ys[1]!], [xs[0]!, ys[2]!], [xs[1]!, ys[2]!]] as [number, number][]) points.push([x, y]);
+          for (let gy = 1; gy < 8; gy++) for (let gx = 1; gx < 8; gx++) points.push([Math.round((w * gx) / 8), Math.round((h * gy) / 8)]);
+          for (const [x, y] of points) {
+            const el = doc.elementFromPoint(x, y);
+            if (!el || overlayEl.contains(el) || el.closest(ACTS)) continue;
+            let pointer = false;
+            for (let e: El | null = el; e && !pointer; e = e.parentElement) {
+              if (e === overlayEl) break;
+              pointer = win.getComputedStyle(e).cursor === "pointer";
+            }
+            if (!pointer) return { x, y };
+          }
+          return null;
+        },
+        undefined,
+        { timeout: STATE_READ_TIMEOUT_MS },
+      )
+      .catch(() => null);
+    return point ?? undefined;
   }
 
   /** #224: nothing matched the element — it is still there, hidden (not-visible), or it is gone (not-found). */
@@ -511,7 +560,27 @@ export class PlaywrightLibBackend implements BrowserBackend {
         checked = undefined; // not checkable, or gone since isVisible
       }
     }
-    return { visible, enabled, checked };
+    // #225 review: what the element says it opens; only such an element is pressed to look for an overlay.
+    const popup = visible
+      ? await loc
+          .evaluate(
+            (node: unknown) => {
+              const n = node as { getAttribute(a: string): string | null };
+              const hasPopup = n.getAttribute("aria-haspopup");
+              const expanded = n.getAttribute("aria-expanded");
+              const controls = n.getAttribute("aria-controls");
+              return {
+                ...(hasPopup !== null && hasPopup !== "false" ? { hasPopup: hasPopup || "true" } : {}),
+                ...(expanded === "true" || expanded === "false" ? { expanded: expanded === "true" } : {}),
+                ...(controls ? { controls } : {}),
+              };
+            },
+            undefined,
+            { timeout: STATE_READ_TIMEOUT_MS },
+          )
+          .catch(() => undefined)
+      : undefined;
+    return { visible, enabled, checked, ...(popup && Object.keys(popup).length > 0 ? { popup } : {}) };
   }
 
   session(): SessionApi {

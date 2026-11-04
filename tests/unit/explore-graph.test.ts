@@ -437,7 +437,7 @@ describe("runExploreGraph — overlays as states (#225)", () => {
   const PAGE = '- main:\n  - button "Open settings"\n  - button "Save"';
   const DIALOG = '\n- dialog "Settings":\n  - textbox "Name"\n  - button "Save"\n  - button "Cancel"';
 
-  /** A page whose "Open settings" opens a dialog; Escape closes it, a click outside does not. */
+  /** A page whose "Open settings" opens a dialog (and says so: aria-haspopup); Escape closes it, a click outside does not. */
   function dialogPage(): { gateway: BrowserGateway; acts: Action[] } {
     let open = false;
     const acts: Action[] = [];
@@ -447,6 +447,7 @@ describe("runExploreGraph — overlays as states (#225)", () => {
       acts,
       gateway: {
         ...gateway,
+        getState: async (el) => ({ visible: true, enabled: true, ...(el.name === "Open settings" ? { popup: { hasPopup: "dialog" } } : {}) }),
         observe: async (opts) => {
           if (opts.url) open = false;
           return obs(open ? PAGE + DIALOG : PAGE);

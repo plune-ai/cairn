@@ -107,6 +107,8 @@ export function parseAriaSnapshot(aria: string, opts: ParseOptions = {}): Elemen
     const el: ElementRef = { ref: nativeRef ?? `e${n}`, role, name, interactive, rank: rankFor(role, interactive) };
     if (scope) el.scope = scope;
     if (inside) el.inside = inside;
+    // #225 review: a disabled control is never pressed (a disabled Next would only wait out the click timeout).
+    if (/\[disabled(?:=true)?\]/.test(content)) el.disabled = true;
     out.push(el);
     const index = out.length - 1;
     const chain = open.filter((x) => SCOPE_ROLES.has(x.role)).map((x) => x.index);
