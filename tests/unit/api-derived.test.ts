@@ -229,3 +229,97 @@ describe("the shared pieces (#228, reused by #229)", () => {
     expect(Object.keys(op.responses as object)).toEqual(["200", "404"]);
   });
 });
+
+describe("scrubbing keeps the document whole and drops credentials (#228 review)", () => {
+  const har = (entries: { method: string; url: string; body?: unknown; cookies?: { name: string; value: string }[]; response?: unknown }[]): string =>
+    JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: entries.map((e) => ({
+          request: {
+            method: e.method,
+            url: e.url,
+            headers: [],
+            queryString: [],
+            cookies: e.cookies ?? [],
+            ...(e.body !== undefined ? { postData: { mimeType: "application/json", text: JSON.stringify(e.body) } } : {}),
+          },
+          response: {
+            status: 200,
+            headers: [],
+            cookies: [],
+            content: { mimeType: "application/json", text: JSON.stringify(e.response ?? { ok: true }) },
+          },
+          _resourceType: "xhr",
+        })),
+      },
+    });
+
+  it("a collection URL's user and password never reach the file; the server is named without them", async () => {
+    const collection = {
+      info: { name: "Userinfo", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+      item: [
+        { name: "List users", request: { method: "GET", url: "https://admin:Hunter2pw@api.example.test/users" } },
+        { name: "One user", request: { method: "GET", url: { raw: "https://admin:Hunter2pw@api.example.test/users/1" } } },
+      ],
+    };
+    const derived = deriveSpec(JSON.stringify(collection))!;
+    expect((derived.doc as { servers?: { url: string }[] }).servers).toEqual([{ url: "https://api.example.test" }]);
+    expect(derived.secrets).toContain("Hunter2pw");
+    const { saved } = await writeAndIngest(JSON.stringify(collection));
+    expect(saved).not.toContain("Hunter2pw");
+    expect(saved).not.toContain("admin:");
+  });
+
+  it('a Swagger-UI-style "string" password body keeps "type": "string" and the spec is still accepted', async () => {
+    const text = har([
+      { method: "POST", url: "https://app.example.test/api/login", body: { username: "string", password: "string" }, response: { token: "string" } },
+    ]);
+    const { saved, model } = await writeAndIngest(text);
+    expect(saved).not.toContain("‹redacted›");
+    const login = model.endpoints.find((e) => e.method === "POST" && e.path === "/api/login")!;
+    expect(login).toBeDefined();
+    const doc = JSON.parse(saved) as { paths: Record<string, { post: { requestBody: { content: Record<string, { schema: { properties: Record<string, { type: string }> } }> } } }> };
+    const props = doc.paths["/api/login"]!.post.requestBody.content["application/json"]!.schema.properties;
+    expect(props.password).toEqual({ type: "string" });
+    expect(props.username).toEqual({ type: "string" });
+  });
+
+  it("a cookie csrftoken=true leaves x-cairn-derived: true as it is", async () => {
+    const text = har([{ method: "GET", url: "https://app.example.test/api/me", cookies: [{ name: "csrftoken", value: "true" }] }]);
+    const { saved } = await writeAndIngest(text);
+    const doc = JSON.parse(saved) as Record<string, unknown> & { paths: Record<string, { get: Record<string, unknown> }> };
+    expect(doc[DERIVED_KEY]).toBe(true);
+    expect(doc.paths["/api/me"]!.get[DERIVED_KEY]).toBe(true);
+    expect(saved).not.toContain("‹redacted›");
+  });
+
+  it("a Postman variable password=password does not rename the password property", async () => {
+    const collection = {
+      info: { name: "Vars", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+      variable: [{ key: "password", value: "password" }],
+      item: [
+        {
+          name: "Login",
+          request: {
+            method: "POST",
+            url: "https://api.example.test/login",
+            body: { mode: "raw", raw: '{"password":"{{password}}"}', options: { raw: { language: "json" } } },
+          },
+        },
+      ],
+    };
+    const { saved } = await writeAndIngest(JSON.stringify(collection));
+    expect(saved).toContain('"password": {');
+    expect(saved).not.toContain("‹redacted›");
+  });
+
+  it("a sensitive-named field's plain-looking value is scrubbed where it rode into the document", async () => {
+    // Not credential-shaped and not under a header: only the sensitive field name (`session_token`) marks it secret.
+    const text = har([{ method: "GET", url: "https://app.example.test/api/lookup/correcthorsebattery?session_token=correcthorsebattery" }]);
+    const derived = deriveSpec(text)!;
+    expect(JSON.stringify(derived.doc)).toContain("correcthorsebattery"); // it is in the path as seen
+    const { saved } = await writeAndIngest(text);
+    expect(saved).not.toContain("correcthorsebattery");
+  });
+});
