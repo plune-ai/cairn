@@ -96,4 +96,60 @@ describe("lintErrors: the patterns that go into the repair loop before validatio
     expect(lintErrors(s)[0]!.detail).toContain("line 2");
     expect(lintSuite(s).map((x) => x.kind)).toContain("mouse-click");
   });
+
+  describe("the forms the #226 review found unflagged", () => {
+    const kinds = (content: string): string[] => lintErrors(suite(content)).map((x) => x.kind);
+
+    it("the plain form is a blind position (the reference case)", () => {
+      expect(kinds("await page.getByRole('row').first().click();")).toEqual(["blind-position"]);
+    });
+
+    it("a regex name with an apostrophe does not hide the rest of the line", () => {
+      expect(kinds("await page.getByRole('row', { name: /O'Brien/ }).first().click();")).toEqual(["blind-position"]);
+      // a division is not a regex: the code after it is still read
+      expect(kinds("const half = total / 2; await page.getByRole('row').nth(half).click();")).toEqual(["blind-position"]);
+    });
+
+    it("a multi-line template does not hide the line where it ends", () => {
+      expect(kinds("const row = page.locator(`\n  .row\n`).first();")).toEqual(["blind-position"]);
+      // nor does code in an interpolation hide; the template text itself is no code
+      expect(kinds("await page.getByText(`${name} .first()`).click();")).toEqual([]);
+      expect(kinds("await page.getByText(`${page.getByRole('row').first()}`).click();")).toEqual(["blind-position"]);
+    });
+
+    it(".last() is a blind position", () => {
+      expect(kinds("await page.getByRole('row').last().click();")).toEqual(["blind-position"]);
+    });
+
+    it("the string forms: locator('…').first(), ['first'](), and a position inside the selector", () => {
+      expect(kinds("await page.locator('…').first().click();")).toEqual(["blind-position"]);
+      expect(kinds("await page.locator('li')['first']().click();")).toEqual(["blind-position"]);
+      expect(kinds("await page.locator('li >> nth=0').click();")).toEqual(["blind-position"]);
+      expect(kinds("await page.locator(':nth-match(li, 2)').click();")).toEqual(["blind-position"]);
+      // the same words as text to find are not a selector
+      expect(kinds("await expect(page.getByText('first')).toBeVisible();")).toEqual([]);
+    });
+
+    it("force carried by a spread: a quoted key, a shorthand of a true variable", () => {
+      expect(kinds("const opts = { 'force': true };\nawait btn.click({ ...opts });")).toEqual(["force-click"]);
+      expect(kinds("const force = true;\nawait btn.click({ ...{ force } });")).toEqual(["force-click"]);
+      expect(kinds("const opts = { force: !0 };\nawait btn.click({ ...opts });")).toEqual(["force-click"]);
+      // force: false is no force
+      expect(kinds("await btn.click({ force: false });")).toEqual([]);
+    });
+
+    it("a // TODO (or FIXME, an eslint directive) is not a reason", () => {
+      expect(kinds("await page.getByRole('row').first().click(); // TODO")).toEqual(["blind-position"]);
+      expect(kinds("// FIXME: pick the right row\nawait page.getByRole('row').first().click();")).toEqual(["blind-position"]);
+      expect(kinds("await page.getByRole('row').first().click(); // eslint-disable-line")).toEqual(["blind-position"]);
+    });
+
+    it("a page.mouse alias clicks at coordinates too", () => {
+      expect(kinds("const m = page.mouse;\nawait m.click(10, 20);")).toEqual(["mouse-click"]);
+      expect(kinds("const { mouse: pointer } = page;\nawait pointer.dblclick(10, 20);")).toEqual(["mouse-click"]);
+      expect(kinds("const { mouse } = page;\nawait mouse.click(10, 20);")).toEqual(["mouse-click"]);
+      // an alias of something else is not one
+      expect(kinds("const m = page.getByRole('button', { name: 'Go' });\nawait m.click();")).toEqual([]);
+    });
+  });
 });

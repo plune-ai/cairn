@@ -32,81 +32,207 @@ function scanLine(file: string, line: string): LintFinding[] {
   return out;
 }
 
-/** The code of a line without its strings, and the text of the comments in it. `inBlock`: the line starts inside a block comment. */
-function splitLine(line: string, inBlock: boolean): { code: string; comment: string; inBlock: boolean } {
-  let code = "";
-  let comment = "";
-  let quote: string | undefined;
-  let i = 0;
-  while (i < line.length) {
-    const c = line[i]!;
-    const n = line[i + 1];
-    if (inBlock) {
-      const end = line.indexOf("*/", i);
-      if (end < 0) return { code, comment: `${comment} ${line.slice(i)}`.trim(), inBlock: true };
-      comment += ` ${line.slice(i, end)}`;
-      i = end + 2;
-      inBlock = false;
-    } else if (quote) {
-      if (c === "\\") i += 2;
-      else {
-        if (c === quote) quote = undefined;
-        i += 1;
-      }
-    } else if (c === "'" || c === '"' || c === "`") {
-      quote = c;
-      code += c + c; // the string is gone, its place is kept
-      i += 1;
-    } else if (c === "/" && n === "/") {
-      comment += ` ${line.slice(i + 2)}`;
-      break;
-    } else if (c === "/" && n === "*") {
-      inBlock = true;
-      i += 2;
-    } else {
-      code += c;
-      i += 1;
-    }
-  }
-  return { code, comment: comment.trim(), inBlock };
+/** One file read as code: for each line its code without strings and comments, its comment text and its strings. */
+interface Scanned {
+  code: string[];
+  comment: string[];
+  strings: string[][];
 }
 
-/** A comment that says something: at least one word of three letters. «//» or «// x» is not a reason. */
-const isReason = (comment: string): boolean => /\p{L}{3,}/u.test(comment);
-
-const MOUSE_CLICK = /\bmouse\s*\.\s*(?:click|dblclick)\s*\(/;
-const FORCE = /\bforce\s*:\s*true\b/;
-const POSITION = /\.\s*(?:first\s*\(\s*\)|nth\s*\()/;
+const IDENT = /^[A-Za-z_$][\w$]*$/;
+/** After one of these (or at the start), a `/` begins a regex literal, not a division. */
+const BEFORE_REGEX = new Set([..."(,=:[!&|?{};+-*%<>~^"]);
+const KEYWORDS_BEFORE_REGEX = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "await", "yield"]);
 
 /**
- * #226: errors in generated code, found before the suite is run. A pointer click at coordinates, a click forced past
- * the actionability checks, and a position picked blindly (`.first()` / `.nth(`) hide a wrong element behind a green
- * test. A position is allowed with a comment on the same line or on the line above that says why the position is the
- * point of the check (sorting, say). Strings and comments are not read as code.
+ * #226 review: reads a whole file once, so a string, a template or a regex that does not end where a naïve reader
+ * thinks (a regex with an apostrophe, a template over several lines) cannot hide the code after it. A string is kept in
+ * the code as its quotes, with its text only when the text is an identifier (`'force'`, `'first'`): a quoted key or a
+ * bracketed method is then still code. A template's `${…}` is read as code.
+ */
+function scan(src: string): Scanned {
+  const out: Scanned = { code: [""], comment: [""], strings: [[]] };
+  let ln = 0;
+  type Mode = "code" | "line" | "block" | "sq" | "dq" | "tpl" | "re";
+  let mode: Mode = "code";
+  /** One entry per open `${`: how many `{` are open inside it. */
+  const interp: number[] = [];
+  let buf = "";
+  let prev = ""; // the last code character that is not a space
+  let word = ""; // the identifier that ends the code read so far
+  const emit = (c: string): void => {
+    out.code[ln] += c;
+    if (c.trim()) {
+      prev = c;
+      word = /[\w$]/.test(c) ? word + c : "";
+    }
+  };
+  const closeString = (q: string): void => {
+    out.strings[ln]!.push(buf);
+    emit(q + (IDENT.test(buf) ? buf : "") + q);
+    buf = "";
+    mode = "code";
+  };
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i]!;
+    const n = src[i + 1];
+    if (c === "\n") {
+      if (mode === "line") mode = "code";
+      if (mode === "sq" || mode === "dq" || mode === "re") closeString(mode === "re" ? "/" : "'"); // unterminated: ends with the line
+      if (mode === "tpl" && buf) {
+        out.strings[ln]!.push(buf);
+        buf = "";
+      }
+      ln += 1;
+      out.code.push("");
+      out.comment.push("");
+      out.strings.push([]);
+      continue;
+    }
+    switch (mode) {
+      case "line":
+      case "block":
+        if (mode === "block" && c === "*" && n === "/") {
+          mode = "code";
+          out.comment[ln] += " ";
+          i += 1;
+        } else out.comment[ln] += c;
+        break;
+      case "sq":
+      case "dq":
+        if (c === "\\") {
+          buf += src[i + 1] ?? "";
+          i += 1;
+        } else if (c === (mode === "sq" ? "'" : '"')) closeString(c);
+        else buf += c;
+        break;
+      case "re": {
+        if (c === "\\") i += 1;
+        else if (c === "[") {
+          // a class: a `/` inside it does not end the regex
+          while (i + 1 < src.length && src[i + 1] !== "]" && src[i + 1] !== "\n") i += src[i + 1] === "\\" ? 2 : 1;
+          i += 1;
+        } else if (c === "/") {
+          while (/[a-z]/i.test(src[i + 1] ?? "")) i += 1; // flags
+          emit("/r/");
+          mode = "code";
+        }
+        break;
+      }
+      case "tpl":
+        if (c === "\\") {
+          buf += src[i + 1] ?? "";
+          i += 1;
+        } else if (c === "`") {
+          out.strings[ln]!.push(buf);
+          buf = "";
+          emit("``");
+          mode = "code";
+        } else if (c === "$" && n === "{") {
+          out.strings[ln]!.push(buf);
+          buf = "";
+          interp.push(0);
+          mode = "code";
+          i += 1;
+        } else buf += c;
+        break;
+      case "code":
+        if (c === "/" && n === "/") {
+          mode = "line";
+          i += 1;
+        } else if (c === "/" && n === "*") {
+          mode = "block";
+          i += 1;
+        } else if (c === "/" && (prev === "" || BEFORE_REGEX.has(prev) || KEYWORDS_BEFORE_REGEX.has(word))) {
+          mode = "re";
+        } else if (c === "'" || c === '"') {
+          mode = c === "'" ? "sq" : "dq";
+        } else if (c === "`") {
+          mode = "tpl";
+        } else if (interp.length > 0 && c === "{") {
+          interp[interp.length - 1]! += 1;
+          emit(c);
+        } else if (interp.length > 0 && c === "}") {
+          if (interp[interp.length - 1] === 0) {
+            interp.pop();
+            mode = "tpl";
+          } else {
+            interp[interp.length - 1]! -= 1;
+            emit(c);
+          }
+        } else emit(c);
+        break;
+    }
+  }
+  if (mode === "tpl" && buf) out.strings[ln]!.push(buf);
+  for (let i = 0; i < out.comment.length; i++) out.comment[i] = out.comment[i]!.trim();
+  return out;
+}
+
+/**
+ * A comment that says something: at least one word of three letters. «//» or «// x» is not a reason, and neither is a
+ * note that the work is not done (`TODO`, `FIXME`, `XXX`, `HACK`, `TBD`) or a tool directive (`eslint-disable…`,
+ * `@ts-…`, `prettier-ignore`).
+ */
+const isReason = (comment: string): boolean =>
+  /\p{L}{3,}/u.test(comment) && !/^(?:TODO|FIXME|XXX|HACK|TBD)\b|^(?:eslint-|@ts-|prettier-ignore|istanbul\s)/i.test(comment.replace(/^[\s*]+/, ""));
+
+const clickOn = (names: string[]): RegExp => new RegExp(String.raw`(?<![\w$.])(?:[\w$]+\s*\.\s*)?(?:${names.join("|")})\s*\.\s*(?:click|dblclick)\s*\(`);
+/** `force: true` (also a quoted key, `!0`, `1`). */
+const FORCE = /\bforce['"]?\s*:\s*(?:true|!0|1)\b/;
+/** A shorthand `{ force }` / `{ …, force }` — an error when the file sets `force` to true. */
+const FORCE_SHORTHAND = /[{,]\s*force\s*[,}]/;
+const FORCE_TRUE = /\bforce\s*=\s*(?:true|!0|1)\b/;
+/** `.first()`, `.last()`, `.nth(`, and the bracketed forms `['first']()`. */
+const POSITION = /\.\s*(?:first|last)\s*\(\s*\)|\.\s*nth\s*\(|\[\s*['"`](?:first|last|nth)['"`]\s*\]\s*\(/;
+/** A position written inside a Playwright selector string: `>> nth=0`, `:nth-match(li, 2)`. */
+const SELECTOR_POSITION = /(?:>>\s*)?\bnth\s*=\s*-?\d|:nth-match\(/;
+
+/** `page.mouse` given another name: `const m = page.mouse`, `const { mouse: m } = page`. */
+function mouseAliases(code: string): string[] {
+  const out = new Set<string>(["mouse"]);
+  for (const m of code.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$]+\s*\.\s*)+mouse\b(?!\s*[.(\w$])/g)) out.add(m[1]!);
+  for (const m of code.matchAll(/\{([^{}]*)\}\s*=\s*[\w$.]+/g)) {
+    const alias = /(?:^|,)\s*mouse\s*:\s*([A-Za-z_$][\w$]*)/.exec(m[1]!)?.[1];
+    if (alias) out.add(alias);
+  }
+  return [...out];
+}
+
+/**
+ * #226: errors in generated code, found before the suite is run. A pointer click at coordinates (also through an alias
+ * of `page.mouse`), a click forced past the actionability checks (also through a quoted key or a shorthand of a true
+ * variable that a spread carries), and a position picked blindly (`.first()`, `.last()`, `.nth(`, their bracketed
+ * forms, `>> nth=` in a selector) hide a wrong element behind a green test. A position is allowed with a comment on
+ * the same line or on the line above that says why the position is the point of the check (sorting, say). Strings and
+ * comments are not read as code.
  */
 export function lintErrors(suite: GeneratedSuite): LintFinding[] {
   const out: LintFinding[] = [];
   for (const f of suite.files) {
-    let inBlock = false;
+    const lines = f.content.split("\n");
+    const { code, comment, strings } = scan(f.content);
+    const all = code.join("\n");
+    const mouse = clickOn(mouseAliases(all));
+    const forceSet = FORCE_TRUE.test(all);
     let aboveReason = false; // the line above is a comment that says something
-    f.content.split("\n").forEach((line, i) => {
-      const parts = splitLine(line, inBlock);
-      inBlock = parts.inBlock;
-      const where = `line ${i + 1}: ${snippet(line)}`;
-      if (MOUSE_CLICK.test(parts.code)) {
+    code.forEach((c, i) => {
+      const where = `line ${i + 1}: ${snippet(lines[i] ?? "")}`;
+      if (mouse.test(c)) {
         out.push({ file: f.path, kind: "mouse-click", detail: `page.mouse.click clicks at coordinates, not at an element — click the element's locator (${where})` });
       }
-      if (FORCE.test(parts.code)) {
+      if (FORCE.test(c) || (forceSet && FORCE_SHORTHAND.test(c))) {
         out.push({ file: f.path, kind: "force-click", detail: `force: true skips the actionability checks, so it clicks what is hidden or covered — wait for the element instead (${where})` });
       }
-      if (POSITION.test(parts.code) && !isReason(parts.comment) && !aboveReason) {
+      const position = POSITION.test(c) || strings[i]!.some((t) => SELECTOR_POSITION.test(t));
+      if (position && !isReason(comment[i]!) && !aboveReason) {
         out.push({
           file: f.path,
           kind: "blind-position",
-          detail: `.first() / .nth() picks by position — narrow by context (the row, card or section's name: getByRole('row', { name: /Jane/ }).getByRole('button', { name: 'Delete' })), or add a comment saying why the position is the point of the check (${where})`,
+          detail: `.first() / .last() / .nth() picks by position — narrow by context (the row, card or section's name: getByRole('row', { name: /Jane/ }).getByRole('button', { name: 'Delete' })), or add a comment saying why the position is the point of the check (${where})`,
         });
       }
-      aboveReason = parts.code.trim() === "" && isReason(parts.comment);
+      aboveReason = c.trim() === "" && isReason(comment[i]!);
     });
   }
   return out;
