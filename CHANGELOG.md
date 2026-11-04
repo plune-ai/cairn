@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn view <runDir>` builds one offline HTML page for a run (#211).** It writes `view.html` into the run
+  directory: the scenario video (a relative path to the local `.webm`) and the steps from `screencasts.json` as
+  chapters; a click or Enter on a step seeks the video, the current step is marked, light and dark. A run with no steps
+  shows the video and a note; a run with no video exits non-zero. `--open` opens it in the browser.
 - **A click records its effect, and a failed click names its cause (#224).** On the lib backend `act()` now returns
   `outcome` beside `ok` (which still means the click was made): `navigated`, `opened-tab`, `downloaded`,
   `overlay-opened`, `overlay-closed`, `state-changed` (the element's state, the focus or the scroll),
