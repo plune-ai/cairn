@@ -85,15 +85,23 @@ under it are two elements. `observe()` also returns `nonModal`: the dialogs the 
 (no `aria-modal`, not a native `showModal()` dialog; an `alertdialog` is always modal), such as a cookie banner.
 While a modal overlay is open, `act()` does not touch an element that lies under its top one: it answers
 `ok: false, outcome: "under-overlay"` at once, where the click would have waited out a 30 s timeout. `act()` also
-takes `{ kind: "press", key }` and `{ kind: "click-outside" }` (lib backend only; the cli backend answers `ok: false`).
+takes `{ kind: "press", key }` and `{ kind: "click-outside", scope }` (lib backend only; the cli backend answers
+`ok: false`). A click outside is made only at a point checked first with `elementFromPoint`: the element there is
+outside the overlay `scope` and is nothing a click acts on (no link, button, field, label, click role, tabindex,
+inline handler or pointer cursor); corners first, then the edges, then a grid. When no point passes, nothing is
+clicked and the answer is `ok: false`. `getState()` also returns `popup`: the element's `aria-haspopup`,
+`aria-expanded` and `aria-controls`, which the ARIA snapshot does not show.
 
 Detection and the explorer sit above the gateway: `src/observe/overlays.ts` reads a snapshot (pure, no LLM: `dialog` and
 `alertdialog` are overlays; a `menu`, `listbox` or `complementary` is one when it was not on the baseline page;
 `status` / `alert` texts are recorded as toasts, never as states), `src/agent/overlays.ts` presses what could open one,
 records the trigger, the elements, the exits (Escape and a click outside probed, the buttons read), the nested
-overlays and the steps of a wizard. It presses nothing that the destructive-action filters refuse (`DESTRUCTIVE` in
-`src/flow/crawl.ts`, `isDeletionIntent` in `src/safety/guardrails.ts`) and nothing that completes a form (Save, Submit,
-OK…). The result goes to `overlays.json`, `report.json` (`overlays`) and `report.md` (*Overlays*).
+overlays and the steps of a wizard. To look for an overlay it presses only a button whose `popup` says it opens
+something (an allow-list); every other one is recorded as skipped with the reason. On top of that it presses nothing
+that the destructive-action filters refuse (`DESTRUCTIVE` in `src/flow/crawl.ts`, `isDeletionIntent` in
+`src/safety/guardrails.ts`), nothing that completes a form (Save, Submit, OK…) and nothing disabled. A wizard is a
+dialog with a Next and a Back or a step indicator, never an `alertdialog`; its Next and Back go through the same
+filters. The result goes to `overlays.json`, `report.json` (`overlays`) and `report.md` (*Overlays*).
 
 ## Routing contract (IMPORTANT)
 
