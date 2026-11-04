@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
+  Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
+  collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else
+  `runs/api-<id>/`, also without `--base-url`) and read from there like a written spec. Ids in a path become
+  parameters (`/projects/123` → `/projects/{id}`; `:id` and `{{id}}` keep their names), query keys become optional
+  parameters, request and response body schemas are inferred from the examples (types and keys, `required` only for a
+  key in every example), and the document, each operation and each inferred schema carry `x-cairn-derived: true`.
+  From a HAR only the API requests of the origin most of them went to are kept; pages, scripts, styles, images, fonts
+  and other origins are left out and counted in the output. No header, cookie, query or body value is written (only
+  names, types and status codes), and the values of `Authorization`, `Cookie`, `Set-Cookie` and other sensitive
+  headers, the secret-looking query, form, body and variable values (`decider/redact.ts`) and credential-shaped
+  values are scrubbed from the file too.
+- **`cairn view <runDir>` builds one offline HTML page for a run (#211).** It writes `view.html` into the run
+  directory: the scenario video (a relative path to the local `.webm`) and the steps from `screencasts.json` as
+  chapters; a click or Enter on a step seeks the video, the current step is marked, light and dark. A run with no steps
+  shows the video and a note; a run with no video exits non-zero. `--open` opens it in the browser.
 - **A click records its effect, and a failed click names its cause (#224).** On the lib backend `act()` now returns
   `outcome` beside `ok` (which still means the click was made): `navigated`, `opened-tab`, `downloaded`,
   `overlay-opened`, `overlay-closed`, `state-changed` (the element's state, the focus or the scroll),
@@ -42,12 +58,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped, and suggests `--spec <path|url>`. A spec behind a sign-in is reached with `--header` (for example a
   `Cookie:` header) or the api-scope credentials; a `--session` option is not part of this change. `--spec` is no
   longer mandatory; without it and without `--base-url` the command still refuses, now naming both flags.
+- **Saved API flows as Playwright fixtures for UI test setup and cleanup (#230).** An API flow is a named chain of
+  requests in a JSON file (`version: 1`): its steps, the values it `returns` (for example `projectId`), and a `cleanup`
+  that deletes what it created; `{{name}}` takes a captured value, `{{env.NAME}}` an environment variable when the
+  test runs, `{{uid}}` a unique value. `cairn api --spec <s> --scenarios --save-flows <file>` saves each scenario
+  chain that has a `DELETE` as a flow (create step → the id the `DELETE` needs → the `DELETE` as cleanup), keeping the
+  flows already in the file. `cairn api --flows <file>` writes `api-flows.fixture.ts` (into `--out`), which exports
+  `test` extended with one test-scoped fixture per data flow and `expect`; the cleanup runs in a `finally` after the
+  test, also when it failed. A `kind: "signin"` flow signs in through the API and replaces the tests' `storageState`
+  with the cookies it got. A data flow that changes data needs a cleanup, and runs only against an origin allowed
+  explicitly (`--base-url <url> --allow-mutations`, or `CAIRN_ALLOW_MUTATIONS=<origin>` when the tests run); otherwise
+  the test that asks for it is skipped and nothing is sent. A secret written into the file instead of `{{env.NAME}}`
+  is refused. `design --flows <file>` writes a data or sign-in precondition as `API flow <name>: …` instead of UI
+  steps; `automate --flows <file> [--allow-mutations]` sends the cases' preconditions and the flows to the codegen and
+  writes the fixture module beside the specs. Neither command sends a request for a flow, and without `--flows` the
+  prompts are unchanged. See `docs/api-flows.md`.
 
 - **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press a
   button that says it opens something (`aria-haspopup`, `aria-expanded` or `aria-controls`, read from the element);
   every other button is listed in `skipped` with the reason and never pressed, and on top of that nothing a
-  destructive-action filter refuses (a delete, a sign-out, «Close account») and no completing button (Save, Submit…)
-  is pressed. Each overlay found is recorded, in
+  destructive-action filter refuses (a delete, a sign-out, «Close account», a name that pays or orders: Buy, Pay,
+  Purchase, Order, Checkout, Subscribe, Upgrade, Купити, Оплатити, Замовити, Підписатися), no completing button (Save,
+  Submit…) and no button that submits its form is pressed. A wizard's Next and Back are whole names: «Next», «Next ›»,
+  «Далі», «Назад»; «Next: place order» is no step. Each overlay found is recorded, in
   stack order (page → overlay → nested overlay), in `overlays.json` and `report.json` (`overlays`) and as an *Overlays*
   section of `report.md`: its kind (`dialog`, `alertdialog`, `drawer`, `menu`, `listbox`), what opened it, its
   elements, its exits and the wizard steps in it. Detection is deterministic and reads the ARIA snapshot only: a
@@ -103,6 +136,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
+  The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private
+  networks and reported it as an unresolved `$ref`. The text is read the way the lookup of #227 reads it: `GET`, no
+  body, no redirect, a 15 s deadline, one request of the run's budget through the shared guard (`--allowed-methods`
+  without `GET` sends nothing). The run's headers (`--header`, api-scope knowledge, Basic auth from `--base-url`; never
+  a method-override header) go with it only when the spec is on the `--base-url` origin, or when there is no
+  `--base-url`; a spec on another origin gets none of them. A refusal names the status, the redirect that was not
+  followed and where it pointed, or the timeout, and for `401`/`403` says to pass `--header`. A `$ref` on the spec's
+  own origin (a multi-file spec on a dev server) is read the same way, one request each; a `$ref` to any other origin
+  or to a local file is never fetched, so neither a redirect nor a host name that resolves to a private address
+  turns the named spec into another read.
+- **`cairn api --base-url` with a query string no longer sends every case to the server root (#235).** The request URL
+  is now built from the parsed base URL: the case path follows the base path, the base query (a signed address, a key
+  in a parameter) is kept on every request and the case's own query parameters are added to it. A base URL without a
+  query is joined as before; the host and base-path checks run on the built address.
 - **A spec given as `--spec <url>` no longer reads local files (#227).** A `$ref` such as `file:///…/secret.json` in a
   downloaded spec was read from disk, and its content could end up in the requests sent to the target; a remote spec's
   `$ref`s now resolve over http(s) only. A spec file on disk still reads the files it references (multi-file specs).

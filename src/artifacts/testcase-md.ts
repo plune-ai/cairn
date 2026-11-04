@@ -131,6 +131,8 @@ export interface ParsedTestCase {
   stableId: string;
   execution: string;
   title: string;
+  /** #230: the case's preconditions ("(none)" left out); absent in a case built before the field existed. */
+  preconditions?: string[];
   steps: string[];
   expected: string[];
   selectors: { label: string; locator: string }[];
@@ -171,7 +173,12 @@ export function parseTestCaseMd(md: string): ParsedTestCase {
       return { label: cells[0] ?? "", locator: (cells[1] ?? "").replace(/`/g, "").trim() };
     })
     .filter((s) => s.locator.length > 0);
-  return { id, stableId, execution, title, steps, expected, selectors };
+  const preconditions = section(md, "Preconditions")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("- ") && l !== "- (none)")
+    .map((l) => l.slice(2).trim());
+  return { id, stableId, execution, title, preconditions, steps, expected, selectors };
 }
 
 /** A parsed API test case (for `automate` — API-7, #144: ATC `.md` → codegen input). */

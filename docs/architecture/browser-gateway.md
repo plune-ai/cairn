@@ -90,7 +90,9 @@ takes `{ kind: "press", key }` and `{ kind: "click-outside", scope }` (lib backe
 outside the overlay `scope` and is nothing a click acts on (no link, button, field, label, click role, tabindex,
 inline handler or pointer cursor); corners first, then the edges, then a grid. When no point passes, nothing is
 clicked and the answer is `ok: false`. `getState()` also returns `popup`: the element's `aria-haspopup`,
-`aria-expanded` and `aria-controls`, which the ARIA snapshot does not show.
+`aria-expanded` and `aria-controls`, which the ARIA snapshot does not show, and `submitsForm` when pressing the element
+submits a form (a `type=submit` button, or a `<button>` with no type, inside a form); such a button is never pressed
+while looking for an overlay.
 
 Detection and the explorer sit above the gateway: `src/observe/overlays.ts` reads a snapshot (pure, no LLM: `dialog` and
 `alertdialog` are overlays; a `menu`, `listbox` or `complementary` is one when it was not on the baseline page;

@@ -31,7 +31,8 @@ import {
  * no LLM here. Nothing is submitted. A button is pressed to look for an overlay only when it says it opens one
  * (`aria-haspopup`, `aria-expanded` or `aria-controls`) — an allow-list (#225 review: a deny-list let «Pay now»,
  * «Archive» and «Continue» through) — and it must also pass the destructive-action filters and not be a completion
- * (Save, Submit…). Everything else is recorded as skipped, with the reason, and left alone.
+ * (Save, Submit…) nor submit its form (#225 review 2). Everything else is recorded as skipped, with the reason, and
+ * left alone.
  */
 
 export interface ExploreOverlaysInput {
@@ -68,15 +69,22 @@ const DESTRUCTIVE_REASON = "destructive";
 const COMPLETION_REASON = "completes the form; not pressed";
 const SILENT_REASON = "does not say it opens anything (no aria-haspopup, aria-expanded or aria-controls); not pressed";
 const DISABLED_REASON = "disabled; not pressed";
+const SUBMITS_FORM_REASON = "submits a form";
 
 /**
  * Why `e` may not be pressed while looking for an overlay, or undefined when it may. The deny-list first (destructive,
- * completion), then the allow-list: only a control that announces a popup. `popup` is what the backend read from it.
+ * completion, a button that submits its form), then the allow-list: only a control that announces a popup. `popup`
+ * and `submitsForm` are what the backend read from it.
  */
-export function refusal(e: { name?: string; disabled?: true }, popup: ElementState["popup"] | undefined): string | undefined {
+export function refusal(
+  e: { name?: string; disabled?: true },
+  popup: ElementState["popup"] | undefined,
+  submitsForm?: boolean,
+): string | undefined {
   if (!passesSafetyFilters(e.name)) return DESTRUCTIVE_REASON;
   if (isCompletionName(e.name)) return COMPLETION_REASON;
   if (e.disabled) return DISABLED_REASON;
+  if (submitsForm) return SUBMITS_FORM_REASON; // #225 review 2: it would post the form, whatever it announces
   if (!popup || (popup.hasPopup === undefined && popup.expanded === undefined && popup.controls === undefined)) return SILENT_REASON;
   return undefined;
 }
@@ -250,8 +258,8 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
       if (here) {
         for (const b of probes) {
           const fresh = here.els.find((e) => e.role === b.role && e.name === b.name && sameScope(e.inside, scope) && !e.underOverlay) ?? b;
-          const popup = passesSafetyFilters(b.name) && !isCompletionName(b.name) && !fresh.disabled ? (await gateway.getState(fresh).catch(() => undefined))?.popup : undefined;
-          reasons.set(b, refusal(fresh, popup));
+          const state = passesSafetyFilters(b.name) && !isCompletionName(b.name) && !fresh.disabled ? await gateway.getState(fresh).catch(() => undefined) : undefined;
+          reasons.set(b, refusal(fresh, state?.popup, state?.submitsForm));
         }
       }
       let probed = 0;
@@ -297,8 +305,8 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
   for (const e of pageButtons) {
     if (candidates.some((c) => c.name === e.name)) continue;
     const vetted = passesSafetyFilters(e.name) && !isCompletionName(e.name) && !e.disabled;
-    const popup = vetted ? (await gateway.getState(e).catch(() => undefined))?.popup : undefined;
-    const reason = refusal(e, popup);
+    const state = vetted ? await gateway.getState(e).catch(() => undefined) : undefined;
+    const reason = refusal(e, state?.popup, state?.submitsForm);
     if (reason) skip(e, reason);
     else candidates.push(e);
   }

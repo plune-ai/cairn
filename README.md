@@ -92,6 +92,15 @@ trace, since Playwright would write them into it in the clear: its timecodes are
 scenario of a worker they can run seconds late. It's a review-gate affordance — watch what the agent did before
 approving a case. Off by default; the recorded `.webm` paths are linked from the run summary and the TUI result screen.
 
+### Watch a run offline: `cairn view`
+
+`cairn view <runDir>` (a path or a bare run id) builds **`view.html`** in a run that has screencasts and prints its
+path. It is one self-contained file (inline CSS and JS) that plays the local `.webm` by a relative path and lists the
+steps from `screencasts.json` with their times: click a step (or press Enter on it) to jump the video there; the
+current step is marked while it plays. It works offline and nothing leaves your machine. A run with no steps shows
+only the video and a note; a run with no video exits with an error naming the run directory. Add `--open` to open
+the page in your default browser.
+
 ## Interactive TUI
 
 Run `cairn` with **no arguments** in a terminal for a guided UI (launcher → form → live dashboard →
@@ -103,11 +112,13 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 |---|---|
 | `cairn session capture --url <loginUrl> --name <s>` | Capture a login session → `.auth/` (`cairn login` is a shorthand; `session ls` / `rm`) |
 | `cairn observe --url <u> [--session <s>]` | ARIA snapshot + interactive elements + screenshot |
-| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>] [--fresh] [--critique]` | Test cases only (ATC/MTC `.md` + selectors), no code |
-| `cairn automate --run <dir> [--validate --session <s>] [--screencast]` | `@playwright/test` from `ATC-*` cases |
+| `cairn design --url <u> --session <s> [--checklist <f>] [--style <s>] [--fresh] [--critique] [--flows <f>]` | Test cases only (ATC/MTC `.md` + selectors), no code; with `--flows`, data and sign-in preconditions use saved [API flows](docs/api-flows.md) |
+| `cairn automate --run <dir> [--validate --session <s>] [--screencast] [--flows <f> [--allow-mutations]]` | `@playwright/test` from `ATC-*` cases; with `--flows`, specs get their data and sign-in from the flows' Playwright fixture |
+| `cairn view <runDir> [--open]` | Build `view.html`: a run's screencast video with its steps as clickable chapters (offline) |
 | `cairn promote --run <dir> --cases <ids> [--session <s>]` | Promote manual MTC case(s) to ATC (.md only; then `automate`) |
 | `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique] [--screencast]` | Full pipeline (cases → code → validate → repair → Pilot) |
-| `cairn api [--spec <path\|url>] [--base-url <u>] [--negative] [--scenarios] [--adversarial [styles]] [--min-coverage <percent> [--count-partial]] [--allow-mutations] [--allowed-methods <list>] [--allowed-paths <list>] [--max-requests <n>] [--rps <n>]` | Generate (and, with `--base-url`, run + assert status/contract) happy-path, negative-schema, multi-endpoint-scenario, and adversarial (`normal`/`curious`/`psycho`/`hacker`) cases from an OpenAPI 3.x spec. **With `--base-url` only GET/HEAD/OPTIONS are sent unless you pass `--allow-mutations`** (300 requests max, 5 req/s, host pinned, no redirects). Without `--spec`, the `--base-url` server is searched for a spec it serves (`/openapi.json`, `/v3/api-docs`, …) |
+| `cairn api [--spec <path\|url>] [--base-url <u>] [--negative] [--scenarios] [--adversarial [styles]] [--min-coverage <percent> [--count-partial]] [--allow-mutations] [--allowed-methods <list>] [--allowed-paths <list>] [--max-requests <n>] [--rps <n>]` | Generate (and, with `--base-url`, run + assert status/contract) happy-path, negative-schema, multi-endpoint-scenario, and adversarial (`normal`/`curious`/`psycho`/`hacker`) cases from an OpenAPI 3.x spec. **With `--base-url` only GET/HEAD/OPTIONS are sent unless you pass `--allow-mutations`** (300 requests max, 5 req/s, host pinned, no redirects). Without `--spec`, the `--base-url` server is searched for a spec it serves (`/openapi.json`, `/v3/api-docs`, …). `--spec` also takes a Postman collection (v2.1) or a HAR file: it is converted to OpenAPI and saved as `openapi.derived.json` in the run directory |
+| `cairn api --spec <s> --scenarios --save-flows <f>` · `cairn api --flows <f> [--out <dir>] [--base-url <u> --allow-mutations]` | Save scenario chains as [API flows](docs/api-flows.md) (create → return its id → delete), and write their Playwright fixture (`api-flows.fixture.ts`) for UI test setup and cleanup; sends no request. A flow that changes data runs only against an address allowed with `--allow-mutations` |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).

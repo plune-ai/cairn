@@ -7,6 +7,7 @@ import {
   toastTexts,
   scopedLocator,
   topModalScope,
+  isStepName,
 } from "../../src/observe/overlays.js";
 
 const PAGE = `- main:
@@ -164,6 +165,12 @@ describe("exits and wizard buttons", () => {
     expect(wiz(`- alertdialog "Proceed?":\n  - button "Back"\n  - button "Next"`, "alertdialog")).toBeUndefined();
   });
 
+  it("Next and Back are whole names: «Next: place order» is no step (#225 review 2)", () => {
+    for (const name of ["Next", "next", "Next ›", "Next >", "Next →", "Next »", "Далі", "Back", "‹ Back", "Previous", "Назад"]) expect(isStepName(name)).toBe(true);
+    for (const name of ["Next: place order", "Next step: pay", "Next › Pay", "Back up data", "Previously ordered", "Далі — оплатити"]) expect(isStepName(name)).toBe(false);
+    expect(wizardButtons(parseAriaSnapshot(`- dialog "Cart":\n  - heading "Step 2 of 2" [level=2]\n  - button "Back"\n  - button "Next: place order"`), "dialog")).toBeUndefined();
+  });
+
   it("a disabled button is read as disabled from the snapshot", () => {
     const [next] = parseAriaSnapshot(`- button "Next" [disabled]`);
     expect(next).toMatchObject({ name: "Next", disabled: true });
@@ -177,12 +184,20 @@ describe("which button exploration may press (#225 review)", () => {
     expect(refusal({ name: "Details" }, { expanded: false })).toBeUndefined();
     expect(refusal({ name: "Filters" }, { controls: "filters" })).toBeUndefined();
     // a plain button is not pressed, whatever its name
-    for (const name of ["Pay now", "Archive", "Continue", "Cancel subscription"]) expect(refusal({ name }, {})).toMatch(/does not say it opens anything/);
-    expect(refusal({ name: "Pay now" }, undefined)).toMatch(/does not say it opens anything/); // not readable (cli backend)
+    for (const name of ["Archive", "Continue", "Cancel subscription"]) expect(refusal({ name }, {})).toMatch(/does not say it opens anything/);
+    expect(refusal({ name: "Archive" }, undefined)).toMatch(/does not say it opens anything/); // not readable (cli backend)
     // the deny-list stays on top of the allow-list
     expect(refusal({ name: "Sign out" }, { hasPopup: "menu" })).toBe("destructive");
     expect(refusal({ name: "Close account" }, { hasPopup: "dialog" })).toBe("destructive");
     expect(refusal({ name: "Save" }, { hasPopup: "dialog" })).toBe("completes the form; not pressed");
     expect(refusal({ name: "Share", disabled: true }, { hasPopup: "dialog" })).toBe("disabled; not pressed");
+    // #225 review 2: a trigger that submits its form posts it, whatever it announces
+    expect(refusal({ name: "Choose options" }, { hasPopup: "dialog" }, true)).toBe("submits a form");
+    expect(refusal({ name: "Show extras" }, { expanded: false }, true)).toBe("submits a form");
+    // #225 review 2: a name that pays or orders is not pressed, whatever it announces
+    for (const name of ["Pay now", "Buy plan", "Pay", "Purchase", "Order", "Checkout", "Subscribe", "Upgrade", "Купити", "Оплатити", "Замовити", "Підписатися"]) {
+      expect(refusal({ name }, { hasPopup: "dialog" })).toBe("destructive");
+    }
+    for (const name of ["Payments", "Orders", "Upgrades log", "Підписки"]) expect(refusal({ name }, { hasPopup: "dialog" })).toBeUndefined();
   });
 });

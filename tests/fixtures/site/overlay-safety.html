@@ -7,6 +7,8 @@
       [hidden] { display: none !important; }
       body { margin: 0; padding: 3rem 1rem 1rem; }
       .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 10; }
+      .drawer { position: fixed; top: 3rem; right: 0; width: 240px; bottom: 0; background: #eee; padding: 1rem; z-index: 5; }
+      .menu { position: absolute; background: #fff; border: 1px solid #333; z-index: 5; }
       .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; z-index: 20; }
       /* A header link above everything, at the very corner a blind click outside would land on. */
       #signout { position: fixed; top: 0; left: 0; padding: 4px 8px; background: #fee; z-index: 100; }
@@ -21,6 +23,33 @@
       <button type="button" id="transfer-open" aria-haspopup="dialog">Transfer ownership</button>
       <button type="button" id="account-open" aria-haspopup="dialog">Account settings</button>
       <button type="button" id="shortcuts-open" aria-haspopup="dialog">Keyboard shortcuts</button>
+
+      <!-- Genuine overlays: still found after the review fixes. -->
+      <button type="button" id="filters-open" aria-expanded="false" aria-controls="filters">Filters</button>
+      <button type="button" id="more-open" aria-haspopup="menu" aria-controls="more">More</button>
+      <button type="button" id="profile-open" aria-haspopup="dialog">Set up profile</button>
+      <div id="more" class="menu" role="menu" aria-label="More actions" hidden>
+        <button type="button" role="menuitem">Copy link</button>
+        <button type="button" role="menuitem">Print</button>
+      </div>
+      <aside id="filters" class="drawer" aria-label="Filters panel" hidden>
+        <h2>Filters</h2>
+        <label><input type="checkbox" /> Only mine</label>
+      </aside>
+
+      <!-- Review 2, case 1: a step indicator and Back, but «Next: place order» orders; it is no step. -->
+      <button type="button" id="cart-open" aria-haspopup="dialog">Review cart</button>
+
+      <!-- Review 2, case 2: triggers that announce a popup but submit their form. -->
+      <form method="post" action="/api/order-form">
+        <button type="submit" id="options-open" aria-haspopup="dialog">Choose options</button>
+        <button id="extras-open" aria-expanded="false">Show extras</button>
+      </form>
+
+      <!-- Review 2, case 3: triggers that announce a popup, but their names pay or order. -->
+      <button type="button" id="buy-open" aria-haspopup="dialog">Buy plan</button>
+      <button type="button" id="upgrade-open" aria-expanded="false">Upgrade</button>
+      <button type="button" id="kupyty-open" aria-haspopup="dialog">Купити</button>
     </main>
 
     <div id="backdrop" class="backdrop" hidden></div>
@@ -50,6 +79,22 @@
       <button type="button" aria-label="Close" data-close>×</button>
     </div>
 
+    <div id="profile" class="dialog" role="dialog" aria-modal="true" aria-label="Profile wizard" hidden>
+      <h2 id="profile-title">Step 1 of 2</h2>
+      <div id="profile1"><label>Nickname <input type="text" /></label></div>
+      <div id="profile2" hidden><label>City <input type="text" /></label></div>
+      <button type="button" id="profile-back" hidden>Back</button>
+      <button type="button" id="profile-next">Next</button>
+      <button type="button" data-close>Cancel</button>
+    </div>
+
+    <div id="cart" class="dialog" role="dialog" aria-modal="true" aria-label="Cart" hidden>
+      <h2>Step 2 of 2</h2>
+      <p>2 items, 40 EUR</p>
+      <button type="button" data-close>Back</button>
+      <button type="button" id="place-order">Next: place order</button>
+    </div>
+
     <script>
       const $ = (id) => document.getElementById(id);
       const post = (path) => fetch(path, { method: "POST" });
@@ -70,6 +115,36 @@
       $("transfer-open").addEventListener("click", () => show("transfer"));
       $("account-open").addEventListener("click", () => show("account"));
       $("shortcuts-open").addEventListener("click", () => show("shortcuts"));
+      $("filters-open").addEventListener("click", () => {
+        const f = $("filters");
+        f.hidden = !f.hidden;
+        $("filters-open").setAttribute("aria-expanded", String(!f.hidden));
+      });
+      $("more-open").addEventListener("click", () => { $("more").hidden = !$("more").hidden; });
+      $("profile-open").addEventListener("click", () => {
+        $("profile1").hidden = false; $("profile2").hidden = true;
+        $("profile-back").hidden = true; $("profile-next").hidden = false;
+        $("profile-title").textContent = "Step 1 of 2";
+        show("profile");
+      });
+      $("profile-next").addEventListener("click", () => {
+        $("profile1").hidden = true; $("profile2").hidden = false;
+        $("profile-back").hidden = false; $("profile-next").hidden = true;
+        $("profile-title").textContent = "Step 2 of 2";
+      });
+      $("profile-back").addEventListener("click", () => {
+        $("profile1").hidden = false; $("profile2").hidden = true;
+        $("profile-back").hidden = true; $("profile-next").hidden = false;
+        $("profile-title").textContent = "Step 1 of 2";
+      });
+      $("cart-open").addEventListener("click", () => show("cart"));
+      $("place-order").addEventListener("click", () => post("/api/place-order"));
+      $("buy-open").addEventListener("click", () => { post("/api/buy"); show("shortcuts"); });
+      $("upgrade-open").addEventListener("click", () => { post("/api/upgrade"); show("shortcuts"); });
+      $("kupyty-open").addEventListener("click", () => { post("/api/kupyty"); show("shortcuts"); });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { $("more").hidden = true; $("filters").hidden = true; $("filters-open").setAttribute("aria-expanded", "false"); }
+      });
       $("archive-yes").addEventListener("click", () => { post("/api/archive"); hide(); });
       $("transfer-continue").addEventListener("click", () => { post("/api/transfer"); hide(); });
       $("close-account").addEventListener("click", () => post("/api/close-account"));

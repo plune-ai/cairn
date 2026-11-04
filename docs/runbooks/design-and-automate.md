@@ -27,6 +27,17 @@ cairn automate --run runs/<id> [--validate --session myapp]
 - Reads `testcases/*.md`, **skips MTC/manual**, generates `@playwright/test` from the ATC cases (locators are taken from the Selectors section) → `runs/<id>/tests/`.
 - `--validate` — runs the generated tests (a session is required).
 
+## 3a. Preconditions through the API (`--flows`, #230)
+```
+cairn design   --url https://app.example.com/projects --session myapp --flows flows.json
+cairn automate --run runs/<id> --flows flows.json --allow-mutations --validate --session myapp
+```
+With a file of saved API flows, `design` writes a data or sign-in precondition as `API flow <name>: …` instead of UI
+steps, and `automate` writes `api-flows.fixture.ts` beside the specs; a spec that uses a flow imports `test` from it,
+gets the flow's values as a fixture, and the flow's cleanup deletes the data after the test, also when it fails.
+Without `--allow-mutations` the specs that use a flow that changes data are skipped. Format and details:
+**[API flows](../api-flows.md)**. Without `--flows`, nothing changes.
+
 ## 4. Alternative — `explore` (everything at once)
 ```
 cairn explore --url ... --session ... [--checklist ...]
