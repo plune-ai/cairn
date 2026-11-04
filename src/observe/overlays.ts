@@ -47,10 +47,11 @@ const CLOSE_NAME = /^\s*(?:close|dismiss|×|✕|x|закрити|закрыть)
 const CANCEL_NAME = /^\s*(?:cancel|no|not now|never mind|keep editing|скасувати|відміна|ні|отмена)\s*[.!]?\s*$/i;
 /**
  * Next of a wizard. «Continue» is not here (#225 review): «Transfer ownership? [Continue]» confirms an action; it is
- * no step.
+ * no step. The whole name, as with the exits (#225 review 2): «Next», «Next ›», «Далі →»; never «Next: place order»,
+ * which acts on what follows it. One arrow may follow Next (›, >, →, ») and precede Back (‹, <, ←, «).
  */
-const NEXT_NAME = /^\s*(?:next|далі|далее)\b/i;
-const BACK_NAME = /^\s*(?:back|previous|назад)\b/i;
+const NEXT_NAME = /^\s*(?:next|далі|далее)(?:\s*[›>→»])?\s*$/iu;
+const BACK_NAME = /^\s*(?:[‹<←«]\s*)?(?:back|previous|назад)\s*$/iu;
 /** A step indicator: «Step 2 of 3», «Крок 1 з 4», «2 / 3». */
 const STEP_INDICATOR = /\b(?:step|крок|шаг)\s*\d+\s*(?:of|\/|з|із|из)\s*\d+\b|^\s*\d+\s*\/\s*\d+\s*$/i;
 /** The action that completes an overlay. Broad on purpose: whether it may be pressed is the filter's call, not this name's. */

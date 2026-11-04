@@ -7,6 +7,7 @@ import {
   toastTexts,
   scopedLocator,
   topModalScope,
+  isStepName,
 } from "../../src/observe/overlays.js";
 
 const PAGE = `- main:
@@ -162,6 +163,12 @@ describe("exits and wizard buttons", () => {
     expect(wiz(`- dialog "Transfer ownership? This cannot be undone.":\n  - button "Back"\n  - button "Continue"`, "dialog")).toBeUndefined();
     // an alertdialog asks to confirm; its Next is never pressed as a step
     expect(wiz(`- alertdialog "Proceed?":\n  - button "Back"\n  - button "Next"`, "alertdialog")).toBeUndefined();
+  });
+
+  it("Next and Back are whole names: «Next: place order» is no step (#225 review 2)", () => {
+    for (const name of ["Next", "next", "Next ›", "Next >", "Next →", "Next »", "Далі", "Back", "‹ Back", "Previous", "Назад"]) expect(isStepName(name)).toBe(true);
+    for (const name of ["Next: place order", "Next step: pay", "Next › Pay", "Back up data", "Previously ordered", "Далі — оплатити"]) expect(isStepName(name)).toBe(false);
+    expect(wizardButtons(parseAriaSnapshot(`- dialog "Cart":\n  - heading "Step 2 of 2" [level=2]\n  - button "Back"\n  - button "Next: place order"`), "dialog")).toBeUndefined();
   });
 
   it("a disabled button is read as disabled from the snapshot", () => {
