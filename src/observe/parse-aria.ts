@@ -56,7 +56,7 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
     const line = raw.trimStart();
     if (!line.startsWith("- ")) continue;
 
-    const content = line.slice(2).trim();
+    const content = unquoteKey(line.slice(2).trim());
     if (content.startsWith("/")) {
       // Property line (/url, /checked, /disabled…). Capture /url onto the preceding element (its link)
       // so crawl can dedup links by (name, href) — #102. Other properties are skipped.
@@ -71,7 +71,9 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
     const role = content.match(/^([a-zA-Z][\w-]*)/)?.[1];
     if (!role || role === "text") continue; // text node or unparseable
 
-    const name = content.match(/"([^"]*)"/)?.[1];
+    // #238: the snapshot quotes a name as a JSON string, so `Say "hi"` arrives as `"Say \"hi\""`; read past escaped quotes and unescape.
+    const quoted = content.match(/"((?:[^"\\]|\\.)*)"/)?.[1];
+    const name = quoted === undefined ? undefined : unescapeName(quoted);
     // A native ref from the cli/MCP snapshot (`[ref=e15]`) takes priority over a synthesized one.
     const nativeRef = content.match(/\[ref=([^\]\s]+)\]/)?.[1];
     const interactive = INTERACTIVE.has(role);
@@ -80,4 +82,18 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
   }
 
   return out;
+}
+
+/** #238: Playwright single-quotes a whole key YAML would misread (a name with `: `, ` #`, `{`): `'button "a: b"':` → `button "a: b":`. */
+function unquoteKey(content: string): string {
+  const m = /^'((?:[^']|'')*)'(.*)$/.exec(content);
+  return m ? (m[1] ?? "").replace(/''/g, "'") + (m[2] ?? "") : content;
+}
+
+function unescapeName(quoted: string): string {
+  try {
+    return JSON.parse(`"${quoted}"`) as string;
+  } catch {
+    return quoted.replace(/\\(.)/g, "$1");
+  }
 }
