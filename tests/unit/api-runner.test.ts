@@ -76,6 +76,35 @@ describe("runApiCases — execution + status assertion (a)", () => {
   });
 });
 
+describe("a query string in the base URL (#235)", () => {
+  it("keeps the base query and the case path, and adds the case's own query params", async () => {
+    const { fetch, calls } = fakeFetch([res(200, [])]);
+    const c = caseOf({ path: "/pets", params: { path: {}, query: { limit: "5" }, header: {}, cookie: {} } });
+    const [r] = await runApiCases([c], { baseUrl: "http://host/?sig=abc", guard: openGuard(), fetch });
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/pets");
+    expect(u.searchParams.get("sig")).toBe("abc");
+    expect(u.searchParams.get("limit")).toBe("5");
+    expect(r!.blocked).toBeUndefined();
+  });
+
+  it("keeps a base path with a query, and a case without params of its own", async () => {
+    const { fetch, calls } = fakeFetch([res(200, {})]);
+    const c = caseOf({ path: "/pets/{id}" });
+    await runApiCases([c], { baseUrl: "https://api.test/v1/?key=k%2Fx", guard: openGuard(), fetch });
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/pets/7");
+    expect(u.searchParams.get("key")).toBe("k/x");
+  });
+
+  it("a base URL without a query is joined as before", async () => {
+    const { fetch, calls } = fakeFetch([res(200, {})]);
+    const c = caseOf({ path: "/pets", params: { path: {}, query: { a: "1" }, header: {}, cookie: {} } });
+    await runApiCases([c], { baseUrl: "https://api.test/v1", guard: openGuard(), fetch });
+    expect(calls[0]!.url).toBe("https://api.test/v1/pets?a=1");
+  });
+});
+
 describe("multipart/form-data encoding (API-10, #150)", () => {
   it("encodes a multipart case as FormData — a Buffer field becomes a File part, others stringified fields — without forcing JSON content-type", async () => {
     const { fetch, calls } = fakeFetch([res(201, { id: "f1" })]);

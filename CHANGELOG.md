@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn view <runDir>` builds one offline HTML page for a run (#211).** It writes `view.html` into the run
+  directory: the scenario video (a relative path to the local `.webm`) and the steps from `screencasts.json` as
+  chapters; a click or Enter on a step seeks the video, the current step is marked, light and dark. A run with no steps
+  shows the video and a note; a run with no video exits non-zero. `--open` opens it in the browser.
 - **A click records its effect, and a failed click names its cause (#224).** On the lib backend `act()` now returns
   `outcome` beside `ok` (which still means the click was made): `navigated`, `opened-tab`, `downloaded`,
   `overlay-opened`, `overlay-closed`, `state-changed` (the element's state, the focus or the scroll),
@@ -54,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   redirect that was not followed and where it pointed, or the timeout, and for `401`/`403` says to pass `--header`.
   The guard for `$ref` stays: a local file is never read from a spec at an address, and another `http(s)` `$ref` in it
   is still read only by the parser's guarded reader, which keeps refusing private addresses.
+- **`cairn api --base-url` with a query string no longer sends every case to the server root (#235).** The request URL
+  is now built from the parsed base URL: the case path follows the base path, the base query (a signed address, a key
+  in a parameter) is kept on every request and the case's own query parameters are added to it. A base URL without a
+  query is joined as before; the host and base-path checks run on the built address.
 - **A spec given as `--spec <url>` no longer reads local files (#227).** A `$ref` such as `file:///…/secret.json` in a
   downloaded spec was read from disk, and its content could end up in the requests sent to the target; a remote spec's
   `$ref`s now resolve over http(s) only. A spec file on disk still reads the files it references (multi-file specs).
