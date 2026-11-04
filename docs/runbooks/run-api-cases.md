@@ -39,6 +39,15 @@
    header) or the api-scope credentials. Nothing found → exit `1` (`4` when the request budget ran out first) with
    every address tried and its answer, and every address skipped; pass `--spec <path|url>` then.
 
+## Save scenario chains as API flows (`--save-flows`, #230)
+`cairn api --spec ./openapi.yaml --scenarios --save-flows flows.json` saves each chain that has a `DELETE` as an API
+flow: its create step, the id the `DELETE` needs, and the `DELETE` as the cleanup. `cairn api --flows flows.json --out
+e2e/fixtures` then writes a Playwright fixture module (`api-flows.fixture.ts`) that UI tests import to get that data
+and have it deleted after the test, also after a failed one. Neither sends a request. A flow that changes data runs
+only against an address given with `--base-url <url> --allow-mutations` (or `CAIRN_ALLOW_MUTATIONS=<origin>` when the
+tests run); otherwise the tests that use it are skipped. The file format, the sign-in flow and how `design` and
+`automate` use the flows: **[API flows](../api-flows.md)**.
+
 ## Auth / headers (nothing hardcoded)
 - **Config (per run):** `--header "Authorization: Bearer $TOKEN"` — repeatable. Config headers win.
 - **Knowledge (#92):** in an `api`/`all`-scope file under `./knowledge/` (e.g. `knowledge/api/auth.md`),

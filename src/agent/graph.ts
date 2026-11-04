@@ -57,6 +57,8 @@ export interface ExploreDeps {
   experienceText?: string;
   styleText?: string;
   languageText?: string;
+  /** #230: the available API flows for design (`formatFlowsForPrompt`); absent → the design prompt is unchanged. */
+  apiFlowsText?: string;
   runWriter: RunWriter;
   /** Runs and classifies an already-written suite (injected so the graph can be tested without a browser). */
   validate: (runDir: string) => Promise<ValidationReport>;
@@ -316,6 +318,7 @@ export async function runExploreGraph(
       experience: deps.experienceText,
       style: deps.styleText,
       language: deps.languageText,
+      apiFlows: deps.apiFlowsText,
     },
     { invoke: deps.designInvoke, prompts: deps.prompts },
   );

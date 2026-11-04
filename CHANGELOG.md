@@ -42,6 +42,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   skipped, and suggests `--spec <path|url>`. A spec behind a sign-in is reached with `--header` (for example a
   `Cookie:` header) or the api-scope credentials; a `--session` option is not part of this change. `--spec` is no
   longer mandatory; without it and without `--base-url` the command still refuses, now naming both flags.
+- **Saved API flows as Playwright fixtures for UI test setup and cleanup (#230).** An API flow is a named chain of
+  requests in a JSON file (`version: 1`): its steps, the values it `returns` (for example `projectId`), and a `cleanup`
+  that deletes what it created; `{{name}}` takes a captured value, `{{env.NAME}}` an environment variable when the
+  test runs, `{{uid}}` a unique value. `cairn api --spec <s> --scenarios --save-flows <file>` saves each scenario
+  chain that has a `DELETE` as a flow (create step → the id the `DELETE` needs → the `DELETE` as cleanup), keeping the
+  flows already in the file. `cairn api --flows <file>` writes `api-flows.fixture.ts` (into `--out`), which exports
+  `test` extended with one test-scoped fixture per data flow and `expect`; the cleanup runs in a `finally` after the
+  test, also when it failed. A `kind: "signin"` flow signs in through the API and replaces the tests' `storageState`
+  with the cookies it got. A data flow that changes data needs a cleanup, and runs only against an origin allowed
+  explicitly (`--base-url <url> --allow-mutations`, or `CAIRN_ALLOW_MUTATIONS=<origin>` when the tests run); otherwise
+  the test that asks for it is skipped and nothing is sent. A secret written into the file instead of `{{env.NAME}}`
+  is refused. `design --flows <file>` writes a data or sign-in precondition as `API flow <name>: …` instead of UI
+  steps; `automate --flows <file> [--allow-mutations]` sends the cases' preconditions and the flows to the codegen and
+  writes the fixture module beside the specs. Neither command sends a request for a flow, and without `--flows` the
+  prompts are unchanged. See `docs/api-flows.md`.
 
 ### Fixed
 
