@@ -14,6 +14,21 @@ export interface ElementRef {
   rank: number;
   /** Resolved href for links (from the ARIA `/url` property) — used to dedup crawl links (#102). */
   url?: string;
+  /**
+   * #225: the dialog / alertdialog the element sits in (the innermost one). Its locator is then
+   * `getByRole('dialog', { name }).getByRole(role, { name })`, so a same-named element on the page is not it.
+   */
+  scope?: OverlayScope;
+  /** #225: the innermost dialog, alertdialog, menu, listbox or complementary the element sits in (what overlay detection groups by). */
+  inside?: OverlayScope;
+  /** #225: a modal overlay is open and this element is not in its top one — never touched while it is open. */
+  underOverlay?: true;
+}
+
+/** #225: a container an element is looked for in: its role and accessible name. */
+export interface OverlayScope {
+  role: string;
+  name?: string;
 }
 
 /** Observed element state (for act→observe grounding). */
@@ -44,6 +59,11 @@ export interface Observation {
   consoleErrors?: string[];
   /** HTTP status of the navigation made by this observe() (only when `url` was given; lib backend only). */
   status?: number;
+  /**
+   * #225: the dialogs of the snapshot that the DOM says are NOT modal (`role|name`; no `aria-modal`, not `:modal`) —
+   * a cookie banner leaves the page live. Absent on the cli backend: every dialog is then taken as modal.
+   */
+  nonModal?: string[];
 }
 
 /** HTTP Basic Auth for the browser context (values come from environment variables, never from a file). */
@@ -73,7 +93,11 @@ export type Action =
    * `watch: false`: only click — nothing is watched or recorded (a probe's revert, a sign-in); watched by default.
    */
   | { kind: "click"; ref: string; timeoutMs?: number; watch?: boolean }
-  | { kind: "fill"; ref: string; value: string };
+  | { kind: "fill"; ref: string; value: string }
+  /** #225 (lib backend): press a key on the page, e.g. `Escape`. */
+  | { kind: "press"; key: string }
+  /** #225 (lib backend): click on the page outside any overlay, at its top-left corner. */
+  | { kind: "click-outside" };
 
 /**
  * What a click did (#224), most telling first: one name from a closed set. `no-effect` is a click after which Cairn
@@ -94,9 +118,10 @@ export type ClickEffectKind =
 
 /**
  * Why a click failed (#224). `intercepted`: another element takes the pointer — an overlay exploration does not know.
+ * `under-overlay` (#225): the element lies under a modal overlay that is open, so it was not clicked at all.
  * `not-found`: nothing matches the element observed a moment ago; `detached`: it was found, then left the page.
  */
-export type ClickFailure = "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
+export type ClickFailure = "under-overlay" | "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
 
 export type ClickOutcome = ClickEffectKind | ClickFailure;
 

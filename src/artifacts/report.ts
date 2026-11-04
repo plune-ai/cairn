@@ -1,4 +1,5 @@
 import type { ClickEffect, ElementRef } from "../browser/types.js";
+import { scopedLocator, formatOverlays, type OverlayState } from "../observe/overlays.js";
 import { DEAD_CLICK_RECHECK_MS, REQUEST_ANSWER_MS, recordedUrl } from "../browser/click-effect.js";
 import { norm, type FlowEdge } from "../flow/crawl.js";
 import type { TestCase } from "../design/index.js";
@@ -44,6 +45,7 @@ export function deadClicksOf(clicks: ClickEffect[], edges: FlowEdge[] = []): Dea
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
 export function locatorFor(el: ElementRef): string {
+  if (el.scope) return scopedLocator(el.scope, el.role, el.name); // #225: inside a dialog, found through it
   const name = el.name ? `, { name: '${el.name.replace(/'/g, "\\'")}' }` : "";
   return `page.getByRole('${el.role}'${name})`;
 }
@@ -79,6 +81,8 @@ export interface ReportInput {
   decider?: DeciderSummary;
   /** #224: clicks Cairn saw no change after — the section is always there, empty when there are none (lib backend). */
   deadClicks?: DeadClick[];
+  /** #225: the overlays found as states — the section is rendered only when there are some. */
+  overlays?: OverlayState[];
 }
 
 /** A pipe in an element's name or a URL must not split a table row. */
@@ -209,6 +213,11 @@ export function renderReportMd(r: ReportInput): string {
     );
     for (const d of dead) lines.push(`| ${cell(d.page)} | ${cell(`${d.role}${d.name !== undefined ? ` "${d.name}"` : ""}`)} |`);
     lines.push("");
+  }
+
+  if (r.overlays && r.overlays.length > 0) {
+    lines.push(`## Overlays (${r.overlays.length})`, "", "Dialogs, drawers, menus and wizards found as states: what opens each, what is in it, how it closes.", "");
+    lines.push("```", formatOverlays(r.overlays), "```", "");
   }
 
   const interactive = r.elements.filter((e) => e.interactive);

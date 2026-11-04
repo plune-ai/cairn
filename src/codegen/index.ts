@@ -22,7 +22,12 @@ export interface CodegenInput {
   elements?: VerifiedElement[];
   /** Observed state transitions (act→observe, Stage B). */
   transitions?: Transition[];
+  /** #225: the overlays found by exploration ({@link formatOverlays}); "" → none. */
+  overlays?: string;
 }
+
+/** #225: heads the overlay block of the codegen prompt. */
+const OVERLAYS_HEADER = `Overlays found on the page. Each one is its OWN component object in the page-object model (a class such as \`NewProjectDialog\` with the dialog as its root, not methods spread over the page class); a test opens it through the trigger, then works only through that object. Every locator inside it is scoped to its root, e.g. \`page.getByRole('dialog', { name: 'New project', exact: true }).getByRole('button', { name: 'Save', exact: true })\`, so a same-named element on the page is never confused with it. While a modal overlay is open, do not touch the page under it; close it first (Escape or its Cancel / close button).`;
 
 export interface CodegenDeps {
   invoke: StructuredInvoke;
@@ -47,7 +52,7 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
     .filter((e) => e.interactive)
     .map(
       (e) =>
-        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${e.count > 1 ? ` (×${e.count} — repeated, .first())` : ""}${e.viaSwitcher ? ` [first click tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
+        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${e.count > 1 ? ` (×${e.count} — repeated, .first())` : ""}${e.scope ? ` [inside ${e.scope.role}${e.scope.name ? ` "${e.scope.name}"` : ""}: locate it through that ${e.scope.role}]` : ""}${e.viaSwitcher ? ` [first click tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
     )
     .join("\n");
   const testCases = input.testCases
@@ -63,6 +68,7 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
     elements,
     testCases,
     transitions: formatTransitions(input.transitions ?? []),
+    overlays: input.overlays ? `${OVERLAYS_HEADER}\n${input.overlays}` : "",
   });
 
   const text = input.repairHint

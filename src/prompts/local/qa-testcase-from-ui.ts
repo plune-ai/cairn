@@ -16,6 +16,8 @@ Interactive elements (ref · role · name; ×N = repeated, several identical on 
 Observed state transitions (act→observe). GROUND state-transition assertions ON THESE — do not invent consequences:
 {{transitions}}
 
+{{overlays}}
+
 Domain knowledge (credentials, validation rules, nuances — account for these in the cases):
 {{knowledge}}
 

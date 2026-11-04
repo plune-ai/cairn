@@ -22,6 +22,7 @@ import type {
   ElementRef,
   ElementState,
   HttpCredentials,
+  OverlayScope,
   Observation,
   ObserveOptions,
   RecordedRequest,
@@ -30,11 +31,31 @@ import type {
   TestRunReport,
   VerifiedElement,
 } from "../types.js";
-import { parseAriaSnapshot } from "../../observe/parse-aria.js";
+import { overlayKey, parseAriaSnapshot } from "../../observe/parse-aria.js";
 
 /** Canonical Playwright storageState type (bridge between our StorageState and the runtime). */
 type PwStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type PwRole = Parameters<Page["getByRole"]>[0];
+
+/** #225: what act() needs of an observed element. */
+interface Target {
+  role: string;
+  name?: string;
+  scope?: OverlayScope;
+  underOverlay?: true;
+}
+
+/**
+ * #225: the locator of an element — inside its dialog when it has one, so a same-named element on the page is not it.
+ * `includeHidden` looks for what is not shown (to tell a hidden element from a gone one).
+ */
+function locate(page: Page, t: { role: string; name?: string; scope?: OverlayScope }, includeHidden = false): Locator {
+  const own = { ...(t.name ? { name: t.name, exact: true } : {}), ...(includeHidden ? { includeHidden: true } : {}) };
+  const root = t.scope
+    ? page.getByRole(t.scope.role as PwRole, t.scope.name ? { name: t.scope.name, exact: true } : {})
+    : page;
+  return root.getByRole(t.role as PwRole, own);
+}
 
 export interface PlaywrightLibOptions {
   headless?: boolean;
@@ -103,7 +124,9 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private browser?: Browser;
   private context?: BrowserContext;
   private page?: Page;
-  private readonly refMap = new Map<string, { role: string; name?: string }>();
+  private readonly refMap = new Map<string, Target>();
+  /** #225: the dialogs of the last snapshot that the DOM says are not modal (`role|name`). */
+  private nonModal = new Set<string>();
   private currentUrl = "";
   private lastStatus: number | undefined;
   private readonly consoleErrors: string[] = [];
@@ -215,9 +238,10 @@ export class PlaywrightLibBackend implements BrowserBackend {
     this.lastAria = ariaSnapshot;
     const buf = await page.screenshot({ fullPage: opts.fullPage ?? false });
 
+    this.nonModal = await this.nonModalDialogs(page, ariaSnapshot);
     this.refMap.clear();
-    for (const el of parseAriaSnapshot(ariaSnapshot)) {
-      this.refMap.set(el.ref, { role: el.role, name: el.name });
+    for (const el of parseAriaSnapshot(ariaSnapshot, { nonModal: this.nonModal })) {
+      this.refMap.set(el.ref, { role: el.role, name: el.name, ...(el.scope ? { scope: el.scope } : {}), ...(el.underOverlay ? { underOverlay: true as const } : {}) });
     }
 
     return {
@@ -226,8 +250,33 @@ export class PlaywrightLibBackend implements BrowserBackend {
       ariaSnapshot,
       capturedBy: "lib",
       consoleErrors: [...this.consoleErrors],
+      nonModal: [...this.nonModal],
       ...(status !== undefined ? { status } : {}),
     };
+  }
+
+  /**
+   * #225: which dialogs of the snapshot are not modal. The ARIA snapshot does not say: the DOM does (`aria-modal`, or
+   * a native `<dialog>` opened with showModal()). A page whose DOM cannot be read keeps every dialog modal.
+   */
+  private async nonModalDialogs(page: Page, aria: string): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const el of parseAriaSnapshot(aria)) {
+      if (el.role !== "dialog" && el.role !== "alertdialog") continue;
+      const loc = locate(page, { role: el.role, name: el.name }).first();
+      const modal = await loc
+        .evaluate(
+          (node: unknown) => {
+            const n = node as { matches(s: string): boolean; getAttribute(a: string): string | null };
+            return n.getAttribute("aria-modal") === "true" || n.matches(":modal") || n.getAttribute("role") === "alertdialog";
+          },
+          undefined,
+          { timeout: 1_000 },
+        )
+        .catch(() => true);
+      if (!modal) out.add(overlayKey(el.role, el.name));
+    }
+    return out;
   }
 
   async act(action: Action): Promise<ActResult> {
@@ -239,13 +288,28 @@ export class PlaywrightLibBackend implements BrowserBackend {
         this.currentUrl = action.url;
         return { ok: true };
       }
+      if (action.kind === "press") {
+        await page.keyboard.press(action.key);
+        return { ok: true };
+      }
+      if (action.kind === "click-outside") {
+        await page.mouse.click(2, 2);
+        return { ok: true };
+      }
       const target = this.refMap.get(action.ref);
       if (!target) {
         return { ok: false, ref: action.ref, error: `Unknown ref '${action.ref}' — call observe() first.` };
       }
-      const locator = page
-        .getByRole(target.role as PwRole, target.name ? { name: target.name, exact: true } : {})
-        .first();
+      if (target.underOverlay) {
+        // #225: a modal overlay is open and this element lies under it: never touched, the click would only time out.
+        return {
+          ok: false,
+          ref: action.ref,
+          error: `${target.role}${target.name ? ` "${target.name}"` : ""} lies under an open modal overlay; close it first.`,
+          outcome: "under-overlay",
+        };
+      }
+      const locator = locate(page, target).first();
       if (action.kind === "fill") {
         await locator.fill(action.value);
         return { ok: true, ref: action.ref };
@@ -271,8 +335,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private async hiddenOrGone(ref: string): Promise<ClickFailure> {
     const target = this.refMap.get(ref);
     if (!target || !this.page) return "not-found";
-    const hidden = await this.page
-      .getByRole(target.role as PwRole, { ...(target.name ? { name: target.name, exact: true } : {}), includeHidden: true })
+    const hidden = await locate(this.page, target, true)
       .count()
       .catch(() => 0);
     return hidden > 0 ? "not-visible" : "not-found";
@@ -301,7 +364,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
    * ARIA snapshot again only when the DOM changed. A click that looks dead is read again until DEAD_CLICK_RECHECK_MS.
    * Only the click itself can throw: once it is made, a read that fails makes the outcome unknown, not a failure.
    */
-  private async clickAndWatch(page: Page, locator: Locator, target: { role: string; name?: string }, timeoutMs?: number): Promise<ClickEffect> {
+  private async clickAndWatch(page: Page, locator: Locator, target: Target, timeoutMs?: number): Promise<ClickEffect> {
     const from = page.url();
     const before = this.lastAria;
     const watched = await this.installWatch(page, locator);
@@ -424,9 +487,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
     for (const el of elements) {
       let count = -1;
       try {
-        count = await page
-          .getByRole(el.role as PwRole, el.name ? { name: el.name, exact: true } : {})
-          .count();
+        count = await locate(page, el).count();
       } catch {
         count = -1;
       }
@@ -437,9 +498,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
 
   async getState(el: ElementRef): Promise<ElementState> {
     const page = await this.ensurePage();
-    const loc = page
-      .getByRole(el.role as PwRole, el.name ? { name: el.name, exact: true } : {})
-      .first();
+    const loc = locate(page, el).first();
     const visible = await loc.isVisible().catch(() => false);
     // #213: an element of another view (exploreStates) is not on the page, and isEnabled/isChecked wait for it
     // with Playwright's 30 s default - per element, minutes for a page of views. A hidden element is not read.

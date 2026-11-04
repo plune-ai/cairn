@@ -27,6 +27,8 @@ import type { Decider } from "../decider/types.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
 import type { BrowserGateway, ClickEffect, VerifiedElement } from "../browser/index.js";
+import { exploreOverlays, nameOverlays } from "./overlays.js";
+import { formatOverlays, type OverlayState } from "../observe/overlays.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { StructuredInvoke } from "../llm/structured.js";
 
@@ -101,6 +103,8 @@ export interface ExploreDeps {
   sessionName?: string;
   /** ADR-0022: the opt-in decision layer. Absent → every use point takes today's path. */
   decider?: Decider;
+  /** #225: explore dialogs, drawers, menus and wizards as states. On unless `false`. */
+  overlays?: boolean;
 }
 
 export interface ExploreOutcome {
@@ -130,6 +134,11 @@ export interface ExploreOutcome {
   healed?: HealRecord[];
   /** #224: what every click of this exploration did, in order (empty on the cli backend, which records none). */
   clicks: ClickEffect[];
+  /** #225: the overlays found as states (absent when the step did not run or failed; `[]` when it ran and found none). */
+  overlays?: OverlayState[];
+  /** #225: controls exploration left alone (destructive, completing a form, over the limit), and toast texts seen. */
+  overlaySkipped?: { role: string; name?: string; reason: string }[];
+  overlayToasts?: string[];
 }
 
 /** #224: the same gateway, keeping the effect of every click made through it. */
@@ -279,6 +288,31 @@ export async function runExploreGraph(
     verified = merged;
   }
 
+  // ── exploreOverlays (#225) ────────────────────────────────────────────────
+  // Dialogs, drawers, menus and wizards as states: what opens them, what is in them, how they close. Best effort: a
+  // failure keeps the page-level run intact.
+  let overlays: OverlayState[] | undefined;
+  let overlaySkipped: ExploreOutcome["overlaySkipped"];
+  let overlayToasts: string[] | undefined;
+  if (deps.overlays !== false) {
+    deps.onProgress?.("exploreOverlays — opening dialogs, drawers and menus…");
+    try {
+      const found = await exploreOverlays({ gateway: deps.gateway, url, study, onProgress: deps.onProgress });
+      overlays = await nameOverlays(
+        found.states,
+        { pageSemantics: analysis.pageSemantics, language: deps.languageText },
+        { invoke: deps.analyzeInvoke, prompts: deps.prompts },
+      );
+      overlaySkipped = found.skipped;
+      overlayToasts = found.toasts;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
+      deps.onProgress?.(`exploreOverlays — skipped (${msg})`);
+    }
+    await deps.gateway.observe({ url }).catch(() => undefined); // back to state-0
+  }
+  const overlayText = formatOverlays(overlays ?? []);
+
   // ── probeInteractions ─────────────────────────────────────────────────────
   deps.onProgress?.("probeInteractions — act→observe of safe elements…");
   const transitions = await probeTransitions(
@@ -312,6 +346,7 @@ export async function runExploreGraph(
       goalText: deps.goalText,
       elements: verified.filter((v) => v.count >= 1),
       transitions,
+      overlays: overlayText,
       knowledge: deps.knowledgeText,
       experience: deps.experienceText,
       style: deps.styleText,
@@ -400,9 +435,15 @@ export async function runExploreGraph(
     }
   }
 
+  const overlayKeys = (): Pick<ExploreOutcome, "overlays" | "overlaySkipped" | "overlayToasts"> => ({
+    ...(overlays ? { overlays } : {}),
+    ...(overlaySkipped ? { overlaySkipped } : {}),
+    ...(overlayToasts ? { overlayToasts } : {}),
+  });
+
   // ── codeless short-circuit ────────────────────────────────────────────────
   if (deps.codeless) {
-    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks };
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ...overlayKeys() };
   }
 
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
@@ -415,6 +456,7 @@ export async function runExploreGraph(
         repairHint,
         elements: verified.filter((v) => v.count >= 1),
         transitions,
+        overlays: overlayText,
       },
       { invoke: deps.codegenInvoke, prompts: deps.prompts },
     );
@@ -461,5 +503,6 @@ export async function runExploreGraph(
     ...(notRepaired ? { notRepaired } : {}),
     ...(healed ? { healed } : {}),
     clicks,
+    ...overlayKeys(),
   };
 }
