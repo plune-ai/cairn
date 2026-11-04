@@ -360,3 +360,67 @@ describe("cairn api without --spec looks for a served spec (#227)", () => {
     await expect(cli()).rejects.toThrow(/--spec <path\|url>.*or --base-url <url>/);
   });
 });
+
+describe("cairn api --spec <url> on a local or private address (#234)", () => {
+  it("reads a spec served on 127.0.0.1, and the model is the one the same file gives", async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({ "/openapi.json": send("application/json", json) });
+    const { readSpecFromUrl } = await import("../../src/api/discover.js");
+    const got = await readSpecFromUrl(`${srv.url}/openapi.json`, {});
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(await ingestOpenApi(`${srv.url}/openapi.json`, got.text)).toEqual(await ingestOpenApi(join(fixtures, "tiny.json")));
+    await cli("--spec", `${srv.url}/openapi.json`);
+    expect(outChunks.join("")).toContain("API spec:");
+    expect(errChunks.join("")).not.toContain("$ref");
+    expect(process.exitCode).toBe(0);
+    expect(srv.hits.every((h) => h.method === "GET" && h.body === "")).toBe(true);
+  });
+
+  it("sends the run's headers (--header) and never a method-override one", async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({ "/openapi.json": send("application/json", json) });
+    await cli("--spec", `${srv.url}/openapi.json`, "--header", "X-Token: t0k3n-abc", "--header", "X-HTTP-Method-Override: DELETE");
+    expect(srv.hits[0]?.headers["x-token"]).toBe("t0k3n-abc");
+    expect(srv.hits[0]?.headers["x-http-method-override"]).toBeUndefined();
+  });
+
+  it("a 401 says the server answered 401 and how to give credentials, not a $ref error", async () => {
+    srv = await serve({ "/openapi.json": (res) => (res.writeHead(401), res.end("no")) });
+    await cli("--spec", `${srv.url}/openapi.json`);
+    const err = errChunks.join("");
+    expect(err).toContain(`Could not read OpenAPI spec "${srv.url}/openapi.json": the server answered 401`);
+    expect(err).toContain("--header");
+    expect(err).not.toContain("$ref");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("a redirect is not followed, and the message names where it pointed", async () => {
+    srv = await serve({
+      "/openapi.json": (res) => (res.writeHead(302, { location: "/real.json" }), res.end()),
+      "/real.json": send("application/json", "{}"),
+    });
+    await cli("--spec", `${srv.url}/openapi.json`);
+    const err = errChunks.join("");
+    expect(err).toContain("answered 302");
+    expect(err).toContain("/real.json");
+    expect(err).toContain("not followed");
+    expect(srv.hits.map((h) => h.path)).toEqual(["/openapi.json"]);
+  });
+
+  it("a $ref in a spec read from a local address that points at a private address is still not fetched", async () => {
+    srv = await serve({ "/openapi.json": send("application/json", specWithRef("http://127.0.0.1:1/x.json#/a")) });
+    await cli("--spec", `${srv.url}/openapi.json`);
+    expect(process.exitCode).toBe(1);
+    expect(errChunks.join("")).toContain("Could not read OpenAPI spec");
+    expect(srv.hits.map((h) => h.path)).toEqual(["/openapi.json"]);
+  });
+
+  it("the read counts against --max-requests, and --allowed-methods without GET sends nothing", async () => {
+    srv = await serve({ "/openapi.json": send("application/json", "{}") });
+    await cli("--spec", `${srv.url}/openapi.json`, "--allowed-methods", "HEAD");
+    expect(srv.hits).toHaveLength(0);
+    expect(errChunks.join("")).toContain("--allowed-methods does not include GET");
+    expect(process.exitCode).toBe(1);
+  });
+});

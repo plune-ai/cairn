@@ -45,6 +45,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
+  The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private
+  networks and reported it as an unresolved `$ref`. The text is read the way the lookup of #227 reads it: `GET`, no
+  body, no redirect, a 15 s deadline, the run's headers (`--header`, api-scope knowledge, Basic auth from
+  `--base-url`; never a method-override header; `--header` also works without `--base-url`), one request of the run's
+  budget through the shared guard (`--allowed-methods` without `GET` sends nothing). A refusal names the status, the
+  redirect that was not followed and where it pointed, or the timeout, and for `401`/`403` says to pass `--header`.
+  The guard for `$ref` stays: a local file is never read from a spec at an address, and another `http(s)` `$ref` in it
+  is still read only by the parser's guarded reader, which keeps refusing private addresses.
 - **A spec given as `--spec <url>` no longer reads local files (#227).** A `$ref` such as `file:///…/secret.json` in a
   downloaded spec was read from disk, and its content could end up in the requests sent to the target; a remote spec's
   `$ref`s now resolve over http(s) only. A spec file on disk still reads the files it references (multi-file specs).

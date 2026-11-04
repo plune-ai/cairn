@@ -17,7 +17,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
-import { discoverSpec } from "../../api/discover.js";
+import { discoverSpec, readSpecFromUrl } from "../../api/discover.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
 import { generateAdversarialCases, ADVERSARIAL_STYLES, type AdversarialStyle } from "../../api/adversarial.js";
 import { runApiCases, wasNotSent, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
@@ -318,6 +318,11 @@ export const apiModality: Modality = {
     // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
     // Built before the spec is read: a spec looked up on the base URL (#227) may sit behind the same sign-in.
     const headers: Record<string, string> = {};
+    if (!base) {
+      // #234: --header also reaches a spec read from a URL when there is no --base-url
+      Object.assign(headers, parseHeaderFlags(opts.header));
+      secrets.push(...collectSecrets(headers));
+    }
     if (base) {
       const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
       Object.assign(headers, await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl }), parseHeaderFlags(opts.header));
@@ -340,7 +345,18 @@ export const apiModality: Modality = {
       source = isUrl(spec) ? spec : resolve(spec);
       ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
       try {
-        model = await ingestOpenApi(source);
+        if (isUrl(spec)) {
+          // #234: read the text like the lookup does (GET, no redirect, deadline, run headers, shared guard), so a
+          // local or private address works and a refusal says what happened. The parser gets the text, not the address.
+          const unreadable = (why: string): Error => new Error(`Could not read OpenAPI spec "${source}": ${why}`);
+          if (!guard.allowsMethod("GET")) throw unreadable("--allowed-methods does not include GET, the only method the read sends.");
+          if (!(await guard.acquire())) throw unreadable(`the request budget ran out (--max-requests ${guard.maxRequests}).`);
+          const got = await readSpecFromUrl(source, headers);
+          if (!got.ok) throw unreadable(got.message);
+          model = await ingestOpenApi(source, got.text, { followRemoteRefs: true });
+        } else {
+          model = await ingestOpenApi(source);
+        }
       } catch (e) {
         // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
         ctx.err(`✗ ${(e as Error).message}\n`);

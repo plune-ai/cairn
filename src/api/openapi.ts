@@ -138,7 +138,12 @@ const EXTERNAL_REF_NOT_FOLLOWED = "external $ref is not followed for a spec foun
  * a spec at a URL never reads a local file, only other URLs; a spec found on the server reads nothing
  * beyond its own text.
  */
-export async function ingestOpenApi(spec: string, content?: string): Promise<ApiModel> {
+export async function ingestOpenApi(
+  spec: string,
+  content?: string,
+  /** #234: with `content` read from the address the user named (`--spec <url>`), other http(s) `$ref`s are still read by the parser's guarded reader. */
+  opts: { followRemoteRefs?: boolean } = {},
+): Promise<ApiModel> {
   // Lazy: keep swagger-parser (and its YAML/ref-resolver deps) off every non-`api` code path.
   const { default: SwaggerParser } = await import("@apidevtools/swagger-parser");
 
@@ -154,10 +159,10 @@ export async function ingestOpenApi(spec: string, content?: string): Promise<Api
       // answers the served address with its text and refuses everything else.
       const resolve = {
         file: false,
-        http: false,
+        http: opts.followRemoteRefs ? undefined : false,
         served: {
           order: 1,
-          canRead: true,
+          canRead: opts.followRemoteRefs ? (f: { url: string }) => f.url === served : true,
           read: (f: { url: string }) => {
             if (f.url === served) return content;
             notFollowed = f.url;
