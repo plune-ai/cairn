@@ -319,20 +319,24 @@ function buildUrl(baseUrl: string, c: ApiCase): { url: string; blocked?: string 
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(c.params.query)) qs.append(k, String(v));
   const query = qs.toString();
-  const base = baseUrl.replace(/\/+$/, "");
-  const sep = path.startsWith("/") ? "" : "/";
-  const url = `${base}${sep}${path}${query ? `?${query}` : ""}`;
-  if (traversal) return { url, blocked: "path parameter contains a dot-segment (..) that would leave the base path" };
+  let root: URL;
   try {
-    const target = new URL(url);
-    const root = new URL(base);
-    const basePath = root.pathname.replace(/\/+$/, "");
-    if (target.origin !== root.origin) return { url, blocked: `request would leave the base host (${root.origin})` };
-    if (target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) {
-      return { url, blocked: `request would leave the base path (${basePath || "/"})` };
-    }
+    root = new URL(baseUrl);
   } catch {
-    return { url, blocked: "request URL is not valid" };
+    return { url: baseUrl, blocked: "request URL is not valid" };
+  }
+  // #235: join on the parsed URL — the case path goes after the base path, the base query is kept and the
+  // case's own query params are added to it (a string join put the path after the query).
+  const basePath = root.pathname.replace(/\/+$/, "");
+  const target = new URL(root.href);
+  target.hash = "";
+  target.pathname = `${basePath}${path.startsWith("/") ? "" : "/"}${path}`;
+  target.search = [root.search.replace(/^\?/, ""), query].filter(Boolean).join("&");
+  const url = target.href;
+  if (traversal) return { url, blocked: "path parameter contains a dot-segment (..) that would leave the base path" };
+  if (target.origin !== root.origin) return { url, blocked: `request would leave the base host (${root.origin})` };
+  if (target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) {
+    return { url, blocked: `request would leave the base path (${basePath || "/"})` };
   }
   return { url };
 }

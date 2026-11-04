@@ -24,6 +24,7 @@ import { renderRunSummary, displayPath } from "../agent/summary.js";
 import { resolveRunDir, defaultRunsBaseDir, readInputFile } from "../fs/run-dir.js";
 import { resolveStyleText } from "../design/style.js";
 import { loadApiFlows } from "../api/flows.js";
+import { writeRunView, openInBrowser } from "../view/index.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
 import { makeModel, structuredMethodFor } from "../llm/index.js";
@@ -515,6 +516,22 @@ export function buildProgram(): Command {
         process.stdout.write(`\nDone. Run \`cairn automate --run ${displayPath(runDir)}\` to generate code for the new ATC case(s).\n`);
       },
     );
+
+  program
+    .command("view <runDir>")
+    .description("Build view.html in a finished run: its screencast video with the steps as chapters (offline, one file)")
+    .option("--open", "open the page in the default browser")
+    .action(async (runArg: string, opts: { open?: boolean }) => {
+      const runDir = await resolveRunDir(runArg, { runsBaseDir: defaultRunsBaseDir() });
+      try {
+        const file = await writeRunView(runDir);
+        process.stdout.write(`${file}\n`);
+        if (opts.open) openInBrowser(file);
+      } catch (err) {
+        process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+      }
+    });
 
   // `cairn session <capture|ls|rm>` — first-class management of saved login sessions (L1-05).
   const session = program.command("session").description("Manage saved login sessions (.auth/)");
