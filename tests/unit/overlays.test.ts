@@ -194,10 +194,45 @@ describe("which button exploration may press (#225 review)", () => {
     // #225 review 2: a trigger that submits its form posts it, whatever it announces
     expect(refusal({ name: "Choose options" }, { hasPopup: "dialog" }, true)).toBe("submits a form");
     expect(refusal({ name: "Show extras" }, { expanded: false }, true)).toBe("submits a form");
-    // #225 review 2: a name that pays or orders is not pressed, whatever it announces
-    for (const name of ["Pay now", "Buy plan", "Pay", "Purchase", "Order", "Checkout", "Subscribe", "Upgrade", "Купити", "Оплатити", "Замовити", "Підписатися"]) {
-      expect(refusal({ name }, { hasPopup: "dialog" })).toBe("destructive");
+    // #225 review 3: no name list for payments. The network guard holds every write while overlays are explored, so a
+    // safe name that holds "order" is pressed like any other trigger, and «Pay» is pressed and its request stopped.
+    for (const name of ["Sort order", "Order by date", "Order details", "Track order", "Display order", "Purchase history", "Upgrade guide"]) {
+      expect(refusal({ name }, { hasPopup: "menu" })).toBeUndefined();
     }
-    for (const name of ["Payments", "Orders", "Upgrades log", "Підписки"]) expect(refusal({ name }, { hasPopup: "dialog" })).toBeUndefined();
+  });
+});
+
+describe("a backend that cannot guard the network (#225 review 3)", () => {
+  it("presses no trigger and no wizard step; it reads what is already open and says why", async () => {
+    const { exploreOverlays } = await import("../../src/agent/overlays.js");
+    const aria = `- main:
+  - button "New project"
+  - button "Pay"
+- dialog "Cookies":
+  - button "Close"`;
+    const obs = { url: "https://app.test/", screenshotB64: "", ariaSnapshot: aria, capturedBy: "cli" as const };
+    const acts: unknown[] = [];
+    const states: unknown[] = [];
+    const gateway = {
+      observe: async () => obs,
+      act: async (a: unknown) => (acts.push(a), { ok: true }),
+      verify: async () => [],
+      getState: async () => (states.push(1), { visible: true, enabled: true, popup: { hasPopup: "dialog" } }),
+      session: () => {
+        throw new Error("no session");
+      },
+      runTests: async () => {
+        throw new Error("no tests");
+      },
+      close: async () => undefined,
+    };
+    const study = { url: obs.url, screenshotB64: "", ariaYaml: aria, elements: parseAriaSnapshot(aria), capturedBy: "cli" as const };
+    const out = await exploreOverlays({ gateway, url: obs.url, study });
+
+    expect(acts.filter((a) => (a as { kind: string }).kind === "click")).toEqual([]);
+    expect(out.guard).toBe("none");
+    expect(out.note).toMatch(/cannot guard the network/);
+    expect(out.states.map((s) => [s.kind, s.name])).toEqual([["dialog", "Cookies"]]);
+    expect(out.states[0]!.exits).toContainEqual({ kind: "close-button", name: "Close" });
   });
 });
