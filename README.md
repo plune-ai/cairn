@@ -107,8 +107,12 @@ the page in your default browser.
 single-request `hacker` style cannot: it needs two identities and state. The owner (actor A) creates a resource
 through a saved [API flow](docs/api-flows.md); the other actor (B) then tries to read it, change it and delete it, and
 reads the ids next to it. Each 2xx answer to B is a finding with its OWASP WSTG id: `WSTG-ATHZ-04` (IDOR) when B is
-another user, `WSTG-ATHZ-03` (privilege escalation) when B is a lower role. A neighbouring id counts only when both
-actors can read it. The flow's own cleanup deletes what was created, also when the check stops halfway.
+another user, `WSTG-ATHZ-03` (privilege escalation) when B is a lower role. Only `401`, `403` and `404` count as
+refused; any other answer (a redirect, `400`, `405`, `422`, a `5xx`) is inconclusive — a `PATCH {}` stopped by
+validation never reached the access check — and fails the run like a finding. A neighbouring id counts only when both
+actors can read it. The flow's own cleanup deletes what was created, also when the check stops halfway; a cleanup step
+without `expect` is done only on a 2xx, and a cleanup that answers otherwise, or cannot be sent because the create
+never returned its id, is reported as a cleanup error: the data may still be there.
 
 ```json
 {
@@ -125,7 +129,11 @@ actors can read it. The flow's own cleanup deletes what was created, also when t
 ```
 
 An actor is a saved session by its name (`.auth/<name>.storageState.json`, from `cairn session capture --name`; set
-`sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The check uses the same guardrails as
+`sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The flow file's own `headers` (where
+the owner's token usually sits) go to the owner whole; the other actor gets them without any credential — no
+`Authorization`, `Cookie`, API key or token header, and none filled from `{{env.…}}` — so it never sends the owner's.
+Header names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
+`Cookie`), so one name goes out with one value. The check uses the same guardrails as
 every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
 production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or
 cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`; a finding

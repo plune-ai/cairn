@@ -19,7 +19,7 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { SessionStore } from "../session/index.js";
 import type { StorageState } from "../browser/types.js";
-import { loadApiFlows, secretHeaderProblems, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
+import { isCredentialHeader, loadApiFlows, secretHeaderProblems, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
 import type { RequestGuard } from "./guard.js";
 
 export type TwoActorProbe = "read" | "change" | "delete" | "neighbours";
@@ -172,19 +172,39 @@ export function cookieHeaderFor(state: StorageState, baseUrl: string, now = Date
   return pairs.length ? pairs.join("; ") : undefined;
 }
 
-/** One actor's request headers: the flow file's, then the actor's own, then the saved session's cookies. */
+/**
+ * Merge header maps left to right with names compared case-insensitively: a later `authorization` replaces an earlier
+ * `Authorization`, so one name never goes out with two values (fetch would join them with a comma).
+ */
+export function mergeHeaders(...maps: (Record<string, string> | undefined)[]): Record<string, string> {
+  const out = new Map<string, [string, string]>();
+  for (const map of maps) for (const [name, value] of Object.entries(map ?? {})) out.set(name.toLowerCase(), [name, value]);
+  return Object.fromEntries(out.values());
+}
+
+/**
+ * One actor's request headers: the flow file's, then the actor's own, then the saved session's cookies (which replace
+ * any `Cookie` the actor wrote). The flow file's headers hold the owner's credentials (its token, as the flow docs
+ * show), so only the owner — `plan.file.actors.owner` itself — gets them whole. Every other actor gets them without
+ * any credential: no header whose name carries one (`Authorization`, `Cookie`, `X-Api-Key`, …) and none filled from
+ * the environment. The other actor never sends a credential of the owner.
+ */
 export async function actorHeaders(
   actor: ActorConfig,
   plan: TwoActorPlan,
   baseUrl: string,
   env: Record<string, string | undefined> = process.env,
 ): Promise<Record<string, string>> {
-  const headers = fillHeaders({ ...plan.flows.headers, ...actor.headers }, env);
+  const isOwner = actor === plan.file.actors.owner;
+  const shared = Object.fromEntries(
+    Object.entries(plan.flows.headers ?? {}).filter(([name, value]) => isOwner || (!isCredentialHeader(name) && !/\{\{\s*env\./.test(value))),
+  );
+  const headers = fillHeaders(mergeHeaders(shared, actor.headers), env);
   if (actor.session) {
     const state = await new SessionStore(plan.sessionsDir).load(actor.session);
     const cookie = cookieHeaderFor(state, baseUrl);
     if (!cookie) throw new Error(`The saved session "${actor.session}" has no cookie for ${new URL(baseUrl).origin}.`);
-    headers["Cookie"] = cookie;
+    return mergeHeaders(headers, { Cookie: cookie });
   }
   return headers;
 }
@@ -282,6 +302,17 @@ const pointerAt = (body: unknown, pointer: string): unknown => {
 };
 
 const is2xx = (s: number): boolean => s >= 200 && s < 300;
+/**
+ * The answers that mean "refused": 401, 403 and 404 (a fixed server may hide that the resource exists). Anything else
+ * that is not a 2xx — a redirect, 400, 405, 410, 422, a 5xx — says nothing about access (a `PATCH {}` refused by
+ * validation never reached the access check), so the case is inconclusive, never a pass.
+ */
+const DENIED = new Set([401, 403, 404]);
+const outcomeOf = (s: number): CaseOutcome => (is2xx(s) ? "finding" : DENIED.has(s) ? "denied" : "inconclusive");
+const inconclusiveDetail = (s: number): string =>
+  s >= 500
+    ? `the server failed (${s}); not known whether it is protected`
+    : `answered ${s}, neither a refusal (401, 403, 404) nor a success; not known whether it is protected`;
 
 /**
  * Run every check of the plan. Never throws for a failed request: a check that stops midway records its error, and
@@ -293,12 +324,14 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const base = opts.baseUrl.replace(/\/+$/, "");
   const results: TwoActorCheckResult[] = [];
+  /** Whether the current check's flow sent a request yet (so it may have created something). */
+  let sentAny = false;
 
   /** One request through the guard. A transport failure throws: the check stops there. */
   const send = async (method: string, path: string, headers: Record<string, string>, body?: { text: string; type: string }, mustSend = false): Promise<Response> => {
     // The budget was reserved for the whole check before it started; the cleanup goes out even if it ran short.
     if (!(await opts.guard.acquire()) && !mustSend) throw new RequestFailed(`the request budget ran out (--max-requests ${opts.guard.maxRequests})`);
-    const init: RequestInit = { method, headers: body ? { "content-type": body.type, ...headers } : headers, redirect: "manual" };
+    const init: RequestInit = { method, headers: body ? mergeHeaders({ "content-type": body.type }, headers) : headers, redirect: "manual" };
     if (body) init.body = body.text;
     if (timeoutMs > 0) init.signal = AbortSignal.timeout(timeoutMs);
     try {
@@ -312,19 +345,26 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
   const json = (value: unknown): { text: string; type: string } | undefined =>
     value === undefined ? undefined : { text: JSON.stringify(value), type: "application/json" };
 
-  /** One flow step as the owner, with the flow's `expect` (plus `alsoOk`) and its captures. */
-  const runStep = async (flow: ApiFlow, step: FlowStep, vars: Record<string, string>, mustSend = false, alsoOk: number[] = []): Promise<void> => {
-    const label = `flow "${flow.name}" step "${step.name ?? `${step.method} ${step.path}`}"`;
+  /**
+   * One flow step as the owner, with the flow's `expect` (plus `alsoOk`) and its captures. A flow step without
+   * `expect` takes any 2xx or 3xx, as in #230; a cleanup step without `expect` is done only on a 2xx — a 302 to a
+   * login page (the owner's session ended) leaves the resource where it was.
+   */
+  const runStep = async (flow: ApiFlow, step: FlowStep, vars: Record<string, string>, cleanup = false, alsoOk: number[] = []): Promise<void> => {
     let path = fillValue(step.path, vars, env, true) as string;
     if (step.query) path += `?${new URLSearchParams(fillValue(step.query, vars, env) as Record<string, string>).toString()}`;
-    const headers = { ...opts.owner, ...(fillValue(step.headers ?? {}, vars, env) as Record<string, string>) };
+    const label = cleanup
+      ? `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${path}`
+      : `flow "${flow.name}" step "${step.name ?? `${step.method} ${step.path}`}"`;
+    const headers = mergeHeaders(opts.owner, fillValue(step.headers ?? {}, vars, env) as Record<string, string>);
     const body = step.form
       ? { text: new URLSearchParams(fillValue(step.form, vars, env) as Record<string, string>).toString(), type: "application/x-www-form-urlencoded" }
       : json(step.body === undefined ? undefined : fillValue(step.body, vars, env));
-    const res = await send(step.method, path, headers, body, mustSend);
+    sentAny = true;
+    const res = await send(step.method, path, headers, body, cleanup);
     const want = step.expect === undefined ? undefined : ([] as number[]).concat(step.expect);
-    const ok = (want ? want.includes(res.status) : res.status >= 200 && res.status < 400) || alsoOk.includes(res.status);
-    if (!ok) throw new RequestFailed(`${label} answered ${res.status} (want ${want ? want.join(" or ") : "2xx or 3xx"})`);
+    const ok = (want ? want.includes(res.status) : cleanup ? is2xx(res.status) : res.status >= 200 && res.status < 400) || alsoOk.includes(res.status);
+    if (!ok) throw new RequestFailed(`${label} answered ${res.status} (want ${want ? want.join(" or ") : cleanup ? "2xx" : "2xx or 3xx"})`);
     if (!step.capture) {
       await res.arrayBuffer().catch(() => undefined);
       return;
@@ -387,17 +427,18 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
 
     const vars: Record<string, string> = { uid: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
     let deletedByOther = false;
+    sentAny = false;
     try {
       for (const step of flow.steps) await runStep(flow, step, vars);
       const path = fillValue(check.resource, vars, env, true) as string;
       const record = (probe: TwoActorProbe, method: string, at: string, s: number, what: string, wstgId = wstgDirect): void => {
-        const outcome: CaseOutcome = is2xx(s) ? "finding" : s >= 500 ? "inconclusive" : "denied";
+        const outcome = outcomeOf(s);
         const detail =
           outcome === "finding"
             ? `the other actor ${what} the owner's resource (${s})`
             : outcome === "denied"
               ? `refused (${s})`
-              : `the server failed (${s}); not known whether it is protected`;
+              : inconclusiveDetail(s);
         result.cases.push({ check: result.check, probe, wstgId, method, path: at, outcome, status: s, detail });
       };
       // Delete last: after it the resource may be gone.
@@ -418,24 +459,28 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
               const at = fillValue(check.resource, { ...vars, [idName]: String(n) }, env, true) as string;
               const s = await status("GET", at, opts.other);
               if (!is2xx(s)) {
-                result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: at, outcome: s >= 500 ? "inconclusive" : "denied", status: s, detail: `refused or absent (${s})` });
+                const outcome = outcomeOf(s);
+                result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: at, outcome, status: s, detail: outcome === "denied" ? `refused or absent (${s})` : inconclusiveDetail(s) });
                 continue;
               }
               // B can read it: a finding only when A can too — an id B owns refuses A on a fixed server.
               const o = await status("GET", at, opts.owner);
-              const both = is2xx(o);
+              const ownerOutcome = outcomeOf(o);
               result.cases.push({
                 check: result.check,
                 probe: "neighbours",
                 wstgId: WSTG_IDOR,
                 method: "GET",
                 path: at,
-                outcome: both ? "finding" : "denied",
+                outcome: ownerOutcome,
                 status: s,
                 ownerStatus: o,
-                detail: both
-                  ? `both actors read id ${n}, so it is private to neither (${s} / ${o})`
-                  : `the other actor reads id ${n} and the owner does not (${o}): it is the other actor's own`,
+                detail:
+                  ownerOutcome === "finding"
+                    ? `both actors read id ${n}, so it is private to neither (${s} / ${o})`
+                    : ownerOutcome === "denied"
+                      ? `the other actor reads id ${n} and the owner is refused (${o}): it is the other actor's own`
+                      : `the other actor reads id ${n}; the owner's answer (${o}) is neither a refusal nor a success, so not known whose it is`,
               });
             }
           }
@@ -449,12 +494,23 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     } catch (e) {
       result.error = (e as Error).message;
     } finally {
-      // The flow's own cleanup, as the owner, whatever happened above. A step whose values were never captured is left out.
+      // The flow's own cleanup, as the owner, whatever happened above. A step whose values were never captured cannot
+      // be sent; once the flow sent anything, that is a cleanup error, since what it created may still be there.
       for (const step of flow.cleanup) {
         const names = [...JSON.stringify(step).matchAll(TEMPLATE)].map((m) => m[1]!);
-        if (!names.every((n) => n.startsWith("env.") || n in vars)) continue;
+        const missing = [...new Set(names.filter((n) => !n.startsWith("env.") && n !== "uid" && !(n in vars)))];
+        if (missing.length) {
+          if (sentAny) {
+            const which = missing.map((n) => `{{${n}}}`).join(", ");
+            result.cleanupErrors.push(
+              `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${step.path} was not sent: ${which} was never captured, ` +
+                `so the resource ${check.resource} the flow created may still be on the server`,
+            );
+          }
+          continue;
+        }
         try {
-          // After the other actor's DELETE went through, a 404/410 here means the cleanup's goal is reached.
+          // Only after the other actor's DELETE went through does a 404/410 here mean the cleanup's goal is reached.
           await runStep(flow, step, vars, true, deletedByOther ? [404, 410] : []);
         } catch (e) {
           result.cleanupErrors.push((e as Error).message);

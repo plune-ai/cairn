@@ -18,7 +18,8 @@ import {
 let app: IdorApp | undefined;
 let dir: string;
 
-const projectFlow = (cleanupExpect: number | number[] = 204, extraStep = false) => ({
+/** `cleanupExpect: null` writes the cleanup step without `expect`. */
+const projectFlow = (cleanupExpect: number | number[] | null = 204, extraStep = false) => ({
   name: "project",
   description: "a project of the owner",
   steps: [
@@ -26,17 +27,30 @@ const projectFlow = (cleanupExpect: number | number[] = 204, extraStep = false) 
     ...(extraStep ? [{ name: "broken", method: "POST", path: "/api/nowhere", expect: 201 }] : []),
   ],
   returns: ["projectId"],
-  cleanup: [{ name: "delete", method: "DELETE", path: "/api/projects/{{projectId}}", expect: cleanupExpect }],
+  cleanup: [{ name: "delete", method: "DELETE", path: "/api/projects/{{projectId}}", ...(cleanupExpect === null ? {} : { expect: cleanupExpect }) }],
 });
 
-async function writePlan(opts: { role?: "peer" | "lower"; extraStep?: boolean; check?: Record<string, unknown> } = {}): Promise<string> {
+async function writePlan(
+  opts: {
+    role?: "peer" | "lower";
+    extraStep?: boolean;
+    check?: Record<string, unknown>;
+    cleanupExpect?: number | number[] | null;
+    /** The flow file's own headers (as the flows docs show: the owner's token). */
+    flowHeaders?: Record<string, string>;
+    owner?: Record<string, unknown>;
+  } = {},
+): Promise<string> {
   await mkdir(join(dir, "auth"), { recursive: true });
   // bob signs in with a saved session (cookie), alice with a token from the environment.
   await writeFile(
     join(dir, "auth", "bob.storageState.json"),
     JSON.stringify({ cookies: [{ name: "sid", value: "bob", domain: "127.0.0.1", path: "/" }], origins: [] }),
   );
-  await writeFile(join(dir, "flows.json"), JSON.stringify({ version: 1, flows: [projectFlow(204, opts.extraStep)] }));
+  await writeFile(
+    join(dir, "flows.json"),
+    JSON.stringify({ version: 1, ...(opts.flowHeaders ? { headers: opts.flowHeaders } : {}), flows: [projectFlow(opts.cleanupExpect === undefined ? 204 : opts.cleanupExpect, opts.extraStep)] }),
+  );
   const file = join(dir, "actors.json");
   await writeFile(
     file,
@@ -45,7 +59,7 @@ async function writePlan(opts: { role?: "peer" | "lower"; extraStep?: boolean; c
       flows: "flows.json",
       sessionsDir: "auth",
       actors: {
-        owner: { headers: { Authorization: "Bearer {{env.ALICE_TOKEN}}" } },
+        owner: opts.owner ?? { headers: { Authorization: "Bearer {{env.ALICE_TOKEN}}" } },
         other: { session: "bob", ...(opts.role ? { role: opts.role } : {}) },
       },
       checks: [{ flow: "project", resource: "/api/projects/{{projectId}}", change: { method: "PATCH", body: { name: "taken over" } }, ...opts.check }],
@@ -173,6 +187,56 @@ describe("two-actor check (#233)", () => {
     const report = await run(await loadTwoActorPlan(await writePlan()), guard);
     expect(report.checks[0]!.notRun).toMatch(/budget exhausted/);
     expect(app.log).toEqual([]);
+  });
+});
+
+describe("two-actor check after review (#233)", () => {
+  it("never sends the owner's token from the flow file's headers as the other actor", async () => {
+    app = await startIdorApp({ idor: false });
+    // The flow file carries the owner's token, as docs/api-flows.md shows; bob is given by a saved session only.
+    const plan = await loadTwoActorPlan(
+      await writePlan({ flowHeaders: { Authorization: "Bearer {{env.ALICE_TOKEN}}", Accept: "application/json" }, owner: { headers: { "X-Client": "cairn" } } }),
+    );
+    const report = await run(plan);
+    // Every request after the create is bob's own until the owner's cleanup: none of them goes out as alice.
+    expect(app.log.filter((l) => !l.startsWith("POST") && l !== "DELETE /api/projects/3 alice").every((l) => l.endsWith(" bob"))).toBe(true);
+    expect(report.findings).toBe(0);
+    expect(carolsOnly(app)).toEqual([1, 2]);
+  });
+
+  it("counts a cleanup without expect as done only on a 2xx: a 302 to the login page is a cleanup error", async () => {
+    app = await startIdorApp({ idor: false, statusOn: { "DELETE alice": 302 } });
+    const report = await run(await loadTwoActorPlan(await writePlan({ cleanupExpect: null })));
+    expect(carolsOnly(app)).toEqual([1, 2, 3]);
+    expect(report.checks[0]!.cleanupErrors).toEqual([expect.stringMatching(/DELETE \/api\/projects\/3 answered 302/)]);
+    expect(twoActorFailed(report)).toBe(true);
+  });
+
+  it("calls only 401, 403 and 404 a refusal: a 422, 400, 405 or 302 to the other actor is inconclusive", async () => {
+    app = await startIdorApp({ idor: false, statusOn: { "PATCH bob": 422, "GET bob": 302, "DELETE bob": 405 } });
+    const report = await run(await loadTwoActorPlan(await writePlan({ check: { neighbours: 1 } })));
+    expect(report.checks[0]!.cases.map((c) => `${c.probe} ${c.outcome} ${c.status}`)).toEqual([
+      "read inconclusive 302",
+      "change inconclusive 422",
+      "neighbours inconclusive 302",
+      "neighbours inconclusive 302",
+      "delete inconclusive 405",
+    ]);
+    expect(report.checks[0]!.cases.find((c) => c.probe === "change")!.detail).toMatch(/neither a refusal/);
+    expect(twoActorFailed(report)).toBe(true);
+    expect(carolsOnly(app)).toEqual([1, 2]);
+  });
+
+  it("reports a cleanup that could not be sent because its value was never captured", async () => {
+    app = await startIdorApp({ idor: false, createWithoutId: true });
+    const report = await run(await loadTwoActorPlan(await writePlan()));
+    expect(report.checks[0]!.error).toMatch(/no value at \/id/);
+    // The project was created and stays: the report must say so.
+    expect(carolsOnly(app)).toEqual([1, 2, 3]);
+    expect(report.checks[0]!.cleanupErrors).toEqual([
+      expect.stringMatching(/DELETE \/api\/projects\/\{\{projectId\}\} was not sent: \{\{projectId\}\} was never captured.*\/api\/projects\/\{\{projectId\}\}/),
+    ]);
+    expect(twoActorFailed(report)).toBe(true);
   });
 });
 

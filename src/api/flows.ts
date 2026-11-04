@@ -29,6 +29,8 @@ const SECRET_KEY = /pass(?:w|phrase|code)|pwd|secret|token|credential|api[-_]?ke
 const SECRET_WORDS = new Set(["pass", "passwd", "pw", "creds"]);
 const isSecretKey = (key: string): boolean =>
   SECRET_KEY.test(key) || key.split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/).some((w) => SECRET_WORDS.has(w.toLowerCase()));
+/** A header whose name says it carries a credential (`Authorization`, `Cookie`, `X-Api-Key`, `X-Auth-Token`, …). */
+export const isCredentialHeader = (name: string): boolean => SENSITIVE.test(name) || isSecretKey(name);
 /** The only shape a secret may take in the file: `{{env.NAME}}`, after an optional `Bearer `/`Basic `/`Token ` scheme. */
 const ENV_ONLY = /^(?:(?:Bearer|Basic|Token) )?\{\{\s*env\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$/i;
 /** Names the Playwright test fixtures and options already use — a flow named so would shadow one. */

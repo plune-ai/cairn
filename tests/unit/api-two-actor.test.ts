@@ -1,6 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseApiFlows } from "../../src/api/flows.js";
-import { cookieHeaderFor, parseTwoActorFile } from "../../src/api/two-actor.js";
+import { actorHeaders, cookieHeaderFor, parseTwoActorFile, type TwoActorPlan } from "../../src/api/two-actor.js";
 
 /** #233: the two-actor file is checked against its flow file before anything is sent. */
 const flows = parseApiFlows(
@@ -79,5 +82,51 @@ describe("cookieHeaderFor (#233)", () => {
     expect(cookieHeaderFor(state, "http://api.example.com")).toBe("sid=bob");
     expect(cookieHeaderFor(state, "https://example.com")).toBe("sid=bob; sec=z");
     expect(cookieHeaderFor(state, "https://nothing.org")).toBeUndefined();
+  });
+});
+
+describe("actorHeaders (#233)", () => {
+  let sessions: string;
+  beforeAll(async () => {
+    sessions = await mkdtemp(join(tmpdir(), "cairn-actor-headers-"));
+    await writeFile(
+      join(sessions, "bob.storageState.json"),
+      JSON.stringify({ cookies: [{ name: "sid", value: "bob", domain: "api.example.com", path: "/" }], origins: [] }),
+    );
+  });
+  afterAll(async () => {
+    await rm(sessions, { recursive: true, force: true });
+  });
+  const env = { ALICE_TOKEN: "alice-token", BOB_TOKEN: "bob-token", OTHER_KEY: "alice-key", BOB_COOKIE: "theme=dark" };
+  const plan = (headers: Record<string, string>, owner: Record<string, unknown>, other: Record<string, unknown>): TwoActorPlan => ({
+    file: parseTwoActorFile(JSON.stringify({ version: 1, flows: "flows.json", actors: { owner, other }, checks: [{ flow: "project", resource: "/api/projects/{{projectId}}" }] }), flows),
+    flows: { ...flows, headers },
+    sessionsDir: sessions,
+  });
+  const lower = (h: Record<string, string>): string[] => Object.keys(h).map((k) => k.toLowerCase());
+
+  it("gives the flow file's credentials to the owner only: a session-given other actor sends its cookie and nothing of the owner", async () => {
+    const p = plan({ Authorization: "Bearer {{env.ALICE_TOKEN}}", "X-Api-Key": "{{env.OTHER_KEY}}", Accept: "application/json" }, { headers: { "X-Client": "cairn" } }, { session: "bob" });
+    const owner = await actorHeaders(p.file.actors.owner, p, "https://api.example.com", env);
+    const other = await actorHeaders(p.file.actors.other, p, "https://api.example.com", env);
+    expect(owner).toMatchObject({ Authorization: "Bearer alice-token", "X-Api-Key": "alice-key", Accept: "application/json" });
+    expect(other).toEqual({ Accept: "application/json", Cookie: "sid=bob" });
+    expect(JSON.stringify(other)).not.toContain("alice");
+  });
+
+  it("merges header names case-insensitively, so one name goes out with one value", async () => {
+    const p = plan(
+      { Authorization: "Bearer {{env.ALICE_TOKEN}}", accept: "text/plain" },
+      { headers: { authorization: "Bearer {{env.ALICE_TOKEN}}", Accept: "application/json" } },
+      { session: "bob", headers: { authorization: "Bearer {{env.BOB_TOKEN}}", cookie: "{{env.BOB_COOKIE}}" } },
+    );
+    const owner = await actorHeaders(p.file.actors.owner, p, "https://api.example.com", env);
+    const other = await actorHeaders(p.file.actors.other, p, "https://api.example.com", env);
+    expect(lower(owner).sort()).toEqual(["accept", "authorization"]);
+    expect(Object.values(owner).sort()).toEqual(["Bearer alice-token", "application/json"]);
+    expect(lower(other).sort()).toEqual(["accept", "authorization", "cookie"]);
+    expect(Object.values(other)).toContain("Bearer bob-token");
+    expect(Object.values(other)).toContain("sid=bob");
+    expect(JSON.stringify(other)).not.toContain("alice");
   });
 });

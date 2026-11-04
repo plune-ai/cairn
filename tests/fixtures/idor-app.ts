@@ -11,6 +11,13 @@ export interface IdorAppOptions {
   idor: boolean;
   /** Drop the connection (no answer) on this `METHOD user`, e.g. "PATCH bob" — a failure in the middle of a check. */
   dropOn?: string;
+  /**
+   * Answer this status to `METHOD user` before any access check, and change nothing: `{ "DELETE alice": 302 }` is the
+   * owner's session gone (a redirect to /login), `{ "PATCH bob": 422 }` a validation that refuses the body first.
+   */
+  statusOn?: Record<string, number>;
+  /** The create answers 201 without the new project's id (the project is still created). */
+  createWithoutId?: boolean;
 }
 
 export interface IdorApp {
@@ -53,12 +60,18 @@ export async function startIdorApp(opts: IdorAppOptions): Promise<IdorApp> {
         res.writeHead(status, body === undefined ? {} : { "content-type": "application/json" });
         res.end(body === undefined ? undefined : JSON.stringify(body));
       };
+      const forced = opts.statusOn?.[`${req.method} ${user}`];
+      if (forced !== undefined) {
+        res.writeHead(forced, forced >= 300 && forced < 400 ? { location: "/login" } : { "content-type": "application/json" });
+        res.end(forced >= 300 && forced < 400 ? undefined : JSON.stringify({ error: `forced ${forced}` }));
+        return;
+      }
       if (!user) return json(401, { error: "sign in" });
       if (req.method === "POST" && path === "/api/projects") {
         const { name } = JSON.parse(raw || "{}") as { name?: string };
         const id = next++;
         projects.set(id, { owner: user, name: name ?? "untitled" });
-        return json(201, { id, name });
+        return json(201, opts.createWithoutId ? { name } : { id, name });
       }
       const m = /^\/api\/projects\/([^/]+)$/.exec(path);
       if (!m) return json(404, { error: "no such route" });

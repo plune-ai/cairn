@@ -69,9 +69,17 @@ two actors, the checks; format in the [README](../../README.md#api-security-idor
 For each check the owner runs the data flow, then the other actor sends `GET`, the change (default `PATCH {}`) and
 `DELETE` to the resource, and `GET` to the ids next to a numeric id (`neighbours`, default 2 on each side). A 2xx to the
 other actor is a finding: `WSTG-ATHZ-04` for another user (`"role": "peer"`), `WSTG-ATHZ-03` for a lower role
-(`"role": "lower"`); a neighbour is a `WSTG-ATHZ-04` finding only when the owner can read it too. A `5xx` is
-inconclusive, not a pass. The flow's cleanup runs as the owner in a `finally`, also when a request fails halfway; after
-the other actor's `DELETE` went through, a `404` from it counts as done. Run it against a disposable staging
+(`"role": "lower"`); a neighbour is a `WSTG-ATHZ-04` finding only when the owner can read it too. Only `401`, `403`
+and `404` mean refused. Any other non-2xx — a `3xx`, `400`, `405`, `410`, `422`, a `5xx` — is inconclusive, not a pass:
+a `PATCH {}` refused by validation, or a redirect to a login page, says nothing about the access check. The same holds
+for the owner's answer on a neighbour the other actor read. The other actor gets the flow file's `headers` without
+any credential header (`Authorization`, `Cookie`, API key, token, anything filled from `{{env.…}}`): those are the
+owner's. Header names merge case-insensitively, so one name carries one value. The flow's cleanup runs as the owner
+in a `finally`, also when a request fails halfway. A cleanup step without `expect` is done only on a 2xx (a `302` to a
+login page after the owner's session ended is a cleanup error naming the method, path and status); only after the
+other actor's `DELETE` went through does a `404` or `410` from it count as done. A cleanup step whose value was never
+captured (the create answered without the id) cannot be sent and is reported as a cleanup error naming the resource
+and the missing value. Run it against a disposable staging
 environment only: without `--allow-mutations` nothing is sent (exit 5); a check whose flow or cleanup
 `--allowed-methods`/`--allowed-paths` refuse, or that the remaining `--max-requests` budget cannot cover, is not
 started; a probe they refuse is listed as skipped. Output: one line per case with its WSTG id, the Guardrails section,
