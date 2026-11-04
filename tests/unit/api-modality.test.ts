@@ -32,12 +32,13 @@ afterEach(() => {
 });
 
 describe("cairn api command (real ingest)", () => {
-  it("is registered with a required --spec option", async () => {
+  it("is registered with a --spec option that takes a value but is not mandatory (#227: --base-url alone looks for one)", async () => {
     const { buildProgram } = await import("../../src/cli/index.js");
     const api = buildProgram().commands.find((c) => c.name() === "api");
     expect(api).toBeDefined();
     const spec = api?.options.find((o) => o.long === "--spec");
-    expect(spec?.required).toBe(true);
+    expect(spec?.required).toBe(true); // commander: the flag needs a value when given
+    expect(spec?.mandatory).toBe(false);
   });
 
   it("ingests a YAML spec and prints the parsed-model summary", async () => {
@@ -481,8 +482,12 @@ describe("cairn api --base-url guardrails (#196)", () => {
       expect(text).toContain("skipped: mutations disabled");
       expect(text).toMatch(/executed 2 · skipped 2 \(mutations disabled: 2\) · blocked 0/);
       expect(text).toContain("request budget: 2/300 used");
-      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as { guardrails: { skipped: Record<string, number> } };
+      expect(text).not.toContain("spec lookup"); // #227: only a run that looked the spec up on the server has that line
+      const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as {
+        guardrails: { skipped: Record<string, number>; specLookup?: unknown };
+      };
       expect(report.guardrails.skipped).toEqual({ "mutations disabled": 2 });
+      expect(report.guardrails.specLookup).toBeUndefined();
     } finally {
       await rm(out, { recursive: true, force: true });
     }

@@ -120,24 +120,61 @@ interface RawLink {
 
 const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch", "trace"] as const;
 
+/** Why a spec found on the server (#227) is not used when it needs another document. */
+const EXTERNAL_REF_NOT_FOLLOWED = "external $ref is not followed for a spec found on the server";
+
 /**
  * Read an OpenAPI 3.x spec (JSON or YAML; file path or URL) and flatten it into an {@link ApiModel}.
  *
  * Throws a single, message-clear `Error` on anything we can't use — unreadable/invalid spec,
  * unresolvable `$ref`, or an unsupported version (Swagger 2.0 / non-3.x) — so the command can report
  * it instead of crashing.
+ *
+ * `content` (#227): the spec's text when it has already been downloaded from `spec` (a URL) by the
+ * lookup on the server; the parser reads it instead of fetching that address again, and follows no
+ * external `$ref` at all. JSON or YAML is told apart as for any spec.
+ *
+ * Which `$ref`s are read: a spec file on disk may point at other files and URLs (multi-file specs);
+ * a spec at a URL never reads a local file, only other URLs; a spec found on the server reads nothing
+ * beyond its own text.
  */
-export async function ingestOpenApi(spec: string): Promise<ApiModel> {
+export async function ingestOpenApi(spec: string, content?: string): Promise<ApiModel> {
   // Lazy: keep swagger-parser (and its YAML/ref-resolver deps) off every non-`api` code path.
   const { default: SwaggerParser } = await import("@apidevtools/swagger-parser");
 
   let doc: RawDoc;
+  let notFollowed: string | undefined; // the external $ref a spec found on the server asked for
   try {
     // dereference = parse (JSON/YAML, file/URL) + resolve every $ref (circular refs become object
     // cycles rather than throwing), so the walk below sees concrete params/schemas.
-    doc = (await SwaggerParser.dereference(spec)) as unknown as RawDoc;
+    if (content !== undefined) {
+      const served = new URL(spec).href;
+      // No file or http reader: a `$ref: file:///…` would put a local file into the requests sent to the
+      // target, and one to another address would be fetched outside the run's guardrails. This reader
+      // answers the served address with its text and refuses everything else.
+      const resolve = {
+        file: false,
+        http: false,
+        served: {
+          order: 1,
+          canRead: true,
+          read: (f: { url: string }) => {
+            if (f.url === served) return content;
+            notFollowed = f.url;
+            throw new Error(EXTERNAL_REF_NOT_FOLLOWED);
+          },
+        },
+      };
+      doc = (await SwaggerParser.dereference(spec, { resolve })) as unknown as RawDoc;
+    } else if (/^https?:\/\//i.test(spec)) {
+      // A remote document must not read local files (`$ref: file:///…/secret.json` would be sent to the target).
+      doc = (await SwaggerParser.dereference(spec, { resolve: { file: false } })) as unknown as RawDoc;
+    } else {
+      doc = (await SwaggerParser.dereference(spec)) as unknown as RawDoc;
+    }
   } catch (e) {
-    throw new Error(`Could not read OpenAPI spec "${spec}": ${(e as Error).message}`);
+    const why = notFollowed ? `${EXTERNAL_REF_NOT_FOLLOWED} (${notFollowed})` : (e as Error).message;
+    throw new Error(`Could not read OpenAPI spec "${spec}": ${why}`);
   }
 
   const version = doc.openapi;

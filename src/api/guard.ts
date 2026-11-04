@@ -8,6 +8,7 @@
  * the runner asks it before every send; it never touches the network itself.
  */
 import type { ApiCase } from "./cases.js";
+import type { SpecTry } from "./discover.js";
 
 /**
  * The only methods that run without `--allow-mutations`. An allow-list, not a deny-list: TRACE, PURGE,
@@ -61,6 +62,11 @@ export interface GuardrailReport {
   budgetExhausted: boolean;
   /** Method-override headers / `_method` params removed from non-mutating requests. */
   overridesStripped: number;
+  /**
+   * #227: present when the spec was looked up on the server. `requests` are already in `requestsUsed`;
+   * `tried` are the addresses asked before the spec was found and what each answered, `skipped` the ones not asked.
+   */
+  specLookup?: { requests: number; foundAt: string; tried: SpecTry[]; skipped: SpecTry[] };
 }
 
 /** Header names whose values are secrets — masked in evidence, reports and the log. */
@@ -236,8 +242,8 @@ export class RequestGuard {
 
   /** Policy check before anything is sent: why this case must not run, if it must not. */
   check(c: ApiCase): SkipReason | undefined {
-    if (this.methods && !this.methods.has(c.method.toUpperCase())) return "not allowed";
-    if (this.masks && !this.masks.some((m) => m.test(c.path))) return "not allowed";
+    if (!this.allowsMethod(c.method)) return "not allowed";
+    if (!this.allowsPath(c.path)) return "not allowed";
     const mutating = !READ_ONLY_METHODS.has(c.method.toUpperCase()) || MUTATING_STYLES.has(c.adversarialStyle ?? "");
     if (mutating && !this.allowMutations) return "mutations disabled";
     return undefined;
@@ -259,6 +265,16 @@ export class RequestGuard {
     this.nextSlot = slot + 1000 / this.rps;
     if (slot > now) await this.sleepFn(slot - now);
     return true;
+  }
+
+  /** `--allowed-methods` lets this method through (no list = every method). */
+  allowsMethod(method: string): boolean {
+    return !this.methods || this.methods.has(method.toUpperCase());
+  }
+
+  /** `--allowed-paths` lets this path (relative to the base URL) through (no masks = every path). */
+  allowsPath(path: string): boolean {
+    return !this.masks || this.masks.some((m) => m.test(path));
   }
 
   get allowsMutations(): boolean {
@@ -314,6 +330,10 @@ export function renderGuardrails(g: GuardrailReport): string[] {
     `  executed ${g.executed} · skipped ${skippedTotal}${byReason ? ` (${byReason})` : ""} · blocked ${g.blocked.length}`,
     `  request budget: ${g.requestsUsed}/${g.maxRequests} used (retries included) · rate limit ${g.rps} req/s`,
   ];
+  if (g.specLookup) {
+    const n = g.specLookup.requests;
+    lines.push(`  spec lookup: ${n} request${n === 1 ? "" : "s"} (counted in the budget above)`);
+  }
   if (g.skipped["mutations disabled"]) {
     lines.push(`  ${g.skipped["mutations disabled"]} mutating case(s) were not sent — pass --allow-mutations to run them`);
   }

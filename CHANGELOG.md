@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`cairn api --base-url <url>` without `--spec` looks for a spec the server already serves (#227).** It tries
+  `/openapi.json`, `/openapi.yaml`, `/swagger.json`, `/v3/api-docs`, `/v2/api-docs`, `/api-docs`,
+  `/swagger/v1/swagger.json` and `/docs/openapi.json` on the base URL's path (its query string kept), in that order,
+  and takes the first answer that reads as an OpenAPI 3.x spec (JSON or YAML, whatever the content type); the output
+  names the address (`✓ OpenAPI spec found at …`) and the run goes on as if that spec had been given. The eight lookup
+  requests are `GET` only, with no body and a 5 s deadline each; they count against `--max-requests` and `--rps`, do
+  not follow redirects, need `GET` in `--allowed-methods` when that is given, and carry the run's headers (`--header`,
+  api-scope knowledge, Basic auth from the URL; never an `X-HTTP-Method-Override`-style header). A path that
+  `--allowed-paths` does not allow is skipped, not requested. A found spec's external references are not followed: a
+  served spec whose `$ref` points at a file or another address is not used (`external $ref is not followed for a spec
+  found on the server`) and the next path is tried. The Guardrails section counts the lookup's own requests
+  (`spec lookup: N requests`), and `report.json` keeps what each address answered. When nothing is found the run exits
+  `1` (`4` when the request budget ran out first), lists every address tried with what it answered and every address
+  skipped, and suggests `--spec <path|url>`. A spec behind a sign-in is reached with `--header` (for example a
+  `Cookie:` header) or the api-scope credentials; a `--session` option is not part of this change. `--spec` is no
+  longer mandatory; without it and without `--base-url` the command still refuses, now naming both flags.
+
+### Fixed
+
+- **A spec given as `--spec <url>` no longer reads local files (#227).** A `$ref` such as `file:///…/secret.json` in a
+  downloaded spec was read from disk, and its content could end up in the requests sent to the target; a remote spec's
+  `$ref`s now resolve over http(s) only. A spec file on disk still reads the files it references (multi-file specs).
+
 ## [0.9.0] - 2026-10-29
 
 ### Added

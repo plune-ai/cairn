@@ -140,7 +140,10 @@ export function buildProgram(): Command {
   program
     .command("api")
     .description("Generate API tests from an OpenAPI 3.x spec; with --base-url, run them and assert responses")
-    .requiredOption("--spec <path|url>", "OpenAPI 3.x spec — JSON or YAML, a local file path or an http(s) URL")
+    .option(
+      "--spec <path|url>",
+      "OpenAPI 3.x spec — JSON or YAML, a local file path or an http(s) URL; #227: without it, --base-url is searched for a spec the server serves (/openapi.json, /v3/api-docs, …)",
+    )
     .option("--base-url <url>", "API-3: base URL to execute the generated cases against (assert status + schema)")
     .option(
       "--header <header>",
