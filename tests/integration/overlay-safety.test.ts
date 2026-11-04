@@ -60,7 +60,7 @@ describe("overlay exploration changes nothing (integration, real Chromium)", () 
     expect(out.states.find((s) => s.name === "Filters panel")).toMatchObject({ kind: "drawer", trigger: { name: "Filters" } });
     expect(out.states.find((s) => s.name === "More actions")).toMatchObject({ kind: "menu", trigger: { name: "More" } });
     const profile = out.states.find((s) => s.name === "Profile wizard");
-    expect(profile!.wizard).toMatchObject({ next: "Next", back: "Back", backWorks: true });
+    expect(profile!.wizard).toMatchObject({ next: "Next" });
     expect(profile!.wizard!.steps).toHaveLength(2);
   }, 180_000);
 

@@ -1,6 +1,6 @@
 import type { ElementRef, OverlayScope } from "../browser/types.js";
 import { DESTRUCTIVE } from "../flow/crawl.js";
-import { isDeletionIntent } from "../safety/guardrails.js";
+import { isDeletionIntent, wholeWords } from "../safety/guardrails.js";
 import { overlayKey, parseAriaSnapshot } from "./parse-aria.js";
 
 /**
@@ -147,9 +147,20 @@ export function topModalScope(aria: string, nonModal?: ReadonlySet<string>): Ove
   return top ? { role: top.role, ...(top.name !== undefined ? { name: top.name } : {}) } : undefined;
 }
 
-/** A name that passes both destructive-action filters: pressing it is no deletion, no sign-out. */
+/**
+ * A name that pays or orders (#225 review 2): «Buy plan», «Pay», «Checkout», «Купити»… Whole words, so «Payments» and
+ * «Orders» are other words. Kept apart from the crawl's DESTRUCTIVE so the crawl still follows a link to the orders page.
+ */
+export const PAYMENT = new RegExp(
+  wholeWords(
+    String.raw`buy|pay|purchase|order|checkout|check\s+out|subscribe|upgrade|купити|купіть|оплатити|оплатіть|замовити|замовте|підписатися|підпишіться`,
+  ),
+  "iu",
+);
+
+/** A name that passes the destructive-action filters: pressing it is no deletion, no sign-out, no payment or order. */
 export function passesSafetyFilters(name: string | undefined): boolean {
-  return !DESTRUCTIVE.test(name ?? "") && !isDeletionIntent(name ?? "");
+  return !DESTRUCTIVE.test(name ?? "") && !isDeletionIntent(name ?? "") && !PAYMENT.test(name ?? "");
 }
 
 /**
