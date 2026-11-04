@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Two-actor API security check: IDOR and privilege escalation (#233).** `cairn api --base-url <u> --actors <file>
+  --allow-mutations`: the owner creates a resource through a saved API flow (#230), the other actor (a saved session or
+  `{{env.NAME}}` headers) tries to read, change and delete it and reads the ids next to it; each 2xx is a finding tagged
+  `WSTG-ATHZ-04` (another user) or `WSTG-ATHZ-03` (a lower role). Same guardrails as the rest of `cairn api`
+  (`--allow-mutations`, `--allowed-methods`, `--allowed-paths`, budget, rate); the flow's cleanup runs in a `finally`.
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else

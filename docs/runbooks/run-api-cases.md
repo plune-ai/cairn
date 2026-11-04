@@ -63,6 +63,20 @@ only against an address given with `--base-url <url> --allow-mutations` (or `CAI
 tests run); otherwise the tests that use it are skipped. The file format, the sign-in flow and how `design` and
 `automate` use the flows: **[API flows](../api-flows.md)**.
 
+## Two-actor check: IDOR and privilege escalation (`--actors`, #233)
+`cairn api --base-url <staging> --actors actors.json --allow-mutations` reads `actors.json` (the flow file it names,
+two actors, the checks; format in the [README](../../README.md#api-security-idor-and-privilege-escalation-across-two-actors)).
+For each check the owner runs the data flow, then the other actor sends `GET`, the change (default `PATCH {}`) and
+`DELETE` to the resource, and `GET` to the ids next to a numeric id (`neighbours`, default 2 on each side). A 2xx to the
+other actor is a finding: `WSTG-ATHZ-04` for another user (`"role": "peer"`), `WSTG-ATHZ-03` for a lower role
+(`"role": "lower"`); a neighbour is a `WSTG-ATHZ-04` finding only when the owner can read it too. A `5xx` is
+inconclusive, not a pass. The flow's cleanup runs as the owner in a `finally`, also when a request fails halfway; after
+the other actor's `DELETE` went through, a `404` from it counts as done. Run it against a disposable staging
+environment only: without `--allow-mutations` nothing is sent (exit 5); a check whose flow or cleanup
+`--allowed-methods`/`--allowed-paths` refuse, or that the remaining `--max-requests` budget cannot cover, is not
+started; a probe they refuse is listed as skipped. Output: one line per case with its WSTG id, the Guardrails section,
+and `two-actor.json` in `--out`. Exit 1 on a finding, an inconclusive case, a check that stopped or a cleanup that failed.
+
 ## Auth / headers (nothing hardcoded)
 - **Config (per run):** `--header "Authorization: Bearer $TOKEN"` — repeatable. Config headers win.
 - **Knowledge (#92):** in an `api`/`all`-scope file under `./knowledge/` (e.g. `knowledge/api/auth.md`),

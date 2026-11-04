@@ -101,6 +101,36 @@ current step is marked while it plays. It works offline and nothing leaves your 
 only the video and a note; a run with no video exits with an error naming the run directory. Add `--open` to open
 the page in your default browser.
 
+### API security: IDOR and privilege escalation across two actors
+
+`cairn api --base-url https://staging.example.com --actors actors.json --allow-mutations` runs a check the
+single-request `hacker` style cannot: it needs two identities and state. The owner (actor A) creates a resource
+through a saved [API flow](docs/api-flows.md); the other actor (B) then tries to read it, change it and delete it, and
+reads the ids next to it. Each 2xx answer to B is a finding with its OWASP WSTG id: `WSTG-ATHZ-04` (IDOR) when B is
+another user, `WSTG-ATHZ-03` (privilege escalation) when B is a lower role. A neighbouring id counts only when both
+actors can read it. The flow's own cleanup deletes what was created, also when the check stops halfway.
+
+```json
+{
+  "version": 1,
+  "flows": "flows.json",
+  "actors": {
+    "owner": { "session": "alice" },
+    "other": { "headers": { "Authorization": "Bearer {{env.BOB_TOKEN}}" }, "role": "peer" }
+  },
+  "checks": [
+    { "flow": "project", "resource": "/api/projects/{{projectId}}", "change": { "method": "PATCH", "body": { "name": "x" } }, "neighbours": 2 }
+  ]
+}
+```
+
+An actor is a saved session by its name (`.auth/<name>.storageState.json`, from `cairn session capture --name`; set
+`sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The check uses the same guardrails as
+every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
+production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or
+cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`; a finding
+exits 1. More: [the runbook](docs/runbooks/run-api-cases.md#two-actor-check-idor-and-privilege-escalation---actors-233).
+
 ## Interactive TUI
 
 Run `cairn` with **no arguments** in a terminal for a guided UI (launcher → form → live dashboard →
@@ -119,6 +149,7 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 | `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique] [--screencast]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `cairn api [--spec <path\|url>] [--base-url <u>] [--negative] [--scenarios] [--adversarial [styles]] [--min-coverage <percent> [--count-partial]] [--allow-mutations] [--allowed-methods <list>] [--allowed-paths <list>] [--max-requests <n>] [--rps <n>]` | Generate (and, with `--base-url`, run + assert status/contract) happy-path, negative-schema, multi-endpoint-scenario, and adversarial (`normal`/`curious`/`psycho`/`hacker`) cases from an OpenAPI 3.x spec. **With `--base-url` only GET/HEAD/OPTIONS are sent unless you pass `--allow-mutations`** (300 requests max, 5 req/s, host pinned, no redirects). Without `--spec`, the `--base-url` server is searched for a spec it serves (`/openapi.json`, `/v3/api-docs`, …). `--spec` also takes a Postman collection (v2.1) or a HAR file: it is converted to OpenAPI and saved as `openapi.derived.json` in the run directory |
 | `cairn api --spec <s> --scenarios --save-flows <f>` · `cairn api --flows <f> [--out <dir>] [--base-url <u> --allow-mutations]` | Save scenario chains as [API flows](docs/api-flows.md) (create → return its id → delete), and write their Playwright fixture (`api-flows.fixture.ts`) for UI test setup and cleanup; sends no request. A flow that changes data runs only against an address allowed with `--allow-mutations` |
+| `cairn api --base-url <u> --actors <f> --allow-mutations` | Two-actor API security check: IDOR (`WSTG-ATHZ-04`) and privilege escalation (`WSTG-ATHZ-03`) — the owner creates a resource through a saved API flow, the other actor tries to read, change and delete it and reads the ids next to it; the flow's cleanup always runs. See [below](#api-security-idor-and-privilege-escalation-across-two-actors) |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).

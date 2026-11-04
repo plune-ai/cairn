@@ -18,7 +18,7 @@
  *   request, expect rejection. IDOR / privilege-escalation-via-response-replay are genuinely
  *   stateful/multi-request in explorbot's own implementation (≥2 identities, resource chaining,
  *   reading prior responses) — closer to API-9's scenario-chain machinery than a single case, so
- *   they're a follow-up, not shipped here.
+ *   they run as their own two-actor check (`two-actor.ts`, #233, `cairn api --actors`), not here.
  *
  * Every case is tagged `adversarialStyle` (+ `wstgId` where a specific OWASP WSTG test ID applies) so
  * it flows through the existing run/report/coverage/ATC pipeline untouched — a distinct category, not

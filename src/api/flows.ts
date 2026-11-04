@@ -118,6 +118,13 @@ function literalSecrets(value: unknown, at = ""): string[] {
   });
 }
 
+/** #233: the same rule for any header map Cairn reads from a file — a secret only as `{{env.NAME}}`. */
+export function secretHeaderProblems(headers: Record<string, string> | undefined, where: string): string[] {
+  const errors: string[] = [];
+  checkHeaders(headers, where, errors);
+  return errors;
+}
+
 function checkHeaders(headers: Record<string, string> | undefined, where: string, errors: string[]): void {
   for (const [name, value] of Object.entries(headers ?? {})) {
     if ((SENSITIVE.test(name) || isSecretKey(name)) && !ENV_ONLY.test(value)) {
