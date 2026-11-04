@@ -45,6 +45,11 @@ export interface ElementState {
    * Absent when it could not be read (cli backend, element gone).
    */
   popup?: { hasPopup?: string; expanded?: boolean; controls?: string };
+  /**
+   * #225 review 2: pressing it submits a form — a submit button (`type=submit`, or a `<button>` with no type) inside
+   * a form. Exploration never presses one, whatever it announces. Absent when it does not, or could not be read.
+   */
+  submitsForm?: true;
 }
 
 /** An element with a verified locator (verify-before-design, grounding). */

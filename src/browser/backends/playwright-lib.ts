@@ -561,18 +561,25 @@ export class PlaywrightLibBackend implements BrowserBackend {
       }
     }
     // #225 review: what the element says it opens; only such an element is pressed to look for an overlay.
-    const popup = visible
+    // #225 review 2: and whether pressing it submits a form (a submit button inside a form), which is never pressed.
+    const read = visible
       ? await loc
           .evaluate(
             (node: unknown) => {
-              const n = node as { getAttribute(a: string): string | null };
+              const n = node as { getAttribute(a: string): string | null; tagName: string; type?: string; form?: unknown };
               const hasPopup = n.getAttribute("aria-haspopup");
               const expanded = n.getAttribute("aria-expanded");
               const controls = n.getAttribute("aria-controls");
+              const tag = n.tagName.toLowerCase();
+              // `type` is the property: a <button> with no (or an unknown) type attribute reads "submit".
+              const submitter = (tag === "button" && n.type === "submit") || (tag === "input" && (n.type === "submit" || n.type === "image"));
               return {
-                ...(hasPopup !== null && hasPopup !== "false" ? { hasPopup: hasPopup || "true" } : {}),
-                ...(expanded === "true" || expanded === "false" ? { expanded: expanded === "true" } : {}),
-                ...(controls ? { controls } : {}),
+                popup: {
+                  ...(hasPopup !== null && hasPopup !== "false" ? { hasPopup: hasPopup || "true" } : {}),
+                  ...(expanded === "true" || expanded === "false" ? { expanded: expanded === "true" } : {}),
+                  ...(controls ? { controls } : {}),
+                },
+                submitsForm: submitter && !!n.form,
               };
             },
             undefined,
@@ -580,7 +587,14 @@ export class PlaywrightLibBackend implements BrowserBackend {
           )
           .catch(() => undefined)
       : undefined;
-    return { visible, enabled, checked, ...(popup && Object.keys(popup).length > 0 ? { popup } : {}) };
+    const popup = read?.popup;
+    return {
+      visible,
+      enabled,
+      checked,
+      ...(popup && Object.keys(popup).length > 0 ? { popup } : {}),
+      ...(read?.submitsForm ? { submitsForm: true as const } : {}),
+    };
   }
 
   session(): SessionApi {

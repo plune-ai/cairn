@@ -191,5 +191,8 @@ describe("which button exploration may press (#225 review)", () => {
     expect(refusal({ name: "Close account" }, { hasPopup: "dialog" })).toBe("destructive");
     expect(refusal({ name: "Save" }, { hasPopup: "dialog" })).toBe("completes the form; not pressed");
     expect(refusal({ name: "Share", disabled: true }, { hasPopup: "dialog" })).toBe("disabled; not pressed");
+    // #225 review 2: a trigger that submits its form posts it, whatever it announces
+    expect(refusal({ name: "Choose options" }, { hasPopup: "dialog" }, true)).toBe("submits a form");
+    expect(refusal({ name: "Show extras" }, { expanded: false }, true)).toBe("submits a form");
   });
 });
