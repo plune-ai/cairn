@@ -99,6 +99,43 @@ describe("parseApiFlows — the flow file (#230)", () => {
   });
 });
 
+describe("parseApiFlows — review findings (#230)", () => {
+  const signinWith = (steps: unknown[], cleanup?: unknown[]): string =>
+    JSON.stringify({ version: 1, flows: [{ name: "signedIn", kind: "signin", steps, ...(cleanup ? { cleanup } : {}) }] });
+  const login = { method: "POST", path: "/api/login", form: { user: "{{env.U}}", password: "{{env.P}}" } };
+
+  it("a sign-in flow may change data once (the login), not twice, and has no cleanup", () => {
+    expect(() => parseApiFlows(signinWith([login, { method: "GET", path: "/api/me" }]))).not.toThrow();
+    expect(() => parseApiFlows(signinWith([login, { method: "DELETE", path: "/api/projects/everything" }]))).toThrow(
+      /sign-in flow sends one request that changes data/,
+    );
+    expect(() => parseApiFlows(signinWith([login], [{ method: "DELETE", path: "/api/sessions" }]))).toThrow(/sign-in flow has no cleanup/);
+  });
+
+  it("refuses literal secrets in query, path, nested body keys and around {{env.NAME}} in a header", () => {
+    const withStep = (step: Record<string, unknown>): string =>
+      JSON.stringify({ version: 1, flows: [{ name: "health", steps: [{ method: "GET", path: "/health", ...step }] }] });
+    expect(() => parseApiFlows(withStep({ query: { api_key: "sk_live_QUERY" } }))).toThrow(/"api_key" holds a secret/);
+    expect(() => parseApiFlows(withStep({ path: "/x?access_token=sk_live_PATH" }))).toThrow(/query parameters go in "query"/);
+    expect(() => parseApiFlows(withStep({ method: "POST", body: { pwd: "hunter2" } }))).toThrow(/"pwd" holds a secret/);
+    expect(() => parseApiFlows(withStep({ method: "POST", body: { credentials: { pass: "hunter3" } } }))).toThrow(
+      /"credentials\.pass" holds a secret/,
+    );
+    expect(() => parseApiFlows(withStep({ headers: { Authorization: "Bearer sk_live_REAL {{env.X}}" } }))).toThrow(
+      /header "Authorization" holds a secret/,
+    );
+    // the allowed shapes still pass
+    expect(() =>
+      parseApiFlows(withStep({ query: { api_key: "{{env.KEY}}", compass: "north", author: "Ada" }, headers: { Authorization: "Bearer {{env.X}}" } })),
+    ).not.toThrow();
+  });
+
+  it("refuses two flows whose fixture types would share a name", () => {
+    const two = JSON.stringify({ version: 1, flows: [{ name: "a", steps: [{ method: "GET", path: "/a" }] }, { name: "A", steps: [{ method: "GET", path: "/a" }] }] });
+    expect(() => parseApiFlows(two)).toThrow(/type AFlow is also flow "a"'s/);
+  });
+});
+
 describe("flowChangesData — what needs the explicit flag (#230)", () => {
   it("a data flow with a POST/PUT/PATCH/DELETE changes data; a GET-only flow and a sign-in do not", () => {
     const file = parseApiFlows(JSON.stringify(projectFlows));
@@ -108,6 +145,19 @@ describe("flowChangesData — what needs the explicit flag (#230)", () => {
       JSON.stringify({ version: 1, flows: [{ name: "health", steps: [{ method: "GET", path: "/health" }] }] }),
     );
     expect(flowChangesData(readOnly.flows[0]!)).toBe(false);
+  });
+
+  it("a flow whose steps only read but whose cleanup deletes changes data too", () => {
+    const file = parseApiFlows(
+      JSON.stringify({
+        version: 1,
+        flows: [
+          { name: "existing", steps: [{ method: "GET", path: "/api/projects/latest", capture: { id: "/id" } }], returns: ["id"], cleanup: [{ method: "DELETE", path: "/api/projects/{{id}}" }] },
+        ],
+      }),
+    );
+    expect(flowChangesData(file.flows[0]!)).toBe(true);
+    expect(renderFlowFixture(file, {})).toMatch(/"changesData": true/);
   });
 });
 
@@ -161,6 +211,12 @@ describe("renderFlowFixture — the Playwright fixture (#230)", () => {
     expect(open).toContain('const MUTATIONS_ALLOWED_FOR: string[] = ["http://127.0.0.1:4000"];');
     expect(open).not.toMatch(/hunter2|APP_PASSWORD"?\s*:/);
     expect(open).toContain("{{env.APP_PASSWORD}}");
+  });
+
+  it("writes the source name into its comment on one line, whatever characters it holds", () => {
+    const ts = renderFlowFixture(file, { source: "flows.json\nprocess.exit(1);\u2028x" });
+    expect(ts.split("\n")[0]).toMatch(/^\/\/ Playwright fixtures for the API flows in flows\.json process\.exit\(1\); x/);
+    expect(ts).not.toMatch(/^process\.exit/m);
   });
 
   it("uses the given base URL when the file names none", () => {

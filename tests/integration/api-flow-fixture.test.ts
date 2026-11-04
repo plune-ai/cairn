@@ -17,12 +17,14 @@ interface App {
   projects: Map<string, string>;
   created: number;
   deleted: number;
+  /** Every request the server received, as `METHOD /path?query`. */
+  log: string[];
   close: () => Promise<void>;
 }
 
 async function startApp(): Promise<App> {
   let next = 1;
-  const app = { projects: new Map<string, string>(), created: 0, deleted: 0 } as App;
+  const app = { projects: new Map<string, string>(), created: 0, deleted: 0, log: [] } as unknown as App;
   const readBody = (req: import("node:http").IncomingMessage): Promise<string> =>
     new Promise((ok) => {
       let s = "";
@@ -33,6 +35,16 @@ async function startApp(): Promise<App> {
     void (async () => {
       const url = new URL(req.url ?? "/", "http://app");
       const body = await readBody(req);
+      app.log.push(`${req.method} ${req.url}`);
+      if (req.method === "POST" && url.pathname === "/api/projects/odd") {
+        // An answer whose id cannot name anything: "" or "..", as the query asks.
+        res.writeHead(201, { "content-type": "application/json" }).end(JSON.stringify({ id: url.searchParams.get("id") ?? "" }));
+        return;
+      }
+      if (req.method === "POST" && url.pathname === "/api/broken") {
+        res.writeHead(500).end();
+        return;
+      }
       if (req.method === "POST" && url.pathname === "/api/projects") {
         const { name } = JSON.parse(body) as { name: string };
         const id = `p${next++}`;
@@ -93,6 +105,39 @@ const flowFile = parseApiFlows(
         name: "signedIn",
         kind: "signin",
         steps: [{ method: "POST", path: "/api/login", form: { user: "{{env.APP_USER}}", password: "{{env.APP_PASSWORD}}" } }],
+      },
+    ],
+  }),
+);
+
+/** Flows whose answers leave nothing to clean up by: an empty id, a `..` id, a second step that fails. */
+const edgeFile = parseApiFlows(
+  JSON.stringify({
+    version: 1,
+    flows: [
+      {
+        name: "blank",
+        steps: [{ method: "POST", path: "/api/projects/odd", query: { id: "" }, expect: 201, capture: { id: "/id" } }],
+        returns: ["id"],
+        cleanup: [{ method: "DELETE", path: "/api/projects/{{id}}", expect: [204, 404] }],
+      },
+      {
+        name: "dots",
+        steps: [{ method: "POST", path: "/api/projects/odd", query: { id: ".." }, expect: 201, capture: { id: "/id" } }],
+        returns: ["id"],
+        cleanup: [{ method: "DELETE", path: "/api/projects/{{id}}", expect: [204, 404] }],
+      },
+      {
+        name: "pair",
+        steps: [
+          { method: "POST", path: "/api/projects", body: { name: "Pair {{uid}}" }, expect: 201, capture: { projectId: "/id" } },
+          { method: "POST", path: "/api/broken", expect: 201, capture: { otherId: "/id" } },
+        ],
+        returns: ["projectId", "otherId"],
+        cleanup: [
+          { method: "DELETE", path: "/api/others/{{otherId}}", expect: [204, 404] },
+          { method: "DELETE", path: "/api/projects/{{projectId}}", expect: [204, 404] },
+        ],
       },
     ],
   }),
@@ -180,5 +225,80 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     }
     expect(results).toEqual([{ title: "opens the project", status: "skipped" }]);
     expect(app.created).toBe(before);
+  });
+
+  it("a captured id that cannot name anything ('' or '..') is not used: no DELETE is sent for it", { timeout: 120000 }, async (ctx) => {
+    app.log.length = 0;
+    const run = await new ArtifactStore(ITEST_BASE).openRun("odd-ids");
+    await run.writeSuite({
+      files: [
+        { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(edgeFile, { baseUrl: app.url, allowMutationsFor: app.url }) },
+        { path: "blank.spec.ts", content: spec(`test('blank id', async ({ blank }) => { expect(blank).toBeTruthy(); });`) },
+        { path: "dots.spec.ts", content: spec(`test('dots id', async ({ dots }) => { expect(dots.id).toBe('..'); });`) },
+      ],
+    });
+    let results: Awaited<ReturnType<typeof runSpecs>>;
+    try {
+      results = await runSpecs(run.dir, { workers: 1 });
+    } catch (e) {
+      if (isMissingBrowserError(e)) return ctx.skip();
+      throw e;
+    }
+    expect(app.log.filter((l) => l.startsWith("DELETE"))).toEqual([]);
+    const byTitle = Object.fromEntries(results.map((r) => [r.title, r]));
+    expect(byTitle["blank id"]?.status).toBe("failed");
+    expect(byTitle["blank id"]?.error).toMatch(/the answer has no value at \/id for id/);
+    // ".." is a value, but not one segment of a path: the test gets it, the cleanup does not send it
+    expect(byTitle["dots id"]?.status).toBe("passed");
+  });
+
+  it("a cleanup step that needs a value a failed step never captured is left out; the rest of the cleanup runs", { timeout: 120000 }, async (ctx) => {
+    app.log.length = 0;
+    const run = await new ArtifactStore(ITEST_BASE).openRun("pair");
+    await run.writeSuite({
+      files: [
+        { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(edgeFile, { baseUrl: app.url, allowMutationsFor: app.url }) },
+        { path: "pair.spec.ts", content: spec(`test('pair', async ({ pair }) => { expect(pair).toBeTruthy(); });`) },
+      ],
+    });
+    let results: Awaited<ReturnType<typeof runSpecs>>;
+    try {
+      results = await runSpecs(run.dir, { workers: 1 });
+    } catch (e) {
+      if (isMissingBrowserError(e)) return ctx.skip();
+      throw e;
+    }
+    expect(results.map((r) => r.status)).toEqual(["failed"]);
+    expect(results[0]!.error).toMatch(/step "POST \/api\/broken" answered 500/);
+    expect(results[0]!.error).not.toMatch(/cleanup failed/);
+    expect(app.log.filter((l) => l.startsWith("DELETE"))).toEqual([expect.stringMatching(/^DELETE \/api\/projects\/p\d+$/)]);
+    expect([...app.projects.keys()]).toEqual([]);
+  });
+
+  it("a sign-in flow that would send a second request that changes data sends nothing", { timeout: 120000 }, async (ctx) => {
+    app.log.length = 0;
+    // Built past parseApiFlows (which refuses it) to prove the fixture itself refuses it too.
+    const signin = flowFile.flows.find((f) => f.kind === "signin")!;
+    const bad = {
+      ...flowFile,
+      flows: [{ ...signin, steps: [...signin.steps, { method: "DELETE" as const, path: "/api/projects/everything" }] }],
+    };
+    const run = await new ArtifactStore(ITEST_BASE).openRun("signin-delete");
+    await run.writeSuite({
+      files: [
+        { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(bad, { baseUrl: app.url }) },
+        { path: "me.spec.ts", content: spec(`test('me', async ({ page }) => { await page.goto('${app.url}/me'); });`) },
+      ],
+    });
+    let results: Awaited<ReturnType<typeof runSpecs>>;
+    try {
+      results = await runSpecs(run.dir, { workers: 1 });
+    } catch (e) {
+      if (isMissingBrowserError(e)) return ctx.skip();
+      throw e;
+    }
+    expect(results.map((r) => r.status)).toEqual(["failed"]);
+    expect(app.log.filter((l) => l.startsWith("DELETE"))).toEqual([]);
+    expect(app.log.filter((l) => l.startsWith("POST"))).toEqual([]);
   });
 });

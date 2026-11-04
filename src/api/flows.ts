@@ -23,8 +23,14 @@ const METHODS = ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] as 
 /** `{{name}}`, `{{env.NAME}}` or `{{uid}}` inside any string of a step. */
 const TEMPLATE = /\{\{\s*([\w.]+)\s*\}\}/g;
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
-/** Body / form keys whose literal value would be a secret written into the file. */
-const SECRET_KEY = /password|passwd|secret|token|api[-_]?key/i;
+/** Body / form / query keys (and header names) whose literal value would be a secret written into the file. */
+const SECRET_KEY = /pass(?:w|phrase|code)|pwd|secret|token|credential|api[-_]?key|auth(?!or(?!i[sz]))/i;
+/** Short words that name a secret only as a whole word of a key (`pass`, `userPass`, `db_pass`), not inside `compass`. */
+const SECRET_WORDS = new Set(["pass", "passwd", "pw", "creds"]);
+const isSecretKey = (key: string): boolean =>
+  SECRET_KEY.test(key) || key.split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/).some((w) => SECRET_WORDS.has(w.toLowerCase()));
+/** The only shape a secret may take in the file: `{{env.NAME}}`, after an optional `Bearer `/`Basic `/`Token ` scheme. */
+const ENV_ONLY = /^(?:(?:Bearer|Basic|Token) )?\{\{\s*env\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$/i;
 /** Names the Playwright test fixtures and options already use — a flow named so would shadow one. */
 const PLAYWRIGHT_NAMES = new Set([
   "page", "context", "browser", "browserName", "request", "playwright", "baseURL", "storageState", "headless", "channel",
@@ -47,7 +53,10 @@ const StepSchema = z
       .string()
       .transform((s) => s.toUpperCase())
       .pipe(z.enum(METHODS)),
-    path: z.string().regex(/^\/(?!\/)/, "a path starts with a single '/' and is relative to the base URL"),
+    path: z
+      .string()
+      .regex(/^\/(?!\/)/, "a path starts with a single '/' and is relative to the base URL")
+      .refine((s) => !s.includes("?") && !s.includes("#"), "a path has no '?' or '#': query parameters go in \"query\""),
     headers: z.record(z.string(), z.string()).optional(),
     query: z.record(z.string(), z.string()).optional(),
     body: z.unknown().optional(),
@@ -82,7 +91,10 @@ export type FlowStep = z.infer<typeof StepSchema>;
 export type ApiFlow = z.infer<typeof FlowSchema>;
 export type ApiFlowFile = z.infer<typeof FlowFileSchema>;
 
-/** A flow changes data when it is not a sign-in and any of its steps or cleanup steps is not GET/HEAD/OPTIONS. */
+/**
+ * A flow changes data when it is not a sign-in and any of its steps or cleanup steps is not GET/HEAD/OPTIONS. A
+ * sign-in flow may send one such request — the login itself — and nothing else that changes data (checked on read).
+ */
 export function flowChangesData(flow: ApiFlow): boolean {
   return flow.kind === "data" && [...flow.steps, ...flow.cleanup].some((s) => !READ_ONLY_METHODS.has(s.method));
 }
@@ -95,24 +107,29 @@ function templateNames(value: unknown): string[] {
   return [];
 }
 
-/** Body / form fields that hold a literal secret, as `key` paths. */
+/** Body / form / query fields that hold a literal secret, as `key` paths. */
 function literalSecrets(value: unknown, at = ""): string[] {
   if (Array.isArray(value)) return value.flatMap((v, i) => literalSecrets(v, `${at}[${i}]`));
   if (!value || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([k, v]) => {
     const here = at ? `${at}.${k}` : k;
-    if (typeof v === "string" && SECRET_KEY.test(k) && v !== "" && !v.includes("{{env.")) return [here];
+    if (typeof v === "string" && isSecretKey(k) && v !== "" && !ENV_ONLY.test(v)) return [here];
     return literalSecrets(v, here);
   });
 }
 
 function checkHeaders(headers: Record<string, string> | undefined, where: string, errors: string[]): void {
   for (const [name, value] of Object.entries(headers ?? {})) {
-    if (SENSITIVE.test(name) && !value.includes("{{env.")) {
-      errors.push(`${where}: header "${name}" holds a secret — write it as {{env.NAME}} and set NAME in the environment`);
+    if ((SENSITIVE.test(name) || isSecretKey(name)) && !ENV_ONLY.test(value)) {
+      errors.push(
+        `${where}: header "${name}" holds a secret — write it as {{env.NAME}} (after an optional Bearer/Basic/Token) and set NAME in the environment`,
+      );
     }
   }
 }
+
+/** A flow's exported type name: `project` → `ProjectFlow`. Two flows must not share one (`a` and `A`). */
+const typeNameOf = (flow: string): string => `${flow.charAt(0).toUpperCase()}${flow.slice(1).replace(/^\$/, "")}Flow`;
 
 /** The cross-field rules zod cannot express: names, templates, returns, cleanup and secrets. */
 function checkFlowFile(file: ApiFlowFile): string[] {
@@ -122,16 +139,22 @@ function checkFlowFile(file: ApiFlowFile): string[] {
     if (n !== "uid" && !/^env\.[A-Za-z_][A-Za-z0-9_]*$/.test(n)) errors.push(`headers: {{${n}}} — file headers may use only {{env.NAME}} and {{uid}}`);
   }
   const seen = new Set<string>();
+  const typeNames = new Map<string, string>();
   for (const flow of file.flows) {
     const at = `flow "${flow.name}"`;
     if (seen.has(flow.name)) errors.push(`${at}: the name is used twice`);
+    else {
+      const other = typeNames.get(typeNameOf(flow.name));
+      if (other !== undefined) errors.push(`${at}: its type ${typeNameOf(flow.name)} is also flow "${other}"'s — rename one of them`);
+      else typeNames.set(typeNameOf(flow.name), flow.name);
+    }
     seen.add(flow.name);
     if (PLAYWRIGHT_NAMES.has(flow.name)) errors.push(`${at}: "${flow.name}" is a Playwright fixture or option name — pick another`);
 
     const known = new Set(["uid"]);
     const checkStep = (step: FlowStep, where: string): void => {
       checkHeaders(step.headers, where, errors);
-      for (const key of [...literalSecrets(step.body), ...literalSecrets(step.form)]) {
+      for (const key of [...literalSecrets(step.body), ...literalSecrets(step.form), ...literalSecrets(step.query)]) {
         errors.push(`${where}: "${key}" holds a secret — write it as {{env.NAME}} and set NAME in the environment`);
       }
       for (const n of templateNames([step.path, step.headers, step.query, step.body, step.form])) {
@@ -156,6 +179,11 @@ function checkFlowFile(file: ApiFlowFile): string[] {
     if (flow.kind === "signin") {
       if (flow.returns.length) errors.push(`${at}: a sign-in flow returns its session (storageState), not values`);
       if (flow.cleanup.length) errors.push(`${at}: a sign-in flow has no cleanup`);
+      if (flow.steps.filter((s) => !READ_ONLY_METHODS.has(s.method)).length > 1) {
+        errors.push(
+          `${at}: a sign-in flow sends one request that changes data (the login) — its other steps are GET/HEAD/OPTIONS; put the rest in a data flow`,
+        );
+      }
     } else if (flowChangesData(flow) && flow.cleanup.length === 0) {
       errors.push(`${at}: "${flow.name}" changes data but has no cleanup — add the steps that delete what it creates`);
     }
@@ -217,7 +245,7 @@ function envForSecrets(value: unknown, flow: string): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([k, v]) => [
       k,
-      typeof v === "string" && SECRET_KEY.test(k) ? `{{env.${`${flow}_${k}`.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()}}}` : envForSecrets(v, flow),
+      typeof v === "string" && isSecretKey(k) ? `{{env.${`${flow}_${k}`.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()}}}` : envForSecrets(v, flow),
     ]),
   );
 }
@@ -258,9 +286,11 @@ export function flowsFromScenarios(scenarios: ApiScenario[]): { flows: ApiFlow[]
     for (const param of needed) deletePath = deletePath.replace(`{${param}}`, `{{${param}}}`);
     const createStatus = statusOf(create);
     const deleteStatus = statusOf(del);
-    const headers = stringMap(Object.fromEntries(Object.entries(create.params.header).filter(([k]) => !SENSITIVE.test(k))));
-    const query = stringMap(create.params.query);
-    const delQuery = stringMap(Object.fromEntries(Object.entries(del.params.query).filter(([k]) => !needed.includes(k))));
+    const headers = stringMap(Object.fromEntries(Object.entries(create.params.header).filter(([k]) => !SENSITIVE.test(k) && !isSecretKey(k))));
+    const asEnv = (q: Record<string, string> | undefined): Record<string, string> | undefined =>
+      q && (envForSecrets(q, name) as Record<string, string>);
+    const query = asEnv(stringMap(create.params.query));
+    const delQuery = asEnv(stringMap(Object.fromEntries(Object.entries(del.params.query).filter(([k]) => !needed.includes(k)))));
     flows.push({
       name,
       kind: "data",
@@ -303,7 +333,6 @@ export function mergeApiFlows(file: ApiFlowFile, flows: ApiFlow[]): ApiFlowFile 
 
 // ── the Playwright fixture ──────────────────────────────────────────────────
 
-const typeNameOf = (flow: string): string => `${flow.charAt(0).toUpperCase()}${flow.slice(1).replace(/^\$/, "")}Flow`;
 
 /**
  * The fixture module's runtime: the generic step runner the per-flow fixtures call. Kept as plain text so the
@@ -326,6 +355,10 @@ type Playwright = PlaywrightWorkerArgs['playwright'];
 type StorageState = PlaywrightTestOptions['storageState'];
 
 const TEMPLATE = /\{\{\s*([\w.]+)\s*\}\}/g;
+const READ_ONLY = ['GET', 'HEAD', 'OPTIONS'];
+
+/** A value that cannot stand as one path segment: empty, '.' or '..', or one holding a '/'. */
+const badSegment = (v: string): boolean => v === '' || v === '.' || v === '..' || v.includes('/');
 
 /** Where the API lives: API_BASE_URL, then the flow file / the flag, then use.baseURL of the Playwright config. */
 function apiBaseUrl(baseURL: string | undefined): string {
@@ -358,6 +391,8 @@ function fill(value: unknown, vars: Vars, encode = false): unknown {
       if (v === undefined) {
         throw new Error(key.startsWith('env.') ? 'API flow: the environment variable ' + key.slice(4) + ' is not set' : 'API flow: no value for {{' + key + '}}');
       }
+      // In a path a value is one segment: never an empty one, never '.' or '..', never two.
+      if (encode && badSegment(v)) throw new Error('API flow: {{' + key + '}} is ' + JSON.stringify(v) + ', which cannot stand in the path ' + value);
       return encode ? encodeURIComponent(v) : v;
     });
   }
@@ -366,9 +401,13 @@ function fill(value: unknown, vars: Vars, encode = false): unknown {
   return value;
 }
 
-/** Whether every value a step names was captured — a cleanup step for something never created is left out. */
+/**
+ * Whether every value a step names was captured (and those in its path can stand as a path segment) — a cleanup step
+ * for something never created, or never named, is left out.
+ */
 const canFill = (step: Step, vars: Vars): boolean =>
-  [...JSON.stringify(step).matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || m[1]! in vars);
+  [...JSON.stringify(step).matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || m[1]! in vars) &&
+  [...step.path.matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || !badSegment(vars[m[1]!]!));
 
 function at(body: unknown, pointer: string): unknown {
   let cur: unknown = body;
@@ -403,11 +442,14 @@ async function runStep(ctx: APIRequestContext, base: string, flow: string, step:
   } catch {
     throw new Error(label + ': the answer is not JSON, so nothing can be captured from it');
   }
+  // An empty value counts as not captured: nothing can be found or deleted by it.
+  const missing: string[] = [];
   for (const [name, pointer] of Object.entries(step.capture)) {
     const v = at(body, pointer);
-    if (v === undefined || v === null || typeof v === 'object') throw new Error(label + ': the answer has no value at ' + pointer + ' for ' + name);
-    vars[name] = String(v);
+    if (v === undefined || v === null || typeof v === 'object' || String(v) === '') missing.push(pointer + ' for ' + name);
+    else vars[name] = String(v);
   }
+  if (missing.length) throw new Error(label + ': the answer has no value at ' + missing.join(', '));
 }
 
 /** Run a data flow, hand its values to the test, and clean up afterwards — after a failed test too. */
@@ -448,6 +490,10 @@ async function dataFlow(
 /** Run a sign-in flow in a fresh request context and return its cookies as a storageState. */
 async function signIn(flow: Flow, playwright: Playwright, baseURL: string | undefined): Promise<StorageState> {
   const base = apiBaseUrl(baseURL);
+  // The login is the one request a sign-in flow may send that changes data; a flow file is checked for this on read.
+  if (flow.steps.filter((s) => !READ_ONLY.includes(s.method)).length > 1) {
+    throw new Error('API flow "' + flow.name + '": a sign-in flow sends one request that changes data (the login); nothing was sent');
+  }
   const ctx = await playwright.request.newContext();
   try {
     const vars: Vars = { uid: uid() };
@@ -480,7 +526,7 @@ export function renderFlowFixture(file: ApiFlowFile, opts: FixtureOptions): stri
   const signin = file.flows.find((f) => f.kind === "signin");
 
   const L: string[] = [
-    `// Playwright fixtures for the API flows${opts.source ? ` in ${opts.source}` : ""} (cairn, #230). Written by \`cairn api --flows\`;`,
+    `// Playwright fixtures for the API flows${opts.source ? ` in ${opts.source.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")}` : ""} (cairn, #230). Written by \`cairn api --flows\`;`,
     "// edit the flow file and write this module again rather than editing it by hand.",
     "// {{env.NAME}} values are read from the environment when a test runs; none is stored here.",
     "import {",

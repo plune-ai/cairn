@@ -72,25 +72,28 @@ JSON, `version: 1`:
 |---|---|
 | `baseUrl` | Optional. Where the API lives. |
 | `headers` | Optional. Headers on every request; they may use `{{env.NAME}}` and `{{uid}}` only. |
-| `flows[].name` | The fixture's name in the tests: a TypeScript identifier, not one Playwright already uses (`page`, `request`, `storageState`, …). |
-| `flows[].kind` | `data` (default) or `signin`. At most one sign-in flow per file. |
+| `flows[].name` | The fixture's name in the tests: a TypeScript identifier, not one Playwright already uses (`page`, `request`, `storageState`, …), and not one that differs from another flow's only in its first letter's case (`a` and `A` would both be `type AFlow`). |
+| `flows[].kind` | `data` (default) or `signin`. At most one sign-in flow per file; it sends at most one request that changes data (the login itself), its other steps are `GET`/`HEAD`/`OPTIONS`. |
 | `flows[].description` | Optional. Shown to `design` and `automate`. |
 | `flows[].steps` | The requests, in order (at least one). |
 | `flows[].returns` | The captured values the fixture gives the test, as `{ name: string }`. A sign-in flow returns nothing. |
 | `flows[].cleanup` | The requests that delete what the flow created. **Required** for a data flow that changes data. A sign-in flow has none. |
 
-A step: `method` (`GET`, `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH`, `DELETE`), `path` (starts with one `/`; it is
-appended to the base URL, so a base path such as `/v1` is kept), and optionally `name`, `headers`, `query`, `body`
+A step: `method` (`GET`, `HEAD`, `OPTIONS`, `POST`, `PUT`, `PATCH`, `DELETE`), `path` (starts with one `/`, has no `?` — query
+parameters go in `query`; it is appended to the base URL, so a base path such as `/v1` is kept), and optionally `name`, `headers`, `query`, `body`
 (sent as JSON) or `form` (sent URL-encoded; not both), `expect` (a status or a list; default any 2xx or 3xx; redirects
 are not followed) and `capture` (name → JSON pointer into the JSON answer, `/id` or `$response.body#/id`).
 
 Templates, in any string of a step: `{{name}}` — a value captured by an earlier step (in the cleanup, any step);
 `{{env.NAME}}` — read from the environment when the test runs; `{{uid}}` — a value unique to this fixture run, for
-names that must not collide. In a path, values are URL-encoded. A template that names nothing known is refused when
+names that must not collide. In a path, values are URL-encoded, and a value that is empty, `.`, `..` or holds a `/`
+is refused rather than sent. A captured value that is empty counts as not captured. A template that names nothing known is refused when
 the file is read.
 
-**No secrets in the file.** A header such as `Authorization`, `Cookie` or `X-Api-Key`, and a body or form field such
-as `password`, `token` or `secret`, must be written as `{{env.NAME}}`; a literal value is refused. Values read from
+**No secrets in the file.** A header such as `Authorization`, `Cookie` or `X-Api-Key`, and a body, form or query
+field such as `password`, `pass`, `pwd`, `credentials`, `api_key`, `access_token`, `token`, `secret` or `auth`, at any
+depth, must be written as `{{env.NAME}}`, optionally after `Bearer `, `Basic ` or `Token `; anything else in the value
+is refused. Values read from
 the environment are never written into the fixture module.
 
 ## Write the fixture
@@ -103,7 +106,8 @@ writes `e2e/fixtures/api-flows.fixture.ts` and sends no request. The module need
 exports `test` (Playwright's, extended with one fixture per data flow) and `expect`. Each data fixture is
 test-scoped: it runs its steps in a request context of its own, hands the returned values to the test, and runs the
 cleanup in a `finally`, after the test ends, also when the test failed. A cleanup step that needs a value that was
-never captured (the create itself failed) is left out; a cleanup step that fails fails the test, naming the step,
+never captured (the create itself failed, or answered an empty id), or one that cannot stand in its path, is
+left out; a cleanup step that fails fails the test, naming the step,
 since the data may still be there. The sign-in flow, when there is one, replaces the tests' `storageState`: it runs
 its steps in a fresh request context and gives the cookies the answers set to the browser. An application that keeps
 its session in `localStorage` or sends a token header instead of a cookie is not signed in this way; give the data
@@ -123,7 +127,8 @@ step runs only against an address that was explicitly allowed. Otherwise the tes
   module as allowed. Without `--allow-mutations`, or without `--base-url`, no address is allowed.
 - `CAIRN_ALLOW_MUTATIONS=https://staging.example.com` (comma-separated origins) allows an address when the tests run.
 
-A `GET`-only flow and a sign-in flow do not change data and are not gated. As with `--allow-mutations` everywhere,
+A `GET`-only flow and a sign-in flow do not change data and are not gated: a sign-in flow's one changing request is
+the login, and a sign-in flow with a second one is refused when the file is read (and by the fixture). As with `--allow-mutations` everywhere,
 point it only at an environment you own, never at production.
 
 ## `design` and `automate` use the flows
