@@ -12,12 +12,16 @@
  * BORROW-07 (#95): with `--adversarial`, also generate/run cases in one or more named styles —
  *   normal/curious/psycho/hacker (`src/api/adversarial.ts`) — alongside the existing cases.
  * #227: without `--spec`, look for a spec the `--base-url` server serves (`src/api/discover.ts`).
+ * #228: `--spec` also takes a Postman collection or a HAR file; it is converted to OpenAPI 3.x
+ *   (`src/api/collection.ts`), saved as `openapi.derived.json` in the run's directory and read from there.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
 import { discoverSpec, readSpecFromUrl } from "../../api/discover.js";
+import { deriveSpec, type DerivedSpec } from "../../api/collection.js";
+import { DERIVED_KEY, writeDerivedSpec } from "../../api/derived.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
 import { generateAdversarialCases, ADVERSARIAL_STYLES, type AdversarialStyle } from "../../api/adversarial.js";
 import { runApiCases, wasNotSent, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
@@ -338,12 +342,31 @@ export const apiModality: Modality = {
     // One guard for the whole run: the spec lookup's tries and the cases share its budget and rate limit.
     const guard = new RequestGuard({ allowMutations: opts.allowMutations, allowedMethods, allowedPaths, maxRequests, rps });
 
+    const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     let source: string;
     let model: ApiModel;
     let specLookup: GuardrailReport["specLookup"]; // #227: what the lookup on the server did, for the guardrails report
     if (spec) {
       source = isUrl(spec) ? spec : resolve(spec);
-      ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
+      let ingestFrom = source;
+      // #228: a local Postman collection or HAR becomes an OpenAPI spec in the run's directory, read from there.
+      const text = isUrl(spec) ? undefined : await readFile(source, "utf8").catch(() => undefined);
+      let derived: DerivedSpec | undefined;
+      try {
+        derived = text === undefined ? undefined : deriveSpec(text);
+      } catch (e) {
+        ctx.err(`✗ Could not read ${source}: ${(e as Error).message}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      if (derived) {
+        ctx.err(`▸ ${derived.format === "har" ? "HAR file" : "Postman collection"} detected: converting it to OpenAPI 3.x…\n`);
+        for (const note of derived.notes) ctx.err(`  ${note}\n`);
+        secrets.push(...derived.secrets);
+        ingestFrom = await writeDerivedSpec(outDir, derived.doc, secrets);
+        ctx.out(`✓ Derived OpenAPI spec saved to ${ingestFrom} — operations and schemas inferred from examples (${DERIVED_KEY})\n`);
+      }
+      ctx.err(`▸ Ingesting OpenAPI spec from ${ingestFrom}…\n`);
       try {
         if (isUrl(spec)) {
           // #234: read the text like the lookup does (GET, no redirect, deadline, run headers, shared guard), so a
@@ -370,7 +393,7 @@ export const apiModality: Modality = {
           };
           model = await ingestOpenApi(source, got.text, { readRef });
         } else {
-          model = await ingestOpenApi(source);
+          model = await ingestOpenApi(ingestFrom);
         }
       } catch (e) {
         // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
@@ -449,7 +472,6 @@ export const apiModality: Modality = {
     // API-9 (#146): scenario chains run after the per-operation cases — independent of them.
     const scenarioResults = scenarios.length ? await runApiScenarios(scenarios, runnerOpts) : [];
 
-    const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     await mkdir(outDir, { recursive: true });
     const evidencePath = join(outDir, "api-evidence.json");
     // #196: nothing reaches disk with a secret in it, whatever field it ended up in.

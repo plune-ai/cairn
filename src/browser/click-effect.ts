@@ -137,7 +137,7 @@ function caseFlips(run: string): number {
  * A path segment or query key that may be a credential or an id: a JWT, long hex, a UUID, a long number, a run of 8+
  * letters mixed with digits, or 16+ letters whose case flips like random text. Words, slugs, short ids and `v2` stay.
  */
-function secretShaped(s: string): boolean {
+export function secretShaped(s: string): boolean {
   if (/^eyJ[\w-]*\.[\w-]+\.[\w-]*$/.test(s)) return true; // JWT: header.payload.signature
   if (/^[0-9a-f]{16,}$/i.test(s) || /^\d{12,}$/.test(s) || /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(s)) return true;
   return s
