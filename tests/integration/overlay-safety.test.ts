@@ -23,10 +23,11 @@ describe("overlay exploration changes nothing (integration, real Chromium)", () 
     await server.close();
   });
 
-  it("no mutating request reaches the server, and the genuine dialog is still found", async () => {
+  it("no mutating request reaches the server, and the genuine dialog, drawer, menu and wizard are still found", async () => {
     const gateway = backend as unknown as BrowserGateway;
     const study = await capture(gateway, url());
-    const out = await exploreOverlays({ gateway, url: url(), study });
+    // every trigger of the page is tried: none of the risky ones may hide behind the trigger limit
+    const out = await exploreOverlays({ gateway, url: url(), study, maxTriggers: 20 });
 
     expect(server.posts.map((p) => p.url)).toEqual([]);
 
@@ -44,6 +45,23 @@ describe("overlay exploration changes nothing (integration, real Chromium)", () 
 
     const skipped = out.skipped.map((s) => s.name);
     for (const name of ["Pay now", "Archive", "Continue", "Close account", "Cancel subscription"]) expect(skipped).toContain(name);
+
+    // review 2: «Next: place order» is no wizard step, so the cart with Back and «Step 2 of 2» is no wizard
+    expect(out.states.find((s) => s.name === "Cart")?.wizard).toBeUndefined();
+    expect(skipped).toContain("Next: place order");
+    // review 2: a trigger that submits its form is not pressed, whatever it announces
+    const reasonOf = (name: string): string | undefined => out.skipped.find((s) => s.name === name)?.reason;
+    expect(reasonOf("Choose options")).toBe("submits a form");
+    expect(reasonOf("Show extras")).toBe("submits a form");
+    // review 2: a trigger whose name pays or orders is not pressed
+    for (const name of ["Buy plan", "Upgrade", "Купити"]) expect(reasonOf(name)).toBe("destructive");
+
+    // the genuine overlays of the page are still found
+    expect(out.states.find((s) => s.name === "Filters panel")).toMatchObject({ kind: "drawer", trigger: { name: "Filters" } });
+    expect(out.states.find((s) => s.name === "More actions")).toMatchObject({ kind: "menu", trigger: { name: "More" } });
+    const profile = out.states.find((s) => s.name === "Profile wizard");
+    expect(profile!.wizard).toMatchObject({ next: "Next", back: "Back", backWorks: true });
+    expect(profile!.wizard!.steps).toHaveLength(2);
   }, 180_000);
 
   it("a disabled Next is not pressed, so a wizard that cannot move on does not wait out the click timeout", async () => {
