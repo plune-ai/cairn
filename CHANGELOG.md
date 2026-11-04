@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cairn api --base-url` with a query string no longer sends every case to the server root (#235).** The request URL
+  is now built from the parsed base URL: the case path follows the base path, the base query (a signed address, a key
+  in a parameter) is kept on every request and the case's own query parameters are added to it. A base URL without a
+  query is joined as before; the host and base-path checks run on the built address.
 - **A spec given as `--spec <url>` no longer reads local files (#227).** A `$ref` such as `file:///…/secret.json` in a
   downloaded spec was read from disk, and its content could end up in the requests sent to the target; a remote spec's
   `$ref`s now resolve over http(s) only. A spec file on disk still reads the files it references (multi-file specs).
