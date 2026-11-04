@@ -56,7 +56,7 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
     const line = raw.trimStart();
     if (!line.startsWith("- ")) continue;
 
-    const content = line.slice(2).trim();
+    const content = unquoteKey(line.slice(2).trim());
     if (content.startsWith("/")) {
       // Property line (/url, /checked, /disabled…). Capture /url onto the preceding element (its link)
       // so crawl can dedup links by (name, href) — #102. Other properties are skipped.
@@ -82,6 +82,12 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
   }
 
   return out;
+}
+
+/** #238: Playwright single-quotes a whole key YAML would misread (a name with `: `, ` #`, `{`): `'button "a: b"':` → `button "a: b":`. */
+function unquoteKey(content: string): string {
+  const m = /^'((?:[^']|'')*)'(.*)$/.exec(content);
+  return m ? (m[1] ?? "").replace(/''/g, "'") + (m[2] ?? "") : content;
 }
 
 function unescapeName(quoted: string): string {

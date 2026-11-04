@@ -81,4 +81,14 @@ describe("parseAriaSnapshot", () => {
     const els = parseAriaSnapshot('- button "Say \\"hi\\""\n- link "C:\\\\temp \\"x\\"":\n  - /url: /t\n- button "Next"');
     expect(els.map((e) => e.name)).toEqual(['Say "hi"', 'C:\\temp "x"', "Next"]);
   });
+
+  it("#238: a key Playwright wraps in single quotes (a name with `: ` or ` #`) is read too", () => {
+    const els = parseAriaSnapshot(`- 'button "Price: $5" [ref=e7]'\n- 'link "Rock ''n'' roll #1"':\n  - /url: /r\n- button "Next"`);
+    expect(els.map((e) => [e.role, e.name, e.ref])).toEqual([
+      ["button", "Price: $5", "e7"],
+      ["link", "Rock 'n' roll #1", "e2"],
+      ["button", "Next", "e3"],
+    ]);
+    expect(els[1]?.url).toBe("/r");
+  });
 });
