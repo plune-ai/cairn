@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A click records its effect, and a failed click names its cause (#224).** On the lib backend `act()` now returns
+  `outcome` beside `ok` (which still means the click was made): `navigated`, `opened-tab`, `downloaded`,
+  `overlay-opened`, `overlay-closed`, `state-changed` (the element's state, the focus or the scroll),
+  `content-changed` (a toast gone again counts), `network-only`, `unknown` (the page could not be read, or its next
+  page is still on its way) or `no-effect` for a click that happened, and `intercepted`, `not-visible`, `not-enabled`,
+  `detached`, `not-found` or `timeout` for one that failed, read from Playwright's call log instead of a bare timeout.
+  `effect` holds the record: the URL, the new tab, the download, the dialogs and menus that appeared or went away, the
+  ARIA snapshot diff, the texts that appeared, the element's checked / expanded / pressed / selected, the focus, the
+  scroll, and the same-origin requests the click started (method, path with the query keys only, status; no bodies,
+  no headers, no query values, credential-shaped path segments replaced). Requests of any origin are waited for up to
+  2 s; the page's own polling is neither waited for nor recorded. A click that looks dead is read again for up to
+  1.2 s before it is called `no-effect`. The probe keeps each click's outcome; its reverting click and the sign-in
+  click are not watched (`watch: false`). `explore` and `design` write the requests to `requests.json` and the clicks
+  with no change seen to `report.json` (`deadClicks`, `[]` when none, absent on the cli backend); `report.md` has a
+  *Dead clicks* section to check by hand, which says what Cairn cannot see and leaves out links the crawl followed. A
+  watched click takes about 250 ms longer, one that looks dead about 1.3 s. Prompts, generated files and existing
+  `report.json` keys are unchanged.
 - **`cairn api --base-url <url>` without `--spec` looks for a spec the server already serves (#227).** It tries
   `/openapi.json`, `/openapi.yaml`, `/swagger.json`, `/v3/api-docs`, `/v2/api-docs`, `/api-docs`,
   `/swagger/v1/swagger.json` and `/docs/openapi.json` on the base URL's path (its query string kept), in that order,

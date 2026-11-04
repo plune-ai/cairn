@@ -77,6 +77,21 @@ describe("ArtifactStore", () => {
     }
   });
 
+  it("#224: writeRequests keeps the recorded traffic in requests.json — an empty run writes []", async () => {
+    const base = await mkdtemp(join(tmpdir(), "qa-art-"));
+    try {
+      const run = await new ArtifactStore(base).openRun("rreq");
+      await run.writeRequests([{ method: "POST", path: "/api/save?token=‹redacted›", status: 204 }]);
+      expect(JSON.parse(await readFile(join(run.dir, "requests.json"), "utf8"))).toEqual([
+        { method: "POST", path: "/api/save?token=‹redacted›", status: 204 },
+      ]);
+      await run.writeRequests([]);
+      expect(JSON.parse(await readFile(join(run.dir, "requests.json"), "utf8"))).toEqual([]);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
   it("#103: writeFlowSnapshots skips an empty screenshot and blocks traversal", async () => {
     const base = await mkdtemp(join(tmpdir(), "qa-art-"));
     try {

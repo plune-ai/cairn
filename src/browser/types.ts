@@ -68,14 +68,85 @@ export interface ObserveOptions {
 
 export type Action =
   | { kind: "navigate"; url: string }
-  /** `timeoutMs`: how long the click may wait for the element to be actionable (the backend's default otherwise). */
-  | { kind: "click"; ref: string; timeoutMs?: number }
+  /**
+   * `timeoutMs`: how long the click may wait for the element to be actionable (the backend's default otherwise).
+   * `watch: false`: only click — nothing is watched or recorded (a probe's revert, a sign-in); watched by default.
+   */
+  | { kind: "click"; ref: string; timeoutMs?: number; watch?: boolean }
   | { kind: "fill"; ref: string; value: string };
 
+/**
+ * What a click did (#224), most telling first: one name from a closed set. `no-effect` is a click after which Cairn
+ * saw no change (a dead click); `unknown` is one it could not judge (the page could not be read, a navigation was
+ * still on its way) — never a dead click.
+ */
+export type ClickEffectKind =
+  | "navigated"
+  | "opened-tab"
+  | "downloaded"
+  | "overlay-opened"
+  | "overlay-closed"
+  | "state-changed"
+  | "content-changed"
+  | "network-only"
+  | "unknown"
+  | "no-effect";
+
+/**
+ * Why a click failed (#224). `intercepted`: another element takes the pointer — an overlay exploration does not know.
+ * `not-found`: nothing matches the element observed a moment ago; `detached`: it was found, then left the page.
+ */
+export type ClickFailure = "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
+
+export type ClickOutcome = ClickEffectKind | ClickFailure;
+
+/** A request the page started after a click: method, path and status only — no body, no header, no query value. */
+export interface RecordedRequest {
+  method: string;
+  /** Path on the page's own origin, with query keys and no values: `/api/save?token=‹v›&page=‹v›`. */
+  path: string;
+  /** Absent when no answer came within the wait. */
+  status?: number;
+}
+
+/** What one click changed (#224) — recorded by the lib backend after every click it watches. */
+export interface ClickEffect {
+  outcome: ClickEffectKind;
+  /** The page the click was made on, and the element clicked. */
+  page: string;
+  role: string;
+  name?: string;
+  /** The URL after the click, when it changed. */
+  url?: string;
+  /** The tab the click opened (its URL, written like a recorded request), and the file it downloaded. */
+  tab?: string;
+  download?: string;
+  /** `dialog` / `alertdialog` / `menu` / `listbox` that appeared or went away, as `dialog "Edit"`. */
+  opened: string[];
+  closed: string[];
+  /** The page's ARIA snapshot before vs after, line by line — read again only when the DOM changed. */
+  added: string[];
+  removed: string[];
+  /** Visible text the page added after the click, kept even when it was gone again (a toast). */
+  appeared: string[];
+  /** The element's own checked / expanded / pressed / selected, and the page's focus and scroll, that changed. */
+  state: { attr: "checked" | "expanded" | "pressed" | "selected" | "focus" | "scroll"; before: string; after: string }[];
+  /** Document, fetch and XHR requests on the page's origin started after the click, polls left out. */
+  requests: RecordedRequest[];
+}
+
 export interface ActResult {
+  /** The action happened. For a click: it was made — whether it changed anything is `outcome`. */
   ok: boolean;
   ref?: string;
   error?: string;
+  /**
+   * A click on the lib backend (#224): its effect when `ok`, its cause when not. Absent for a click that never
+   * reached the page (an unknown ref) or failed for another reason (the page closed), and on the cli backend.
+   */
+  outcome?: ClickOutcome;
+  /** What the click changed, when it was made (lib backend). */
+  effect?: ClickEffect;
 }
 
 /**

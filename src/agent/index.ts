@@ -13,7 +13,7 @@ import { PromptRegistry } from "../prompts/index.js";
 import { initTelemetry } from "../telemetry/index.js";
 import { ArtifactStore, rmrf, type RunWriter } from "../artifacts/index.js";
 import { resolveProjectTarget, ejectSuiteToProject } from "../project/index.js";
-import { renderReportMd } from "../artifacts/report.js";
+import { deadClicksOf, renderReportMd } from "../artifacts/report.js";
 import { parseTestCaseMd, parseApiTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases, automateApiCases } from "../codegen/index.js";
 import { lintSuite, lintHint } from "../codegen/lint.js";
@@ -563,6 +563,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             })),
           );
         }
+        // #224: only the lib backend watches clicks — on cli there is nothing to report, not "none".
+        const watchesClicks = cfg.browser.backend === "lib";
+        const deadClicks = watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined;
+        if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -580,6 +584,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           flow: flowReport, // #59: page/flow graph + journey cases (undefined for single-page runs)
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
+          deadClicks, // #224: clicks Cairn saw no change after, [] when none, absent on cli
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -606,6 +611,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             journeys: out.journeys,
             coverage,
             gapCases,
+            deadClicks,
             ...deciderReportKeys(decider, out.notRepaired, out.healed),
           }),
         );
@@ -914,6 +920,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         }
 
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
+        const watchesClicks = cfg.browser.backend === "lib"; // #224: the cli backend watches no click
+        if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -930,6 +938,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           flow: flowReportPayload(out.flowGraph, out.journeys, out.setupPlans), // #59/#60: graph + journeys + setup
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
+          deadClicks: watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined, // #224: absent on cli
           ...deciderReportKeys(decider), // ADR-0022: only on an opted-in run
         });
         await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));

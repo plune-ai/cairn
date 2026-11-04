@@ -43,6 +43,19 @@ describe("probeTransitions (act→observe, safe roles)", () => {
     expect(clicks).toBe(2); // click + revert click
   });
 
+  it("keeps what the click did beside checked/enabled — a switch that opened a dialog is not 'nothing happened' (#224)", async () => {
+    const gw = fakeGateway(
+      [
+        { visible: true, enabled: true, checked: false },
+        { visible: true, enabled: true, checked: false },
+      ],
+      () => undefined,
+    );
+    gw.act = async () => ({ ok: true, outcome: "overlay-opened" });
+    const t = await probeTransitions(gw, [{ ref: "e1", role: "switch", name: "Advanced", interactive: true, rank: 3 }]);
+    expect(t[0]?.outcome).toBe("overlay-opened");
+  });
+
   it("disabled switch → skipped (no click)", async () => {
     let clicks = 0;
     const gw = fakeGateway([{ visible: true, enabled: false, checked: false }], () => {
@@ -101,7 +114,7 @@ describe("probeTransitions has an end (#213)", () => {
     expect(log).toContain("probeInteractions — stopped at the 2500 ms limit: 3 of 5 safe elements tried");
   });
 
-  it("clicks with a 2 s limit, not the backend's 30 s default, the revert too", async () => {
+  it("clicks with a 2 s limit, not the backend's 30 s default, the revert too — and does not watch the revert (#224)", async () => {
     const acts: unknown[] = [];
     const gw = stuckGateway(new Set());
     gw.act = async (action) => {
@@ -111,7 +124,7 @@ describe("probeTransitions has an end (#213)", () => {
     await probeTransitions(gw, switches(1));
     expect(acts).toEqual([
       { kind: "click", ref: "e1", timeoutMs: 2_000 },
-      { kind: "click", ref: "e1", timeoutMs: 2_000 },
+      { kind: "click", ref: "e1", timeoutMs: 2_000, watch: false },
     ]);
   });
 

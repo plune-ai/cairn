@@ -3,7 +3,7 @@ import { runExploreGraph, type ExploreDeps } from "../../src/agent/graph.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
 import type { StructuredInvoke } from "../../src/llm/structured.js";
 import type { RunWriter } from "../../src/artifacts/index.js";
-import type { BrowserGateway, Observation, Action } from "../../src/browser/index.js";
+import type { BrowserGateway, ClickEffect, Observation, Action } from "../../src/browser/index.js";
 import type { ValidationReport } from "../../src/validate/index.js";
 import type { PageStudy } from "../../src/observe/index.js";
 import type { TestCase } from "../../src/design/index.js";
@@ -401,5 +401,32 @@ describe("runExploreGraph — decision layer (ADR-0022)", () => {
     expect(entries.map((e) => e.use)).toEqual(["repair-triage", "locator-heal"]);
     expect("healed" in out).toBe(false);
     expect(out.attempts).toBe(1);
+  });
+});
+
+describe("runExploreGraph — what each click did (#224)", () => {
+  it("keeps the effect of every click the run makes: the consent dismissal and the probe's click and revert", async () => {
+    const { gateway } = fakeGateway((call) =>
+      call === 1 ? obs('- button "Reject all"\n- switch "Dark mode"') : obs('- switch "Dark mode"'),
+    );
+    gateway.getState = async () => ({ visible: true, enabled: true, checked: false });
+    const effect = (name: string, outcome: "no-effect" | "state-changed"): ClickEffect => ({
+      outcome, page: "https://app.test/page", role: "button", name, opened: [], closed: [], added: [], removed: [], appeared: [], state: [], requests: [],
+    });
+    let clicks = 0;
+    gateway.act = async () =>
+      clicks++ === 0
+        ? { ok: true, ref: "e1", outcome: "state-changed", effect: effect("Reject all", "state-changed") }
+        : { ok: true, ref: "e1", outcome: "no-effect", effect: effect("Dark mode", "no-effect") };
+    const out = await runExploreGraph(
+      makeDeps({ gateway, codeless: true, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(out.clicks.map((c) => `${c.name}: ${c.outcome}`)).toEqual([
+      "Reject all: state-changed",
+      "Dark mode: no-effect",
+      "Dark mode: no-effect",
+    ]);
+    expect(out.transitions[0]?.outcome).toBe("no-effect");
   });
 });

@@ -1,5 +1,5 @@
 import type { BrowserGateway } from "../browser/index.js";
-import type { ElementRef, ElementState } from "../browser/types.js";
+import type { ClickOutcome, ElementRef, ElementState } from "../browser/types.js";
 
 /** An observed state transition after a safe action (act→observe). */
 export interface Transition {
@@ -8,6 +8,8 @@ export interface Transition {
   name?: string;
   before: ElementState;
   after: ElementState;
+  /** What the click did (#224): a dialog it opened or a request it sent counts even when checked/enabled did not move. */
+  outcome?: ClickOutcome;
 }
 
 /** Reversible roles that are safe to click (restored by a reverse click). */
@@ -63,7 +65,7 @@ async function probeOne(gateway: BrowserGateway, el: ElementRef, skipped: () => 
   const clicked = await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS });
   if (!clicked.ok) return undefined;
   const after = await gateway.getState(el);
-  return { ref: el.ref, role: el.role, name: el.name, before, after };
+  return { ref: el.ref, role: el.role, name: el.name, before, after, ...(clicked.outcome ? { outcome: clicked.outcome } : {}) };
 }
 
 /**
@@ -102,7 +104,8 @@ export async function probeTransitions(
       });
       if (transition) {
         out.push(transition);
-        await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS }).catch(() => undefined); // revert (reversibility)
+        // revert (reversibility): not watched, its effect is the click's own undone (#224)
+        await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS, watch: false }).catch(() => undefined);
       }
     } catch (e) {
       if (!(e instanceof ProbeTimeout)) throw e;

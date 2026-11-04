@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { renderReportMd, renderApiReportMd, locatorFor } from "../../src/artifacts/report.js";
-import type { ElementRef } from "../../src/browser/types.js";
+import { renderReportMd, renderApiReportMd, locatorFor, deadClicksOf } from "../../src/artifacts/report.js";
+import type { ClickEffect, ElementRef } from "../../src/browser/types.js";
 import type { ApiCaseResult } from "../../src/api/runner.js";
 
 const btn: ElementRef = { ref: "e6", role: "button", name: "Sign In", interactive: true, rank: 3 };
@@ -192,6 +192,63 @@ describe("renderReportMd — decision layer sections (ADR-0022)", () => {
     expect(md).toContain("- **Decisions:** 5 · **answered:** 2 · **fallbacks:** 3 (the current path ran instead)");
     expect(md).toContain("  - repair-triage — HTTP 500 (×2)");
     expect(md).toContain("  - coverage — state is 1500 chars > 1200 (×1)");
+  });
+});
+
+describe("renderReportMd — dead clicks (#224)", () => {
+  const base = { runId: "r1", url: "http://x/login", backend: "lib", profile: "anthropic", pageSemantics: "Login form", elements: [btn], testCases: [] };
+  const click = (outcome: ClickEffect["outcome"], name: string, page = "http://x/login", role = "button"): ClickEffect => ({
+    outcome, page, role, name, opened: [], closed: [], added: [], removed: [], appeared: [], state: [], requests: [],
+  });
+
+  it("lists each click Cairn saw no change after, with its element and page, once per element", () => {
+    const dead = deadClicksOf([
+      click("no-effect", "Export"),
+      click("state-changed", "Remember me"),
+      click("no-effect", "Export"), // exploreStates clicks the same element again
+      click("network-only", "Save"),
+      click("unknown", "Sync"), // could not be judged: not a dead click
+      click("no-effect", "Export", "http://x/list"),
+    ]);
+    expect(dead).toEqual([
+      { page: "http://x/login", role: "button", name: "Export" },
+      { page: "http://x/list", role: "button", name: "Export" },
+    ]);
+    const md = renderReportMd({ ...base, deadClicks: dead });
+    expect(md).toContain("## Dead clicks (2)");
+    expect(md).toContain("Cairn saw no change within 1200 ms of each click below — check it by hand.");
+    expect(md).toMatch(/It cannot see: .*no answer within 2000 ms/);
+    expect(md).not.toContain("changed nothing");
+    expect(md).toContain('| http://x/login | button "Export" |');
+    expect(md).toContain('| http://x/list | button "Export" |');
+  });
+
+  it("a link the crawl followed to another page is not dead, even when its click looked quiet", () => {
+    const quietLink = click("no-effect", "Pricing", "http://x/", "link");
+    const edges = [{ from: "http://x", to: "http://x/pricing", via: { ref: "e3", role: "link", name: "Pricing" } }];
+    expect(deadClicksOf([quietLink], edges)).toEqual([]);
+    // A link the crawl saw land on the same page stays dead.
+    expect(deadClicksOf([quietLink], [{ ...edges[0]!, to: "http://x/#top" }])).toHaveLength(1);
+  });
+
+  it("the page of a dead click keeps no query value, no fragment and no user", () => {
+    const dead = deadClicksOf([click("no-effect", "Export", "http://jdoe:pw@x/orders?token=abc123XYZ789#k=1")]);
+    expect(dead).toEqual([{ page: "http://x/orders?token=‹v›", role: "button", name: "Export" }]);
+  });
+
+  it("the section is there, and empty, when every click had an effect", () => {
+    for (const md of [renderReportMd({ ...base, deadClicks: [] }), renderReportMd(base)]) {
+      expect(md).toContain("## Dead clicks (0)");
+      expect(md).toContain("None: Cairn saw a change within 1200 ms of every click it could judge.");
+      expect(md).not.toContain("| page | element |");
+    }
+  });
+
+  it("on the cli backend the section says the clicks were not recorded, not that there were none", () => {
+    const md = renderReportMd({ ...base, backend: "cli" });
+    expect(md).toContain("## Dead clicks");
+    expect(md).toContain("Not recorded on the cli backend.");
+    expect(md).not.toContain("None:");
   });
 });
 
