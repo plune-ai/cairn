@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
+  Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
+  collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else
+  `runs/api-<id>/`, also without `--base-url`) and read from there like a written spec. Ids in a path become
+  parameters (`/projects/123` → `/projects/{id}`; `:id` and `{{id}}` keep their names), query keys become optional
+  parameters, request and response body schemas are inferred from the examples (types and keys, `required` only for a
+  key in every example), and the document, each operation and each inferred schema carry `x-cairn-derived: true`.
+  From a HAR only the API requests of the origin most of them went to are kept; pages, scripts, styles, images, fonts
+  and other origins are left out and counted in the output. No header, cookie, query or body value is written (only
+  names, types and status codes), and the values of `Authorization`, `Cookie`, `Set-Cookie` and other sensitive
+  headers, the secret-looking query, form, body and variable values (`decider/redact.ts`) and credential-shaped
+  values are scrubbed from the file too.
 - **A click records its effect, and a failed click names its cause (#224).** On the lib backend `act()` now returns
   `outcome` beside `ok` (which still means the click was made): `navigated`, `opened-tab`, `downloaded`,
   `overlay-opened`, `overlay-closed`, `state-changed` (the element's state, the focus or the scroll),

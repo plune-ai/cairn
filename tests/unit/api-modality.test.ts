@@ -64,6 +64,60 @@ describe("cairn api command (real ingest)", () => {
   });
 });
 
+describe("cairn api --spec with a Postman collection or a HAR (#228)", () => {
+  const TOKENS = ["FAKE-postman-bearer-7c1d9e", "FAKE-Pa55word!", "FAKE-har-session-7f3a9c", "FAKEsigFIXTURE0001xyz", "FAKE-har-qtoken-ZZ81x"];
+
+  it.each([
+    ["collection.postman.json", "Postman collection", "API spec: Projects API", "GET    /projects/{projectId}/tasks/{taskId}"],
+    ["session.har", "HAR file", "API spec: app.example.test (from a HAR)", "GET    /api/projects/{id}"],
+  ])("converts %s to OpenAPI, saves it as openapi.derived.json in --out and goes on as for a spec", async (file, kind, title, line) => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-derived-"));
+    try {
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync(["node", "cairn", "api", "--spec", join(fixtures, file), "--out", out]);
+      const text = outChunks.join("");
+      const err = errChunks.join("");
+      expect(err).toContain(`▸ ${kind} detected: converting it to OpenAPI 3.x…`);
+      expect(text).toContain(`✓ Derived OpenAPI spec saved to ${join(out, "openapi.derived.json")}`);
+      expect(text).toContain(title);
+      expect(text).toContain(line);
+      expect(text).toMatch(/inferred from examples \(x-cairn-derived\)/);
+      const saved = await readFile(join(out, "openapi.derived.json"), "utf8");
+      for (const t of TOKENS) expect(saved, t).not.toContain(t);
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("a plain OpenAPI spec is read as before: no derived file, no conversion line", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-derived-"));
+    try {
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync(["node", "cairn", "api", "--spec", join(fixtures, "tiny.json"), "--out", out]);
+      expect(errChunks.join("")).toContain("▸ Ingesting OpenAPI spec from");
+      expect(errChunks.join("")).not.toContain("detected: converting");
+      await expect(readFile(join(out, "openapi.derived.json"), "utf8")).rejects.toThrow(/ENOENT/);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
+  it("a Postman v1 collection fails cleanly with what to do", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-derived-"));
+    try {
+      const v1 = join(out, "old.postman.json");
+      await writeFile(v1, JSON.stringify({ id: "1", name: "Old", requests: [{ method: "GET", url: "http://a.test/x" }] }));
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync(["node", "cairn", "api", "--spec", v1, "--out", out]);
+      expect(errChunks.join("")).toMatch(/✗ Could not read .*Postman collection v1 is not supported/);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("cairn api --base-url run path (API-3, mocked network)", () => {
   let unstub: (() => void) | undefined;
   afterEach(() => {

@@ -1,0 +1,124 @@
+{
+  "info": {
+    "_postman_id": "0d6c1f2e-0000-4000-8000-000000000228",
+    "name": "Projects API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "FAKE-postman-bearer-7c1d9e", "type": "string" }] },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.example.test" },
+    { "key": "apiKey", "value": "FAKE-query-apikey-55aa31" }
+  ],
+  "item": [
+    {
+      "name": "Projects",
+      "item": [
+        {
+          "name": "List projects",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Api-Key", "value": "FAKE-xapikey-0042zz" }],
+            "url": {
+              "raw": "{{baseUrl}}/projects?page=1&api_key={{apiKey}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["projects"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "api_key", "value": "{{apiKey}}" }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[{\"id\": 42, \"name\": \"Alpha\", \"public\": false}, {\"id\": 43, \"name\": \"Beta\", \"public\": true, \"owner\": null}]"
+            }
+          ]
+        },
+        {
+          "name": "Create project",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"name\": \"Alpha\", \"public\": false}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{baseUrl}}/projects", "host": ["{{baseUrl}}"], "path": ["projects"] }
+          },
+          "response": [
+            {
+              "name": "Created",
+              "code": 201,
+              "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "Set-Cookie", "value": "session=FAKE-postman-session-91be2d; Path=/; HttpOnly" }],
+              "body": "{\"id\": 44, \"name\": \"Alpha\", \"public\": false}"
+            }
+          ]
+        },
+        {
+          "name": "Get project",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/projects/:projectId",
+              "host": ["{{baseUrl}}"],
+              "path": ["projects", ":projectId"],
+              "variable": [{ "key": "projectId", "value": "42" }]
+            }
+          },
+          "response": [
+            { "name": "OK", "code": 200, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": "{\"id\": 42, \"name\": \"Alpha\", \"public\": false}" },
+            { "name": "Missing", "code": 404, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": "{\"error\": \"not found\"}" }
+          ]
+        },
+        {
+          "name": "Rename project",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Cookie", "value": "session=FAKE-postman-cookie-3f8a1b" }],
+            "body": { "mode": "raw", "raw": "{\"name\": \"Gamma\"}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/projects/:projectId"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete project",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/projects/:projectId" },
+          "response": [{ "name": "Gone", "code": 204, "header": [], "body": "" }]
+        }
+      ]
+    },
+    {
+      "name": "Tasks",
+      "item": [
+        {
+          "name": "Get task",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/projects/:projectId/tasks/{{taskId}}", "host": ["{{baseUrl}}"], "path": ["projects", ":projectId", "tasks", "{{taskId}}"] }
+          },
+          "response": [
+            { "name": "OK", "code": 200, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": "{\"id\": 7, \"title\": \"Write docs\", \"done\": false, \"tags\": [\"docs\"]}" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sign in",
+      "request": {
+        "method": "POST",
+        "auth": { "type": "noauth" },
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "username", "value": "qa" },
+            { "key": "password", "value": "FAKE-Pa55word!" }
+          ]
+        },
+        "url": "{{baseUrl}}/auth/login"
+      },
+      "response": [
+        { "name": "OK", "code": 200, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": "{\"token\": \"FAKE-postman-resp-token-abc123\", \"expiresIn\": 3600}" }
+      ]
+    }
+  ]
+}
