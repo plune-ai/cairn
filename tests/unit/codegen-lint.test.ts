@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { lintSuite, lintHint } from "../../src/codegen/lint.js";
+import { lintSuite, lintHint, lintErrors } from "../../src/codegen/lint.js";
 import type { GeneratedSuite } from "../../src/codegen/index.js";
 
 const suite = (content: string): GeneratedSuite => ({ files: [{ path: "a.spec.ts", content }] });
@@ -45,5 +45,55 @@ describe("lintSuite", () => {
     expect(hint).toContain("Flaky-hardening");
     expect(hint).toContain("[bad-wait]");
     expect(hint).toContain("a.spec.ts");
+  });
+});
+
+describe("lintErrors: the patterns that go into the repair loop before validation (#226)", () => {
+  it("page.mouse.click is an error", () => {
+    const f = lintErrors(suite("await page.mouse.click(120, 340);"));
+    expect(f.map((x) => x.kind)).toEqual(["mouse-click"]);
+  });
+
+  it("force: true is an error", () => {
+    const f = lintErrors(suite("await page.getByRole('button', { name: 'Go' }).click({ force: true });"));
+    expect(f.map((x) => x.kind)).toEqual(["force-click"]);
+  });
+
+  it(".first() without a comment is an error", () => {
+    const f = lintErrors(suite("await page.getByRole('button', { name: 'Delete' }).first().click();"));
+    expect(f.map((x) => x.kind)).toEqual(["blind-position"]);
+  });
+
+  it(".nth( without a comment is an error", () => {
+    const f = lintErrors(suite("await page.getByRole('row').nth(2).click();"));
+    expect(f.map((x) => x.kind)).toEqual(["blind-position"]);
+  });
+
+  it(".first() / .nth() with a comment saying why — on the line or just above it — passes", () => {
+    expect(lintErrors(suite("await page.getByRole('row').first().click(); // the first row is the point: sorting puts the newest on top"))).toEqual([]);
+    expect(lintErrors(suite("// position is the point of the check: sorting\nawait expect(page.getByRole('row').nth(1)).toContainText('A');"))).toEqual([]);
+    expect(lintErrors(suite("/* sorting: the first row is the lowest */ await expect(page.getByRole('row').first()).toContainText('A');"))).toEqual([]);
+  });
+
+  it("a comment two lines up, or an empty comment, is not a reason", () => {
+    expect(lintErrors(suite("// sorting\nconst a = 1;\nawait page.getByRole('row').first().click();"))).toHaveLength(1);
+    expect(lintErrors(suite("await page.getByRole('row').first().click(); //"))).toHaveLength(1);
+  });
+
+  it("the words in a comment or a string are not the calls", () => {
+    expect(lintErrors(suite("// never call .first() or page.mouse.click or { force: true } blindly"))).toEqual([]);
+    expect(lintErrors(suite("await page.goto('http://localhost:3000/first()');"))).toEqual([]);
+  });
+
+  it("clean code, and the warnings of lintSuite (CSS, waits), are not errors", () => {
+    expect(lintErrors(suite("await expect(page.getByRole('button', { name: 'Go' })).toBeVisible();"))).toEqual([]);
+    expect(lintErrors(suite("await page.locator('#x').click();\nawait page.waitForTimeout(100);"))).toEqual([]);
+  });
+
+  it("an error carries file and detail, and lintSuite reports it too (the hint of a failed suite)", () => {
+    const s = { files: [{ path: "a/b.spec.ts", content: "ok\nawait page.mouse.click(1, 1);" }] };
+    expect(lintErrors(s)[0]).toMatchObject({ file: "a/b.spec.ts", kind: "mouse-click" });
+    expect(lintErrors(s)[0]!.detail).toContain("line 2");
+    expect(lintSuite(s).map((x) => x.kind)).toContain("mouse-click");
   });
 });

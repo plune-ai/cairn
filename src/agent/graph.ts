@@ -21,12 +21,14 @@ import {
 } from "../documentarian/index.js";
 import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
 import { runRepairLoop } from "./repair-loop.js";
+import { lintErrors } from "../codegen/lint.js";
 import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
 import { makeHeal, type HealRecord } from "../decider/uses/locator-heal.js";
 import type { Decider } from "../decider/types.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
 import type { BrowserGateway, ClickEffect, VerifiedElement } from "../browser/index.js";
+import type { AmbiguousFinding } from "../browser/types.js";
 import { exploreOverlays, nameOverlays } from "./overlays.js";
 import { formatOverlays, type OverlayState } from "../observe/overlays.js";
 import type { PromptRegistry } from "../prompts/index.js";
@@ -134,6 +136,8 @@ export interface ExploreOutcome {
   healed?: HealRecord[];
   /** #224: what every click of this exploration did, in order (empty on the cli backend, which records none). */
   clicks: ClickEffect[];
+  /** #226: elements nothing told apart from others like it (same role and name in their scope): not clicked. `[]` when none. */
+  ambiguous?: AmbiguousFinding[];
   /** #225: the overlays found as states (absent when the step did not run or failed; `[]` when it ran and found none). */
   overlays?: OverlayState[];
   /** #225: controls exploration left alone (destructive, completing a form, over the limit), and toast texts seen. */
@@ -142,15 +146,32 @@ export interface ExploreOutcome {
 }
 
 /** #224: the same gateway, keeping the effect of every click made through it. */
-function recordingClicks(gateway: BrowserGateway, clicks: ClickEffect[]): BrowserGateway {
+function recordingClicks(gateway: BrowserGateway, clicks: ClickEffect[], ambiguous: AmbiguousFinding[]): BrowserGateway {
+  let page = "";
+  /** #226: once per page, role, name and scope: the same element is met again by every revisit. */
+  const note = (found: Omit<AmbiguousFinding, "page">): void => {
+    const key = (f: Omit<AmbiguousFinding, "page">, p: string): string => `${p}\u0000${f.role}\u0000${f.name ?? ""}\u0000${f.scope?.role ?? ""}\u0000${f.scope?.name ?? ""}`;
+    if (!ambiguous.some((a) => key(a, a.page) === key(found, page))) ambiguous.push({ page, ...found });
+  };
   return {
-    observe: (opts) => gateway.observe(opts),
+    observe: async (opts) => {
+      const obs = await gateway.observe(opts);
+      page = obs.url;
+      return obs;
+    },
     act: async (action) => {
       const result = await gateway.act(action);
       if (result.effect) clicks.push(result.effect);
+      if (result.ambiguous) note(result.ambiguous);
       return result;
     },
-    verify: (elements) => gateway.verify(elements),
+    verify: async (elements) => {
+      const verified = await gateway.verify(elements);
+      for (const v of verified) {
+        if (v.ambiguous && v.interactive) note({ role: v.role, ...(v.name !== undefined ? { name: v.name } : {}), count: v.count, ...(v.scope ? { scope: v.scope } : {}) });
+      }
+      return verified;
+    },
     getState: (element) => gateway.getState(element),
     session: () => gateway.session(),
     runTests: (globs) => gateway.runTests(globs),
@@ -165,7 +186,8 @@ export async function runExploreGraph(
 ): Promise<ExploreOutcome> {
   const { url } = init;
   const clicks: ClickEffect[] = [];
-  deps = { ...deps, gateway: recordingClicks(deps.gateway, clicks) }; // every node below clicks through it
+  const ambiguous: AmbiguousFinding[] = [];
+  deps = { ...deps, gateway: recordingClicks(deps.gateway, clicks, ambiguous) }; // every node below clicks through it
 
   // ── observe ──────────────────────────────────────────────────────────────
   deps.onProgress?.("observe — opening browser + navigating…");
@@ -443,7 +465,7 @@ export async function runExploreGraph(
 
   // ── codeless short-circuit ────────────────────────────────────────────────
   if (deps.codeless) {
-    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ...overlayKeys() };
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ambiguous, ...overlayKeys() };
   }
 
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
@@ -480,6 +502,7 @@ export async function runExploreGraph(
     },
     maxRepair: deps.maxRepair,
     onProgress: deps.onProgress,
+    errors: lintErrors, // #226: pointer clicks, forced clicks and blind positions are repaired before the run
     triage: deps.decider?.uses.has("repair-triage") ? makeTriage(deps.decider, heal) : undefined,
     heal,
   });
@@ -503,6 +526,7 @@ export async function runExploreGraph(
     ...(notRepaired ? { notRepaired } : {}),
     ...(healed ? { healed } : {}),
     clicks,
+    ambiguous,
     ...overlayKeys(),
   };
 }

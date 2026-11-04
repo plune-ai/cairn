@@ -59,11 +59,11 @@ export const isCompletionName = (name: string | undefined): boolean => COMPLETIO
 export const EXIT_ORDER: ExitKind[] = ["escape", "close-button", "cancel", "click-outside", "submit"];
 
 /** The Playwright source of a locator: dialog-scoped when the element is inside one (#225). */
-export function scopedLocator(scope: OverlayScope | undefined, role: string, name?: string): string {
+export function scopedLocator(scope: OverlayScope | undefined, role: string, name?: string, within?: OverlayScope): string {
   const q = (s: string): string => `'${s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
-  const own = `getByRole(${q(role)}${name ? `, { name: ${q(name)}, exact: true }` : ""})`;
-  if (!scope) return `page.${own}`;
-  return `page.getByRole(${q(scope.role)}${scope.name ? `, { name: ${q(scope.name)}, exact: true }` : ""}).${own}`;
+  const by = (r: string, n?: string): string => `getByRole(${q(r)}${n ? `, { name: ${q(n)}, exact: true }` : ""})`;
+  // #226: `within` is the row, card or section whose name tells the element apart from the others like it
+  return ["page", ...(scope ? [by(scope.role, scope.name)] : []), ...(within ? [by(within.role, within.name)] : []), by(role, name)].join(".");
 }
 
 /** The lines of an ARIA snapshot as `role "name"` keys, for "was it there before?". */

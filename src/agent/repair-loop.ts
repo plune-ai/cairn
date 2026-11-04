@@ -2,6 +2,7 @@ import type { GeneratedSuite } from "../codegen/index.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { TriageResult } from "../decider/uses/repair-triage.js";
 import type { HealRecord } from "../decider/uses/locator-heal.js";
+import type { LintFinding } from "../codegen/lint.js";
 import { progressSnapshot, madeProgress } from "./progress.js";
 
 /** Clip a failure message so the repair hint stays compact (the cause is in the first lines). */
@@ -39,6 +40,12 @@ export interface RepairLoopDeps {
   /** Max repair attempts after the initial generation. */
   maxRepair: number;
   onProgress?: (event: string) => void;
+  /**
+   * Optional (#226): errors in the generated code that are found before it is run (`lintErrors`). A suite with any is
+   * not run: each error is a failed result named after its kind and file, so it goes through the loop like a failing
+   * test (hint, no-progress stop, keep-best). Absent → every suite is run.
+   */
+  errors?: (suite: GeneratedSuite) => LintFinding[];
   /** Optional: extra repair guidance from linting the FAILED suite (flaky-hardening, #57). Absent → no-op. */
   lint?: (suite: GeneratedSuite) => string;
   /**
@@ -72,8 +79,19 @@ export interface RepairLoopResult {
  * Pure orchestration over injected `generate`/`validate` — unit-testable without a browser or LLM.
  */
 export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopResult> {
+  /** Run the suite, unless it has errors in its code: then those are its validation (all failed, none run). */
+  const check = async (s: GeneratedSuite): Promise<ValidationReport> => {
+    const errors = deps.errors?.(s) ?? [];
+    if (errors.length === 0) return deps.validate();
+    deps.onProgress?.(`validate — not run: ${errors.length} error(s) in the generated code go to repair first`);
+    return {
+      results: errors.map((e) => ({ test: `${e.kind} in ${e.file}`, status: "failed" as const, error: e.detail })),
+      greenRatio: 0,
+      flakyCount: 0,
+    };
+  };
   let suite = await deps.generate();
-  let validation = await deps.validate();
+  let validation = await check(suite);
 
   // keep-best: only accept a regeneration that is BETTER and not broken (≥1 test).
   let bestSuite = suite;
@@ -143,7 +161,7 @@ export async function runRepairLoop(deps: RepairLoopDeps): Promise<RepairLoopRes
     const hint = [failed, lintFindings].filter(Boolean).join("\n");
     deps.onProgress?.(`repair — attempt ${attempts}`);
     suite = await deps.generate(hint);
-    validation = await deps.validate();
+    validation = await check(suite);
 
     if (validation.results.length > 0 && validation.greenRatio > bestGreen) {
       bestSuite = suite;

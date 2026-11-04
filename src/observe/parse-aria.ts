@@ -48,6 +48,10 @@ const SCOPE_ROLES = new Set(["dialog", "alertdialog"]);
 /** #225: roles overlay detection groups elements by. */
 const CONTAINER_ROLES = new Set(["dialog", "alertdialog", "menu", "listbox", "complementary"]);
 
+/** #226: containers whose accessible name tells apart the identical elements inside them (the rows of a table, the cards of a list). */
+const CONTEXT_ROLES = new Set(["row", "listitem", "article", "group", "region", "form", "treeitem"]);
+const MAX_CONTEXT = 3;
+
 export interface ParseOptions {
   /** #225: dialogs (`role|name`) that are NOT modal; every other dialog and alertdialog is taken as modal. */
   nonModal?: ReadonlySet<string>;
@@ -106,6 +110,14 @@ export function parseAriaSnapshot(aria: string, opts: ParseOptions = {}): Elemen
     const inside = scopeOf(CONTAINER_ROLES);
     const el: ElementRef = { ref: nativeRef ?? `e${n}`, role, name, interactive, rank: rankFor(role, interactive) };
     if (scope) el.scope = scope;
+    // #226: stop at the dialog: what is above it is not its context
+    const context: OverlayScope[] = [];
+    for (const a of [...open].reverse()) {
+      if (SCOPE_ROLES.has(a.role)) break;
+      if (CONTEXT_ROLES.has(a.role) && a.name) context.push({ role: a.role, name: a.name });
+      if (context.length >= MAX_CONTEXT) break;
+    }
+    if (context.length > 0) el.context = context;
     if (inside) el.inside = inside;
     out.push(el);
     const index = out.length - 1;

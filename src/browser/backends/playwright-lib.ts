@@ -43,6 +43,44 @@ interface Target {
   name?: string;
   scope?: OverlayScope;
   underOverlay?: true;
+  context?: OverlayScope[];
+}
+
+/** #226: where an element was found: the locator to use, how many visible ones shared its role and name, and what narrowed them. */
+interface Found {
+  locator: Locator;
+  /** Visible elements of this role and name in the scope. */
+  count: number;
+  narrowedBy?: OverlayScope;
+  /** Several, and nothing tells them apart (and they do not all lead to one place). */
+  ambiguous?: boolean;
+}
+
+/**
+ * #226: the one visible element in the element's scope — never the first of several. One visible match is it. Several
+ * are narrowed by the accessible name of the row, card or section they sit in (nearest first), taking the first
+ * container after which exactly one is left. Links that all lead to the same address are one destination. Otherwise
+ * `ambiguous`: the caller does not click. With no visible match, the locator is the old first-of-all one, so a hidden
+ * or removed element still fails with Playwright's own reason.
+ */
+async function findOne(page: Page, t: Target): Promise<Found> {
+  const visible = locate(page, t).filter({ visible: true });
+  const count = await visible.count().catch(() => 0);
+  if (count === 0) return { locator: locate(page, t).first(), count: 0 };
+  if (count === 1) return { locator: visible, count };
+  const root = t.scope ? page.getByRole(t.scope.role as PwRole, t.scope.name ? { name: t.scope.name, exact: true } : {}) : page;
+  for (const ctx of t.context ?? []) {
+    const inner = root
+      .getByRole(ctx.role as PwRole, ctx.name ? { name: ctx.name, exact: true } : {})
+      .getByRole(t.role as PwRole, t.name ? { name: t.name, exact: true } : {})
+      .filter({ visible: true });
+    if ((await inner.count().catch(() => 0)) === 1) return { locator: inner, count, narrowedBy: ctx };
+  }
+  if (t.role === "link") {
+    const hrefs = await visible.evaluateAll((els) => els.map((e) => (e as unknown as { getAttribute(a: string): string | null }).getAttribute("href"))).catch(() => []);
+    if (hrefs.length > 0 && hrefs[0] && hrefs.every((h) => h === hrefs[0])) return { locator: visible.first(), count };
+  }
+  return { locator: visible.first(), count, ambiguous: true };
 }
 
 /**
@@ -241,7 +279,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
     this.nonModal = await this.nonModalDialogs(page, ariaSnapshot);
     this.refMap.clear();
     for (const el of parseAriaSnapshot(ariaSnapshot, { nonModal: this.nonModal })) {
-      this.refMap.set(el.ref, { role: el.role, name: el.name, ...(el.scope ? { scope: el.scope } : {}), ...(el.underOverlay ? { underOverlay: true as const } : {}) });
+      this.refMap.set(el.ref, { role: el.role, name: el.name, ...(el.scope ? { scope: el.scope } : {}), ...(el.underOverlay ? { underOverlay: true as const } : {}), ...(el.context ? { context: el.context } : {}) });
     }
 
     return {
@@ -309,7 +347,18 @@ export class PlaywrightLibBackend implements BrowserBackend {
           outcome: "under-overlay",
         };
       }
-      const locator = locate(page, target).first();
+      const found = await findOne(page, target);
+      if (found.ambiguous) {
+        // #226: several visible elements and nothing tells them apart: no click at all rather than a blind first one.
+        return {
+          ok: false,
+          ref: action.ref,
+          error: `${found.count} visible ${target.role}${target.name ? ` "${target.name}"` : ""} elements and nothing tells them apart (no named row, card or section); not clicked.`,
+          outcome: "ambiguous",
+          ambiguous: { role: target.role, ...(target.name !== undefined ? { name: target.name } : {}), count: found.count, ...(target.scope ? { scope: target.scope } : {}) },
+        };
+      }
+      const locator = found.locator;
       if (action.kind === "fill") {
         await locator.fill(action.value);
         return { ok: true, ref: action.ref };
@@ -487,18 +536,28 @@ export class PlaywrightLibBackend implements BrowserBackend {
     for (const el of elements) {
       let count = -1;
       try {
-        count = await locate(page, el).count();
+        const found = await findOne(page, el);
+        out.push({
+          ...el,
+          count: found.count,
+          verified: found.count === 1 || found.narrowedBy !== undefined,
+          ...(found.narrowedBy ? { narrowedBy: found.narrowedBy } : {}),
+          ...(found.ambiguous ? { ambiguous: true as const } : {}),
+        });
+        continue;
       } catch {
         count = -1;
       }
-      out.push({ ...el, count, verified: count === 1 });
+      out.push({ ...el, count, verified: false });
     }
     return out;
   }
 
   async getState(el: ElementRef): Promise<ElementState> {
     const page = await this.ensurePage();
-    const loc = locate(page, el).first();
+    const found = await findOne(page, el);
+    if (found.ambiguous) return { visible: false, enabled: false }; // not told apart: nothing is read from a blind first one
+    const loc = found.locator;
     const visible = await loc.isVisible().catch(() => false);
     // #213: an element of another view (exploreStates) is not on the page, and isEnabled/isChecked wait for it
     // with Playwright's 30 s default - per element, minutes for a page of views. A hidden element is not read.

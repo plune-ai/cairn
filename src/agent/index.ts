@@ -16,7 +16,7 @@ import { resolveProjectTarget, ejectSuiteToProject } from "../project/index.js";
 import { deadClicksOf, renderReportMd } from "../artifacts/report.js";
 import { parseTestCaseMd, parseApiTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases, automateApiCases } from "../codegen/index.js";
-import { lintSuite, lintHint } from "../codegen/lint.js";
+import { lintSuite, lintHint, lintErrors } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { computeCoverage } from "../eval/coverage.js";
 import { designGapCases } from "../eval/gap-cases.js";
@@ -587,6 +587,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           ...(gapCases.length ? { gapCases } : {}),
           deadClicks, // #224: clicks Cairn saw no change after, [] when none, absent on cli
           ...(out.overlays ? { overlays: out.overlays } : {}), // #225: dialogs, drawers, menus, wizards found as states
+          ...(out.ambiguous?.length ? { ambiguous: out.ambiguous } : {}), // #226: not clicked: nothing told them apart
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -615,6 +616,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             gapCases,
             deadClicks,
             overlays: out.overlays,
+            ambiguous: out.ambiguous,
             ...deciderReportKeys(decider, out.notRepaired, out.healed),
           }),
         );
@@ -944,6 +946,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           ...(gapCases.length ? { gapCases } : {}),
           deadClicks: watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined, // #224: absent on cli
           ...(out.overlays ? { overlays: out.overlays } : {}), // #225
+          ...(out.ambiguous?.length ? { ambiguous: out.ambiguous } : {}), // #226
           ...deciderReportKeys(decider), // ADR-0022: only on an opted-in run
         });
         await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));
@@ -1158,6 +1161,7 @@ export async function runAutomate(input: {
           maxRepair: cfg.maxRepair,
           onProgress,
           lint: (s) => lintHint(lintSuite(s)), // #57: feed fragile-pattern findings into repair
+          errors: lintErrors, // #226: pointer clicks, forced clicks and blind positions are repaired before the run
           triage: decider?.uses.has("repair-triage") ? makeTriage(decider, heal) : undefined,
           heal,
         });

@@ -1,4 +1,4 @@
-import type { ClickEffect, ElementRef } from "../browser/types.js";
+import type { AmbiguousFinding, ClickEffect, ElementRef, OverlayScope } from "../browser/types.js";
 import { scopedLocator, formatOverlays, type OverlayState } from "../observe/overlays.js";
 import { DEAD_CLICK_RECHECK_MS, REQUEST_ANSWER_MS, recordedUrl } from "../browser/click-effect.js";
 import { norm, type FlowEdge } from "../flow/crawl.js";
@@ -44,8 +44,9 @@ export function deadClicksOf(clicks: ClickEffect[], edges: FlowEdge[] = []): Dea
 }
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
-export function locatorFor(el: ElementRef): string {
-  if (el.scope) return scopedLocator(el.scope, el.role, el.name); // #225: inside a dialog, found through it
+export function locatorFor(el: ElementRef & { narrowedBy?: OverlayScope }): string {
+  // #225: inside a dialog, found through it; #226: through the row, card or section that tells it apart
+  if (el.scope || el.narrowedBy) return scopedLocator(el.scope, el.role, el.name, el.narrowedBy);
   const name = el.name ? `, { name: '${el.name.replace(/'/g, "\\'")}' }` : "";
   return `page.getByRole('${el.role}'${name})`;
 }
@@ -83,6 +84,8 @@ export interface ReportInput {
   deadClicks?: DeadClick[];
   /** #225: the overlays found as states — the section is rendered only when there are some. */
   overlays?: OverlayState[];
+  /** #226: elements nothing told apart from others like it, not clicked — the section is rendered only when there are some. */
+  ambiguous?: AmbiguousFinding[];
 }
 
 /** A pipe in an element's name or a URL must not split a table row. */
@@ -212,6 +215,22 @@ export function renderReportMd(r: ReportInput): string {
       "|---|---|",
     );
     for (const d of dead) lines.push(`| ${cell(d.page)} | ${cell(`${d.role}${d.name !== undefined ? ` "${d.name}"` : ""}`)} |`);
+    lines.push("");
+  }
+
+  if (r.ambiguous && r.ambiguous.length > 0) {
+    lines.push(
+      `## Ambiguous elements (${r.ambiguous.length})`,
+      "",
+      "Cairn found several visible elements with the same role and name and nothing to tell them apart — no named row, card, section or list item around them. It did not click them (a blind first one could be the wrong element behind a green test).",
+      "Two buttons with the same accessible name and no difference between them are often a real accessibility problem too: a screen-reader user cannot tell them apart. Give each a distinguishing name or put it in a named container.",
+      "",
+      "| page | element | how many |",
+      "|---|---|---|",
+    );
+    for (const a of r.ambiguous) {
+      lines.push(`| ${cell(a.page)} | ${cell(`${a.role}${a.name !== undefined ? ` "${a.name}"` : ""}${a.scope ? ` in ${a.scope.role}${a.scope.name ? ` "${a.scope.name}"` : ""}` : ""}`)} | ${a.count} |`);
+    }
     lines.push("");
   }
 

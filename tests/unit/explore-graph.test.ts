@@ -521,3 +521,37 @@ describe("runExploreGraph — overlays as states (#225)", () => {
     expect(out.overlays).toEqual([]);
   });
 });
+
+describe("runExploreGraph — ambiguous elements are a finding (#226)", () => {
+  const PAGE = '- main:\n  - button "Delete"\n  - button "Delete"\n  - button "Open"';
+
+  it("an element the backend could not tell apart, and a click it refused, both reach the outcome once", async () => {
+    const { gateway } = fakeGateway(() => obs(PAGE));
+    const ambiguousGateway: BrowserGateway = {
+      ...gateway,
+      verify: async (els) =>
+        els.map((e) => (e.name === "Delete" ? { ...e, count: 2, verified: false, ambiguous: true as const } : { ...e, count: 1, verified: true })),
+      act: async (action) => ({
+        ok: false,
+        ref: "ref" in action ? action.ref : undefined,
+        outcome: "ambiguous",
+        error: "2 visible button \"Delete\" elements and nothing tells them apart",
+        ambiguous: { role: "button", name: "Delete", count: 2 },
+      }),
+    };
+    const out = await runExploreGraph(
+      makeDeps({ gateway: ambiguousGateway, codeless: true, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(out.ambiguous).toEqual([{ page: "https://app.test/page", role: "button", name: "Delete", count: 2 }]);
+  });
+
+  it("nothing ambiguous → an empty list", async () => {
+    const { gateway } = fakeGateway(() => obs('- button "Go"'));
+    const out = await runExploreGraph(
+      makeDeps({ gateway, codeless: true, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(out.ambiguous).toEqual([]);
+  });
+});

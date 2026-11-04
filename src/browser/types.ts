@@ -23,6 +23,12 @@ export interface ElementRef {
   inside?: OverlayScope;
   /** #225: a modal overlay is open and this element is not in its top one — never touched while it is open. */
   underOverlay?: true;
+  /**
+   * #226: the named rows, list items, cards, sections and forms the element sits in, innermost first (not the dialog:
+   * that is `scope`). When several visible elements share role and name, the container's name tells them apart:
+   * `getByRole('row', { name }).getByRole(role, { name })`.
+   */
+  context?: OverlayScope[];
 }
 
 /** #225: a container an element is looked for in: its role and accessible name. */
@@ -45,6 +51,13 @@ export interface VerifiedElement extends ElementRef {
   count: number;
   /** count === 1 — suitable for a reliable test. */
   verified: boolean;
+  /**
+   * #226: nothing tells it apart from the other visible elements of the same role and name in its scope (no named
+   * row, card or section narrows it to one). Not clicked; reported as a finding.
+   */
+  ambiguous?: true;
+  /** #226: the container whose name narrows several matches down to this one. */
+  narrowedBy?: OverlayScope;
   /** If the element is hidden behind a tab/view — which switcher to click first (multi-state). */
   viaSwitcher?: { role: string; name?: string };
 }
@@ -118,12 +131,30 @@ export type ClickEffectKind =
 
 /**
  * Why a click failed (#224). `intercepted`: another element takes the pointer — an overlay exploration does not know.
+ * `ambiguous` (#226): several visible elements share its role and name and no named row, card or section tells them
+ * apart, so none was clicked.
  * `under-overlay` (#225): the element lies under a modal overlay that is open, so it was not clicked at all.
  * `not-found`: nothing matches the element observed a moment ago; `detached`: it was found, then left the page.
  */
-export type ClickFailure = "under-overlay" | "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
+export type ClickFailure = "ambiguous" | "under-overlay" | "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
 
 export type ClickOutcome = ClickEffectKind | ClickFailure;
+
+/** #226: an element Cairn would not click because nothing tells it apart from `count` others like it in its scope. */
+export interface AmbiguousElement {
+  role: string;
+  name?: string;
+  /** How many visible elements of this role and name were there. */
+  count: number;
+  /** The scope it was looked for in: a dialog, when it was inside one. */
+  scope?: OverlayScope;
+}
+
+/** #226: an element exploration could not tell apart from others like it: a finding of the run, not a click. */
+export interface AmbiguousFinding extends AmbiguousElement {
+  /** The page it was on. */
+  page: string;
+}
 
 /** A request the page started after a click: method, path and status only — no body, no header, no query value. */
 export interface RecordedRequest {
@@ -172,6 +203,8 @@ export interface ActResult {
   outcome?: ClickOutcome;
   /** What the click changed, when it was made (lib backend). */
   effect?: ClickEffect;
+  /** #226: set with `outcome: "ambiguous"`: what could not be told apart, and how many there were. */
+  ambiguous?: AmbiguousElement;
 }
 
 /**
