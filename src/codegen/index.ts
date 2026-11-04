@@ -8,6 +8,7 @@ import { formatTransitions, type Transition } from "../probe/index.js";
 import { detectLanguage } from "../checklist/index.js";
 import type { ParsedTestCase, ParsedApiCase } from "../artifacts/testcase-md.js";
 import { GeneratedSuiteSchema, type GeneratedSuite } from "./schema.js";
+import { FLOW_FIXTURE_FILE } from "../api/flows.js";
 
 export type { GeneratedSuite, FileBlob } from "./schema.js";
 export { GeneratedSuiteSchema, FileBlobSchema } from "./schema.js";
@@ -78,7 +79,8 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
  */
 export async function automateCases(
   cases: ParsedTestCase[],
-  ctx: { baseUrl: string; pageSemantics: string },
+  /** #230: `apiFlows` — the available API flows (`formatFlowsForPrompt`); absent → the prompt is unchanged. */
+  ctx: { baseUrl: string; pageSemantics: string; apiFlows?: string },
   deps: CodegenDeps,
   /** Repair context: failing test names from the previous attempt (#40 — automate now repairs). */
   repairHint?: string,
@@ -89,7 +91,10 @@ export async function automateCases(
   const testCases = cases
     .map(
       (c, i) =>
-        `TC-${i + 1}: ${c.title}\n  Steps: ${c.steps.join("; ")}\n  Expected: ${c.expected.join("; ")}`,
+        `TC-${i + 1}: ${c.title}\n` +
+        // #230: the preconditions say which API flow a case uses — sent only when flows are available.
+        (ctx.apiFlows && c.preconditions?.length ? `  Preconditions: ${c.preconditions.join("; ")}\n` : "") +
+        `  Steps: ${c.steps.join("; ")}\n  Expected: ${c.expected.join("; ")}`,
     )
     .join("\n\n");
 
@@ -101,9 +106,20 @@ export async function automateCases(
     transitions: "(from the case steps)",
     language: detectLanguage(testCases),
   });
+  const flowsSection = ctx.apiFlows
+    ? (
+        await deps.prompts.getPrompt("qa-api-flows-codegen", {
+          flows: ctx.apiFlows,
+          fixtureFile: FLOW_FIXTURE_FILE,
+          fixtureModule: FLOW_FIXTURE_FILE.replace(/\.ts$/, ""),
+          baseUrl: ctx.baseUrl,
+        })
+      ).text
+    : "";
+  const base = flowsSection ? `${prompt.text}\n\n${flowsSection}` : prompt.text;
   const text = repairHint
-    ? `${prompt.text}\n\nREPAIR: the previous generation failed the tests: ${repairHint}\nFix the locators/navigation/assertions so the tests pass.`
-    : prompt.text;
+    ? `${base}\n\nREPAIR: the previous generation failed the tests: ${repairHint}\nFix the locators/navigation/assertions so the tests pass.`
+    : base;
   const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(text)]);
   return { files: suite.files.map((f) => ({ path: sanitizePath(f.path), content: f.content })) };
 }

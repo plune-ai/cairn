@@ -103,6 +103,28 @@ describe("cairn api --spec with a Postman collection or a HAR (#228)", () => {
     }
   });
 
+  it("masks a collection's secret in the run output, not only in the derived file", async () => {
+    const out = await mkdtemp(join(tmpdir(), "qa-api-derived-"));
+    try {
+      // The secret is a collection variable's value; it also rode into the collection's name, which the summary prints.
+      const collection = {
+        info: { name: "Projects FAKE-modality-key-77qq", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+        variable: [{ key: "api_key", value: "FAKE-modality-key-77qq" }],
+        item: [{ name: "List projects", request: { method: "GET", url: "{{baseUrl}}/projects" } }],
+      };
+      const file = join(out, "c.postman.json");
+      await writeFile(file, JSON.stringify(collection));
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync(["node", "cairn", "api", "--spec", file, "--out", join(out, "run")]);
+      const text = outChunks.join("") + errChunks.join("");
+      expect(text).toContain("API spec: Projects");
+      expect(text).not.toContain("FAKE-modality-key-77qq");
+      expect(await readFile(join(out, "run", "openapi.derived.json"), "utf8")).not.toContain("FAKE-modality-key-77qq");
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+  });
+
   it("a Postman v1 collection fails cleanly with what to do", async () => {
     const out = await mkdtemp(join(tmpdir(), "qa-api-derived-"));
     try {
@@ -386,8 +408,11 @@ describe("cairn api source resolution (mocked ingest)", () => {
     vi.resetModules();
     const { buildProgram } = await import("../../src/cli/index.js");
 
+    // #234: a URL is read by the run itself and the parser gets its address together with the text.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("openapi: 3.0.0", { status: 200 })));
     await buildProgram().parseAsync(["node", "cairn", "api", "--spec", "https://example.com/openapi.yaml"]);
-    expect(ingestOpenApi).toHaveBeenLastCalledWith("https://example.com/openapi.yaml");
+    expect(ingestOpenApi).toHaveBeenLastCalledWith("https://example.com/openapi.yaml", "openapi: 3.0.0", { readRef: expect.any(Function) });
+    vi.unstubAllGlobals();
 
     await buildProgram().parseAsync(["node", "cairn", "api", "--spec", "./spec.json"]);
     expect(ingestOpenApi).toHaveBeenLastCalledWith(resolve("./spec.json"));

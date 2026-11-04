@@ -375,28 +375,63 @@ export class DerivedSpecBuilder {
 export const DROPPED_HEADERS = /^(?:authorization|proxy-authorization|cookie|set-cookie|set-cookie2)$/i;
 
 /**
+ * Words a derived document is made of — JSON and OpenAPI vocabulary, flags, placeholders. A field whose value is one
+ * of these (Swagger UI's `"password": "string"`, a cookie `csrftoken=true`) carries no secret, and scrubbing it would
+ * break the document (`"type": "string"` turned into `‹redacted›` is an invalid schema).
+ */
+const VOCABULARY = new Set(
+  [
+    "true", "false", "null", "none", "undefined", "nil", "yes", "no", "on", "off",
+    "string", "number", "integer", "boolean", "object", "array", "int", "float", "double", "date", "date-time",
+    "text", "value", "example", "default", "empty", "secret", "token", "password", "bearer", "basic",
+    "openapi", "info", "title", "version", "description", "servers", "server", "url", "paths", "path", "query",
+    "header", "cookie", "parameters", "name", "in", "required", "schema", "schemas", "type", "properties", "items",
+    "nullable", "content", "responses", "requestbody", "summary", "tags", "status", "recorded", "derived",
+    "get", "put", "post", "delete", "options", "head", "patch", "trace",
+    "application/json", "text/plain", DERIVED_KEY,
+  ].map((w) => w.toLowerCase()),
+);
+const MIN_SECRET = 4;
+
+/** A value worth scrubbing: long enough, not a word the document is made of, not just the field's own name. */
+function worthScrubbing(value: string, name?: string): boolean {
+  const v = value.trim();
+  if (v.length < MIN_SECRET) return false;
+  const lower = v.toLowerCase();
+  if (VOCABULARY.has(lower)) return false;
+  if (name !== undefined && name.trim().toLowerCase().split(/\s+/).includes(lower)) return false;
+  return true;
+}
+
+/**
  * The values a source carried that must not reach the file: every value of `Authorization`, `Cookie` and
  * `Set-Cookie` and of other sensitive headers (the credential after `Bearer `, each cookie value — the api guard's
  * {@link collectSecrets}), the values `decider/redact.ts` reads as secrets from `name: value` pairs (query, form and
- * body fields, variables: `password: …`, `api_key: …`), and any value shaped like a credential (a JWT, long hex).
+ * body fields, variables: `password: …`, `api_key: …`), the user and password of a URL (`values`), and any value
+ * shaped like a credential (a JWT, long hex). Placeholders and vocabulary (`"string"`, `true`, a value equal to its
+ * field's name) are not secrets and are left out, so scrubbing never eats into the document's own words.
  */
-export function exchangeSecrets(input: { headers?: [string, string][]; fields?: [string, string][] }): string[] {
+export function exchangeSecrets(input: { headers?: [string, string][]; fields?: [string, string][]; values?: string[] }): string[] {
   const out = new Set<string>();
   const lines: string[] = [];
+  const add = (v: string, name?: string): void => {
+    if (worthScrubbing(v, name)) out.add(v.trim());
+  };
   const shaped = (v: string): void => {
-    for (const t of v.split(/[\s,;&=]+/)) if (t.length >= 8 && secretShaped(t)) out.add(t);
+    for (const t of v.split(/[\s,;&=]+/)) if (t.length >= 8 && secretShaped(t)) add(t);
   };
   for (const [name, value] of input.headers ?? []) {
-    if (DROPPED_HEADERS.test(name) || SENSITIVE.test(name)) for (const s of collectSecrets({ [name]: value })) out.add(s);
+    if (DROPPED_HEADERS.test(name) || SENSITIVE.test(name)) for (const s of collectSecrets({ [name]: value })) add(s);
     else lines.push(`${name}: ${value}`);
     shaped(value);
   }
   for (const [name, value] of input.fields ?? []) {
-    if (SENSITIVE.test(name) && value.trim().length >= 4) out.add(value.trim());
+    if (SENSITIVE.test(name)) add(value, name);
     lines.push(`${name}: ${value}`);
     shaped(value);
   }
-  for (const s of secretValues(lines.join("\n"), {})) out.add(s);
+  for (const v of input.values ?? []) add(v);
+  for (const s of secretValues(lines.join("\n"), {})) add(s);
   return [...out].sort((a, b) => b.length - a.length);
 }
 
@@ -410,15 +445,24 @@ export function bodyFields(v: unknown, key = "body", out: [string, string][] = [
   return out;
 }
 
+/** Every string in a JSON value, object keys included, with `secrets` scrubbed — the structure is left as it is. */
+function scrubbed(v: unknown, secrets: readonly string[]): unknown {
+  if (typeof v === "string") return redact(v, secrets);
+  if (Array.isArray(v)) return v.map((x) => scrubbed(x, secrets));
+  if (v && typeof v === "object") {
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [redact(k, secrets), scrubbed(x, secrets)]));
+  }
+  return v;
+}
+
 /**
- * Save a derived spec as `openapi.derived.json` in `dir` and return its path. The text is scrubbed of `secrets`
- * (raw and JSON-escaped, `decider/redact.ts`'s {@link redact}) before it is written.
+ * Save a derived spec as `openapi.derived.json` in `dir` and return its path. Each string of the document (values and
+ * keys) is scrubbed of `secrets` with `decider/redact.ts`'s {@link redact} before it is written — the document, not
+ * its serialised text, so JSON syntax (`true`, `"type"`) is never matched, and placeholders are not taken as secrets.
  */
 export async function writeDerivedSpec(dir: string, doc: Record<string, unknown>, secrets: readonly string[]): Promise<string> {
-  const all = [...new Set(secrets.flatMap((s) => [s, JSON.stringify(s).slice(1, -1)]))]
-    .filter((s) => s.length >= 4)
-    .sort((a, b) => b.length - a.length);
-  const text = redact(JSON.stringify(doc, null, 2), all);
+  const all = [...new Set(secrets.map((s) => s.trim()))].filter((s) => worthScrubbing(s)).sort((a, b) => b.length - a.length);
+  const text = JSON.stringify(scrubbed(doc, all), null, 2);
   await mkdir(dir, { recursive: true });
   const file = join(dir, DERIVED_SPEC_FILE);
   await writeFile(file, `${text}\n`, "utf8");

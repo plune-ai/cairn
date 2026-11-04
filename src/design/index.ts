@@ -35,6 +35,8 @@ export interface DesignInput {
   style?: string;
   /** Case language (default "English"). */
   language?: string;
+  /** #230: the available API flows (`formatFlowsForPrompt`); absent or "" → the prompt is unchanged. */
+  apiFlows?: string;
 }
 
 export interface DesignDeps {
@@ -71,7 +73,10 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
     style: input.style ?? "",
   });
 
-  const result = await deps.invoke(DesignResultSchema, [new HumanMessage(prompt.text)]);
+  // #230: the flows section is appended only when flows were given, so a run without --flows sends the same prompt.
+  const flowsSection = input.apiFlows ? (await deps.prompts.getPrompt("qa-api-flows-design", { flows: input.apiFlows })).text : "";
+  const text = flowsSection ? `${prompt.text}\n\n${flowsSection}` : prompt.text;
+  const result = await deps.invoke(DesignResultSchema, [new HumanMessage(text)]);
 
   const known = new Set(els.map((e) => e.ref));
   const grounded = result.testCases.map((c, i) => ({

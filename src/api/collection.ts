@@ -111,11 +111,42 @@ function authFields(auth: unknown): [string, string][] {
   return out;
 }
 
-/** The path of a Postman URL, its host (`{{baseUrl}}`, `https://api.example.test`) taken off: `/projects/:id`. */
-function postmanPath(url: PmUrl | string | undefined): { path: string; query: string[]; host?: string } {
+const decoded = (s: string): string => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+};
+
+/**
+ * The path of a Postman URL, its host (`{{baseUrl}}`, `https://api.example.test`) taken off: `/projects/:id`. The
+ * host is kept without userinfo (`https://admin:pw@api.test` → `https://api.test`); the user and password it carried
+ * are returned as `credentials`, to be scrubbed.
+ */
+function postmanPath(url: PmUrl | string | undefined): {
+  path: string;
+  query: string[];
+  host?: string;
+  credentials: string[];
+} {
   const raw = typeof url === "string" ? url : (url?.raw ?? "");
   const [beforeQuery = "", query = ""] = raw.split("?", 2);
-  const host = /^(https?:\/\/[^/{}]+)/i.exec(beforeQuery)?.[1];
+  const credentials: string[] = [];
+  let host: string | undefined;
+  const authority = /^(https?:\/\/)([^/]*)/i.exec(beforeQuery);
+  if (authority) {
+    const at = authority[2]!.lastIndexOf("@");
+    if (at >= 0) {
+      const info = authority[2]!.slice(0, at);
+      const colon = info.indexOf(":");
+      const user = decoded(colon >= 0 ? info.slice(0, colon) : info);
+      if (user) credentials.push(user);
+      if (colon >= 0) credentials.push(decoded(info.slice(colon + 1)));
+    }
+    const name = /^[^/{}]+/.exec(authority[2]!.slice(at + 1))?.[0];
+    if (name) host = `${authority[1]}${name}`;
+  }
   let path: string;
   if (typeof url === "object" && url.path !== undefined) {
     path = `/${(Array.isArray(url.path) ? url.path : String(url.path).split("/")).filter((s) => s !== "").join("/")}`;
@@ -130,7 +161,7 @@ function postmanPath(url: PmUrl | string | undefined): { path: string; query: st
           .split("&")
           .map((p) => decodeURIComponent(p.split("=")[0] ?? ""))
           .filter(Boolean);
-  return { path, query: keys, ...(host ? { host } : {}) };
+  return { path, query: keys, credentials, ...(host ? { host } : {}) };
 }
 
 const headerOf = (list: PmKV[] | string | undefined, name: string): string | undefined =>
@@ -164,6 +195,7 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
   const builder = new DerivedSpecBuilder();
   const headers: [string, string][] = [];
   const fields: [string, string][] = [...kvs(c.variable), ...authFields(c.auth)];
+  const userinfo: string[] = [];
   const hosts = new Map<string, number>();
   let requests = 0;
   let skipped = 0;
@@ -181,8 +213,9 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
         skipped += 1;
         continue;
       }
-      const { path, query, host } = postmanPath(req.url);
+      const { path, query, host, credentials } = postmanPath(req.url);
       if (host) hosts.set(host, (hosts.get(host) ?? 0) + 1);
+      userinfo.push(...credentials);
       if (Array.isArray(req.header)) headers.push(...kvs(req.header));
       if (typeof req.url === "object") fields.push(...kvs(req.url.query), ...kvs(req.url.variable));
       fields.push(...authFields(req.auth), ...kvs(req.body?.urlencoded), ...kvs(req.body?.formdata));
@@ -222,7 +255,7 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
       },
       servers,
     ),
-    secrets: exchangeSecrets({ headers, fields }),
+    secrets: exchangeSecrets({ headers, fields, values: userinfo }),
     notes,
     requests,
   };
@@ -287,6 +320,7 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
   const builder = new DerivedSpecBuilder();
   const headers: [string, string][] = [];
   const fields: [string, string][] = [];
+  const userinfo: string[] = [];
   let used = 0;
   for (const e of entries) {
     // Every entry's credentials are scrubbed, also those of the requests left out of the document.
@@ -294,7 +328,8 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
     fields.push(...nvs(e.request.cookies), ...nvs(e.response?.cookies), ...nvs(e.request.queryString), ...nvs(e.request.postData?.params));
     const u = urlOf(e);
     if (u) for (const [k, v] of u.searchParams) fields.push([k, v]);
-    if (u?.password) fields.push(["password", decodeURIComponent(u.password)]);
+    if (u?.username) userinfo.push(decoded(u.username));
+    if (u?.password) userinfo.push(decoded(u.password));
   }
   for (const e of api) {
     const u = urlOf(e)!;
@@ -347,7 +382,7 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
       },
       origin ? [origin] : [],
     ),
-    secrets: exchangeSecrets({ headers, fields }),
+    secrets: exchangeSecrets({ headers, fields, values: userinfo }),
     notes,
     requests: used,
   };

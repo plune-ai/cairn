@@ -23,6 +23,8 @@ import { runDesign, runAutomate } from "../agent/index.js";
 import { renderRunSummary, displayPath } from "../agent/summary.js";
 import { resolveRunDir, defaultRunsBaseDir, readInputFile } from "../fs/run-dir.js";
 import { resolveStyleText } from "../design/style.js";
+import { loadApiFlows } from "../api/flows.js";
+import { writeRunView, openInBrowser } from "../view/index.js";
 import { promoteCase, locatorFor } from "../promote/index.js";
 import type { PromoteDeps } from "../promote/index.js";
 import { makeModel, structuredMethodFor } from "../llm/index.js";
@@ -169,6 +171,8 @@ export function buildProgram(): Command {
     .option("--allowed-paths <list>", "#196: comma-separated spec-path masks that may be sent (e.g. /pets/*,/health; * = one segment, ** = any); the rest are skipped")
     .option("--max-requests <n>", "#196: request budget for the run, retries included (default 300); exit code 4 when it runs out")
     .option("--rps <n>", "#196: requests per second for the whole run (default 5)")
+    .option("--save-flows <file>", "#230: with --scenarios, save each chain that deletes what it creates as an API flow in <file> (JSON; flows already there are kept)")
+    .option("--flows <file>", "#230: write a Playwright fixture (api-flows.fixture.ts, into --out) from the API flows in <file>; sends no request. With --base-url --allow-mutations, flows that change data may run against that address")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
     });
@@ -284,6 +288,7 @@ export function buildProgram(): Command {
     .option("--max-pages <n>", "max pages to crawl with --flow (page cap; default 3)")
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
+    .option("--flows <file>", "#230: saved API flows (JSON) — write data and sign-in preconditions as those flows, not as UI steps")
     .option("--headed", "visible browser (debug)")
     .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
@@ -305,6 +310,7 @@ export function buildProgram(): Command {
         maxPages?: string;
         setup?: boolean;
         gaps?: boolean;
+        flows?: string;
         apiOrigin?: string;
         decider?: string;
         deciderShadow?: boolean;
@@ -338,6 +344,7 @@ export function buildProgram(): Command {
           apiOrigins: opts.apiOrigin,
           setup: opts.setup,
           gaps: opts.gaps,
+          apiFlows: opts.flows ? await loadApiFlows(resolve(opts.flows)) : undefined,
           onProgress: progress.event,
         }).finally(() => progress.stop());
 
@@ -374,10 +381,13 @@ export function buildProgram(): Command {
     .option("--screencast", "with --validate: record a .webm per scenario (with step chapters) → runs/<id>/screencasts/ for the review gate")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
+    .option("--flows <file>", "#230: saved API flows (JSON) — specs take their data and sign-in from the flows' Playwright fixture (api-flows.fixture.ts, written beside them)")
+    .option("--allow-mutations", "#230: with --flows, flows that change data may run against the API's address (the flow file's baseUrl, else the run's origin); off: their tests are skipped")
     .action(
-      async (opts: { run: string; envFile?: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; decider?: string; deciderShadow?: boolean }) => {
+      async (opts: { run: string; envFile?: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; flows?: string; allowMutations?: boolean; decider?: string; deciderShadow?: boolean }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider, deciderShadow: opts.deciderShadow });
         process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
+        if (opts.allowMutations && !opts.flows) process.stderr.write("⚠ --allow-mutations has no effect without --flows.\n");
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
           isTTY: Boolean(process.stderr.isTTY),
@@ -394,6 +404,8 @@ export function buildProgram(): Command {
           intoProject: opts.intoProject !== undefined && opts.intoProject !== false,
           projectDir: typeof opts.intoProject === "string" ? opts.intoProject : undefined,
           screencast: opts.screencast,
+          apiFlows: opts.flows ? await loadApiFlows(resolve(opts.flows)) : undefined,
+          allowMutations: opts.allowMutations,
           onProgress: progress.event,
         }).finally(() => progress.stop());
         const dest = result.projectTestDir ? displayPath(result.projectTestDir) : `${displayPath(result.runDir)}/tests/`;
@@ -508,6 +520,22 @@ export function buildProgram(): Command {
         process.stdout.write(`\nDone. Run \`cairn automate --run ${displayPath(runDir)}\` to generate code for the new ATC case(s).\n`);
       },
     );
+
+  program
+    .command("view <runDir>")
+    .description("Build view.html in a finished run: its screencast video with the steps as chapters (offline, one file)")
+    .option("--open", "open the page in the default browser")
+    .action(async (runArg: string, opts: { open?: boolean }) => {
+      const runDir = await resolveRunDir(runArg, { runsBaseDir: defaultRunsBaseDir() });
+      try {
+        const file = await writeRunView(runDir);
+        process.stdout.write(`${file}\n`);
+        if (opts.open) openInBrowser(file);
+      } catch (err) {
+        process.stderr.write(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
+        process.exitCode = 1;
+      }
+    });
 
   // `cairn session <capture|ls|rm>` — first-class management of saved login sessions (L1-05).
   const session = program.command("session").description("Manage saved login sessions (.auth/)");

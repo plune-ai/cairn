@@ -17,9 +17,9 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
-import { discoverSpec } from "../../api/discover.js";
+import { discoverSpec, readSpecFromUrl } from "../../api/discover.js";
 import { deriveSpec, type DerivedSpec } from "../../api/collection.js";
 import { DERIVED_KEY, writeDerivedSpec } from "../../api/derived.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
@@ -45,6 +45,16 @@ import {
 import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
 import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
 import { buildApiTestCaseDocs } from "../../api/testcase-docs.js";
+import {
+  FLOW_FIXTURE_FILE,
+  flowChangesData,
+  flowsFromScenarios,
+  formatFlowsForPrompt,
+  loadApiFlows,
+  mergeApiFlows,
+  renderFlowFixture,
+  type ApiFlowFile,
+} from "../../api/flows.js";
 import {
   computeApiCoverage,
   evaluateCoverageGate,
@@ -93,6 +103,10 @@ interface ApiFlags {
   maxRequests?: string;
   /** #196: requests per second for the whole run (default 5). */
   rps?: string;
+  /** #230: with --scenarios, save each chain that deletes what it creates as an API flow in this file. */
+  saveFlows?: string;
+  /** #230: write the Playwright fixture for the API flows in this file (no request is sent). */
+  flows?: string;
 }
 
 /**
@@ -277,12 +291,76 @@ export function renderApiCoverage(coverage: ApiCoverageReport): string[] {
   return lines;
 }
 
+/**
+ * #230: save the chains that delete what they create as API flows, merged into `file` (flows already there are
+ * kept; one with the same name is replaced). Writes the file only; nothing is sent.
+ */
+async function saveFlows(file: string, scenarios: ApiScenario[], ctx: ModalityContext): Promise<void> {
+  const path = resolve(file);
+  const { flows, notSaved } = flowsFromScenarios(scenarios);
+  let existing: ApiFlowFile = { version: 1, flows: [] };
+  try {
+    existing = await loadApiFlows(path);
+  } catch (e) {
+    if ((e as Error).message.startsWith("Cannot read")) existing = { version: 1, flows: [] }; // a new file
+    else throw e; // never overwrite a file that is there but is not a valid flow file
+  }
+  const merged = mergeApiFlows(existing, flows);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  ctx.out(`✓ Saved ${flows.length} API flow(s) to ${path}${flows.length ? `: ${flows.map((f) => f.name).join(", ")}` : ""}\n`);
+  for (const n of notSaved) ctx.out(`  ⊘ ${n.name} not saved — ${n.reason}\n`);
+}
+
+/**
+ * #230: `cairn api --flows <file>` — write the Playwright fixture for the flows in `file` into `--out` (default
+ * runs/api-<id>/). No request is sent. A flow that changes data may run only against the `--base-url` origin, and
+ * only with `--allow-mutations`; otherwise its tests are skipped until CAIRN_ALLOW_MUTATIONS names the address.
+ */
+async function writeFlowFixture(opts: ApiFlags, ctx: ModalityContext): Promise<void> {
+  if (opts.spec !== undefined || opts.scenarios || opts.saveFlows !== undefined) {
+    throw new Error("--flows writes the fixture from a saved flow file: run it without --spec, --scenarios and --save-flows.");
+  }
+  const base = opts.baseUrl === undefined ? undefined : parseBaseUrl(opts.baseUrl);
+  const source = resolve(opts.flows!);
+  let file: ApiFlowFile;
+  try {
+    file = await loadApiFlows(source);
+  } catch (e) {
+    ctx.err(`✗ ${(e as Error).message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  if (opts.allowMutations && !base) ctx.err("⚠ --allow-mutations has no effect with --flows without --base-url: it allows that address only.\n");
+  const allowFor = opts.allowMutations && base ? base.baseUrl : undefined;
+  const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
+  await mkdir(outDir, { recursive: true });
+  const target = join(outDir, FLOW_FIXTURE_FILE);
+  await writeFile(target, renderFlowFixture(file, { baseUrl: base?.baseUrl, allowMutationsFor: allowFor, source: basename(source) }), "utf8");
+
+  ctx.out(`=== API flows (${file.flows.length}) from ${source} ===\n${formatFlowsForPrompt(file)}\n`);
+  const changing = file.flows.filter(flowChangesData).map((f) => f.name);
+  if (changing.length && allowFor) ctx.out(`Flows that change data may run against ${new URL(allowFor).origin} (--allow-mutations).\n`);
+  else if (changing.length) {
+    ctx.out(
+      `⚠ ${changing.join(", ")} change data: their tests are skipped until an address is allowed ` +
+        "(--base-url <url> --allow-mutations here, or CAIRN_ALLOW_MUTATIONS=<origin> when the tests run).\n",
+    );
+  }
+  ctx.out(`✓ Fixture → ${target}\n  Use it in a spec: import { test, expect } from './${FLOW_FIXTURE_FILE.replace(/\.ts$/, "")}';\n`);
+}
+
 export const apiModality: Modality = {
   name: "api",
   gated: false,
   summary: "Generate API / contract tests from an OpenAPI spec",
   async run(rawCtx: ModalityContext): Promise<void> {
     const opts = rawCtx.flags as ApiFlags;
+    // #230: --flows is its own mode — it writes the fixture and sends nothing.
+    if (opts.flows !== undefined) return writeFlowFixture(opts, rawCtx);
+    if (opts.saveFlows !== undefined && !opts.scenarios) {
+      throw new Error("--save-flows saves the chains --scenarios makes: add --scenarios.");
+    }
     // #196: every line the run prints passes through the secret scrubber (the list is filled once the headers are known).
     const secrets: string[] = [];
     const ctx: ModalityContext = {
@@ -322,6 +400,11 @@ export const apiModality: Modality = {
     // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
     // Built before the spec is read: a spec looked up on the base URL (#227) may sit behind the same sign-in.
     const headers: Record<string, string> = {};
+    if (!base) {
+      // #234: --header also reaches a spec read from a URL when there is no --base-url
+      Object.assign(headers, parseHeaderFlags(opts.header));
+      secrets.push(...collectSecrets(headers));
+    }
     if (base) {
       const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
       Object.assign(headers, await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl }), parseHeaderFlags(opts.header));
@@ -363,7 +446,33 @@ export const apiModality: Modality = {
       }
       ctx.err(`▸ Ingesting OpenAPI spec from ${ingestFrom}…\n`);
       try {
-        model = await ingestOpenApi(ingestFrom);
+        if (isUrl(spec)) {
+          // #234: read the text like the lookup does (GET, no redirect, deadline, run headers, shared guard), so a
+          // local or private address works and a refusal says what happened. The parser gets the text, not the address.
+          const unreadable = (why: string): Error => new Error(`Could not read OpenAPI spec "${source}": ${why}`);
+          if (!guard.allowsMethod("GET")) throw unreadable("--allowed-methods does not include GET, the only method the read sends.");
+          if (!(await guard.acquire())) throw unreadable(`the request budget ran out (--max-requests ${guard.maxRequests}).`);
+          // The run's credentials (api-scope knowledge, Basic auth from --base-url, --header) belong to the target:
+          // they go with the read only when the spec sits on the --base-url origin, or when there is no --base-url.
+          const specOrigin = new URL(source).origin;
+          const credsGo = !base || new URL(base.baseUrl).origin === specOrigin;
+          const specHeaders = credsGo ? headers : {};
+          const withheld = credsGo
+            ? ""
+            : ` The run's credentials are not sent to ${specOrigin}, because it is not the --base-url origin; download the spec and pass it as a file.`;
+          const got = await readSpecFromUrl(source, specHeaders);
+          if (!got.ok) throw unreadable(`${got.message}${withheld}`);
+          // A $ref on the spec's origin is read the same way (one more request of the budget); any other is refused.
+          const readRef = async (url: string): Promise<string> => {
+            if (!(await guard.acquire())) throw new Error(`the request budget ran out (--max-requests ${guard.maxRequests}) reading ${url}.`);
+            const ref = await readSpecFromUrl(url, specHeaders);
+            if (!ref.ok) throw new Error(`could not read $ref ${url}: ${ref.message}`);
+            return ref.text;
+          };
+          model = await ingestOpenApi(source, got.text, { readRef });
+        } else {
+          model = await ingestOpenApi(ingestFrom);
+        }
       } catch (e) {
         // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
         ctx.err(`✗ ${(e as Error).message}\n`);
@@ -416,6 +525,7 @@ export const apiModality: Modality = {
     for (const line of renderApiCases(cases)) ctx.out(`${line}\n`);
     const scenarios = opts.scenarios ? generateApiScenarios(model) : [];
     for (const line of renderApiScenarios(scenarios)) ctx.out(`${line}\n`);
+    if (opts.saveFlows !== undefined) await saveFlows(opts.saveFlows, scenarios, ctx);
 
     // API-3: without --base-url we stop at the generated cases (API-1/2 behaviour, unchanged).
     if (!base) {
