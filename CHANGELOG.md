@@ -46,8 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press a
   button that says it opens something (`aria-haspopup`, `aria-expanded` or `aria-controls`, read from the element);
   every other button is listed in `skipped` with the reason and never pressed, and on top of that nothing a
-  destructive-action filter refuses (a delete, a sign-out, «Close account») and no completing button (Save, Submit…)
-  is pressed. Each overlay found is recorded, in
+  destructive-action filter refuses (a delete, a sign-out, «Close account», a name that pays or orders: Buy, Pay,
+  Purchase, Order, Checkout, Subscribe, Upgrade, Купити, Оплатити, Замовити, Підписатися), no completing button (Save,
+  Submit…) and no button that submits its form is pressed. A wizard's Next and Back are whole names: «Next», «Next ›»,
+  «Далі», «Назад»; «Next: place order» is no step. Each overlay found is recorded, in
   stack order (page → overlay → nested overlay), in `overlays.json` and `report.json` (`overlays`) and as an *Overlays*
   section of `report.md`: its kind (`dialog`, `alertdialog`, `drawer`, `menu`, `listbox`), what opened it, its
   elements, its exits and the wizard steps in it. Detection is deterministic and reads the ARIA snapshot only: a
