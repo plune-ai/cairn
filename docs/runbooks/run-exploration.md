@@ -43,7 +43,9 @@ cairn explore --url https://app.example.com/login \
 tests/        # generated *.spec.ts, page objects, fixtures, *.aria.yml
 snapshots/    # screenshot.png, aria.yaml
 study.json    # PageStudy
-report.json   # ValidationReport + scores
+report.json   # ValidationReport + scores, deadClicks
+report.md     # the same for a person, with a Dead clicks section (empty when every click had an effect)
+requests.json # requests the exploration's clicks started: method, path, status (no bodies, no headers)
 ```
 + a Langfuse trace (link in stdout).
 

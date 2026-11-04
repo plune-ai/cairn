@@ -14,13 +14,22 @@ const MIME: Record<string, string> = {
 
 export interface FixtureServer {
   url: string;
+  /** Every POST the site sent, with its headers — what a page really sent, beside what Cairn recorded of it. */
+  posts: { url: string; headers: Record<string, string | string[] | undefined> }[];
   close: () => Promise<void>;
 }
 
-/** Starts a static HTTP server for the fixture site on a random port (real localhost origin). */
+/** Starts a static HTTP server for the fixture site on a random port (real localhost origin). A POST answers 204. */
 export async function startFixtureServer(): Promise<FixtureServer> {
+  const posts: FixtureServer["posts"] = [];
   const server = createServer((req, res) => {
     void (async () => {
+      if (req.method === "POST") {
+        posts.push({ url: req.url ?? "", headers: req.headers });
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
       try {
         const urlPath = (req.url ?? "/").split("?")[0] ?? "/";
         const rel = urlPath === "/" ? "/login.html" : urlPath;
@@ -47,6 +56,7 @@ export async function startFixtureServer(): Promise<FixtureServer> {
 
   return {
     url: `http://127.0.0.1:${port}`,
+    posts,
     close: () =>
       new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
   };

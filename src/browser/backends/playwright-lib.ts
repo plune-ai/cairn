@@ -1,15 +1,18 @@
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request } from "playwright";
 import type { BrowserBackend } from "../gateway.js";
+import { clickEffect, clickFailure, recordedPath } from "../click-effect.js";
 import { isMissingBrowserError, missingBrowsersError } from "../preflight.js";
 import { navigateWithRecovery } from "../recovery.js";
 import type {
   ActResult,
   Action,
+  ClickEffect,
   ElementRef,
   ElementState,
   HttpCredentials,
   Observation,
   ObserveOptions,
+  RecordedRequest,
   SessionApi,
   StorageState,
   TestRunReport,
@@ -36,6 +39,53 @@ export interface PlaywrightLibOptions {
  */
 /** How long getState waits on a visible element that detaches mid-read (#213). */
 const STATE_READ_TIMEOUT_MS = 2_000;
+
+/**
+ * #224: how long a click is watched for the requests it starts and the DOM it changes. A click handler changes the
+ * DOM and calls fetch() in the same task or within a frame or two; 250 ms covers that and a framework's batched
+ * render. Kept short because exploration clicks every safe element twice (the probe reverts each one), so this is
+ * paid twice per element. A handler debounced for longer than this reads as no-effect.
+ */
+const CLICK_EFFECT_WINDOW_MS = 250;
+/** How long the requests seen in that window may take to answer, so a slow save still gets its status. */
+const REQUEST_ANSWER_MS = 2_000;
+/** The page's own traffic: navigations and API calls — not images, fonts, scripts or beacons. */
+const WATCHED_REQUESTS = new Set(["document", "fetch", "xhr"]);
+
+/** The page's ARIA snapshot, or undefined when it cannot be read (mid-navigation, page gone). */
+const ariaOf = (page: Page): Promise<string | undefined> =>
+  page.locator("body").ariaSnapshot({ timeout: STATE_READ_TIMEOUT_MS }).catch(() => undefined);
+
+/**
+ * Only the app's own origin is recorded: an analytics call on another host answering 204 to every click would make
+ * every dead click look like a silent save. ponytail: an API on another origin (api.example.com for app.example.com)
+ * is not recorded either; compare registrable domains instead if that matters.
+ */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+/** Each request as the run keeps it: method, redacted path, and the status when it answered within REQUEST_ANSWER_MS. */
+async function answered(started: Request[]): Promise<RecordedRequest[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), REQUEST_ANSWER_MS);
+  });
+  try {
+    return await Promise.all(
+      started.map(async (r) => {
+        const res = await Promise.race([r.response().catch(() => null), late]);
+        return { method: r.method(), path: recordedPath(r.url()), ...(res ? { status: res.status() } : {}) };
+      }),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export class PlaywrightLibBackend implements BrowserBackend {
   private browser?: Browser;
@@ -174,13 +224,46 @@ export class PlaywrightLibBackend implements BrowserBackend {
       const locator = page
         .getByRole(target.role as PwRole, target.name ? { name: target.name, exact: true } : {})
         .first();
-      if (action.kind === "click") await locator.click(action.timeoutMs === undefined ? undefined : { timeout: action.timeoutMs });
-      else await locator.fill(action.value);
-      return { ok: true, ref: action.ref };
+      if (action.kind === "fill") {
+        await locator.fill(action.value);
+        return { ok: true, ref: action.ref };
+      }
+      const effect = await this.clickAndWatch(page, locator, target, action.timeoutMs);
+      return { ok: true, ref: action.ref, outcome: effect.outcome, effect };
     } catch (e) {
       const ref = "ref" in action ? action.ref : undefined;
-      return { ok: false, ref, error: (e as Error).message };
+      const message = (e as Error).message;
+      const cause = action.kind === "click" ? clickFailure(message) : undefined;
+      return { ok: false, ref, error: message, ...(cause ? { outcome: cause } : {}) };
     }
+  }
+
+  /**
+   * #224: click, then record what changed — the URL, the overlays and the rest of the page's ARIA snapshot, the
+   * element's state, and the requests the click started. Only the click itself can throw: once it is made, a read
+   * that fails leaves that part of the record empty and the click still counts as made.
+   */
+  private async clickAndWatch(page: Page, locator: Locator, target: { role: string; name?: string }, timeoutMs?: number): Promise<ClickEffect> {
+    const from = page.url();
+    const before = await ariaOf(page);
+    const started: Request[] = [];
+    const onRequest = (r: Request): void => {
+      if (WATCHED_REQUESTS.has(r.resourceType()) && sameOrigin(r.url(), from)) started.push(r);
+    };
+    page.on("request", onRequest);
+    try {
+      await locator.click(timeoutMs === undefined ? undefined : { timeout: timeoutMs });
+      await page.waitForTimeout(CLICK_EFFECT_WINDOW_MS).catch(() => undefined);
+    } finally {
+      page.off("request", onRequest);
+    }
+    const requests = await answered(started);
+    // The answers render after they arrive: give them the same window before reading the page again.
+    if (started.length > 0) await page.waitForTimeout(CLICK_EFFECT_WINDOW_MS).catch(() => undefined);
+    const after = page.url() === from ? await ariaOf(page) : undefined;
+    // ponytail: a navigation slower than the window plus REQUEST_ANSWER_MS has not changed the URL yet and reads as
+    // network-only or no-effect; waiting for a started document request to commit would close that.
+    return clickEffect({ page: from, url: page.url(), ...target, before, after, requests });
   }
 
   async verify(elements: ElementRef[]): Promise<VerifiedElement[]> {

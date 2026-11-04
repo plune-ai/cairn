@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { renderReportMd, renderApiReportMd, locatorFor } from "../../src/artifacts/report.js";
-import type { ElementRef } from "../../src/browser/types.js";
+import { renderReportMd, renderApiReportMd, locatorFor, deadClicksOf } from "../../src/artifacts/report.js";
+import type { ClickEffect, ElementRef } from "../../src/browser/types.js";
 import type { ApiCaseResult } from "../../src/api/runner.js";
 
 const btn: ElementRef = { ref: "e6", role: "button", name: "Sign In", interactive: true, rank: 3 };
@@ -192,6 +192,39 @@ describe("renderReportMd — decision layer sections (ADR-0022)", () => {
     expect(md).toContain("- **Decisions:** 5 · **answered:** 2 · **fallbacks:** 3 (the current path ran instead)");
     expect(md).toContain("  - repair-triage — HTTP 500 (×2)");
     expect(md).toContain("  - coverage — state is 1500 chars > 1200 (×1)");
+  });
+});
+
+describe("renderReportMd — dead clicks (#224)", () => {
+  const base = { runId: "r1", url: "http://x/login", backend: "lib", profile: "anthropic", pageSemantics: "Login form", elements: [btn], testCases: [] };
+  const click = (outcome: ClickEffect["outcome"], name: string, page = "http://x/login"): ClickEffect => ({
+    outcome, page, role: "button", name, opened: [], closed: [], added: [], removed: [], state: [], requests: [],
+  });
+
+  it("lists each click that changed nothing with its element and page, once per element", () => {
+    const dead = deadClicksOf([
+      click("no-effect", "Export"),
+      click("state-changed", "Remember me"),
+      click("no-effect", "Export"), // the probe's revert click on the same element
+      click("network-only", "Save"),
+      click("no-effect", "Export", "http://x/list"),
+    ]);
+    expect(dead).toEqual([
+      { page: "http://x/login", role: "button", name: "Export" },
+      { page: "http://x/list", role: "button", name: "Export" },
+    ]);
+    const md = renderReportMd({ ...base, deadClicks: dead });
+    expect(md).toContain("## Dead clicks (2)");
+    expect(md).toContain('| http://x/login | button "Export" |');
+    expect(md).toContain('| http://x/list | button "Export" |');
+  });
+
+  it("the section is there, and empty, when every click had an effect", () => {
+    for (const md of [renderReportMd({ ...base, deadClicks: [] }), renderReportMd(base)]) {
+      expect(md).toContain("## Dead clicks (0)");
+      expect(md).toContain("None: every click made while exploring changed something.");
+      expect(md).not.toContain("| page | element |");
+    }
   });
 });
 

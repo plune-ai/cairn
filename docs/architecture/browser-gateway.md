@@ -36,6 +36,27 @@ export function makeGateway(cfg: AppConfig): BrowserGateway; // the factory sele
 
 `Observation`, `ElementRef`, `ActResult`, `SessionApi` — in [`data-contracts.md`](./data-contracts.md).
 
+## What a click did (#224)
+
+`ActResult.ok` says the action happened: for a click, that it was made. On the lib backend a click also returns
+`outcome`, one name from a closed set, and `effect`, the record behind it (`src/browser/types.ts`):
+
+- **Effects**, most telling first: `navigated` (the URL changed), `overlay-opened` / `overlay-closed` (a `dialog`,
+  `alertdialog`, `menu` or `listbox` appeared or went away), `state-changed` (the element's own `checked`,
+  `expanded`, `pressed` or `selected`), `content-changed` (other lines of the page's ARIA snapshot), `network-only`
+  (nothing visible, but a request answered 2xx: a silent save), `no-effect` (a dead click, still `ok: true`).
+- **Failure causes**, read from Playwright's call log (`ok: false`): `intercepted` (another element takes the
+  pointer, usually an overlay), `not-visible`, `not-enabled`, `detached` (the element observed a moment ago is no
+  longer on the page), `timeout` (found, but no reason given before the limit).
+
+After the click the backend watches 250 ms for the requests it starts and the DOM it changes, waits up to 2 s for
+those requests to answer, and reads the page again. Only document, fetch and XHR requests on the page's own origin
+are recorded: method, path and status, never a body or a header, and query values that look like secrets are
+redacted with `src/decider/redact.ts`. The cli backend records none of this (`outcome` is absent).
+
+A run keeps every click's effect (`ExploreOutcome.clicks`): the clicks with no effect are listed in `report.md`
+(*Dead clicks*) and `report.json` (`deadClicks`), and the requests go to `requests.json`.
+
 ## Routing contract (IMPORTANT)
 
 ```

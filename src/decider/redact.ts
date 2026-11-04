@@ -94,7 +94,7 @@ const tableLayout = (header: string[]): { spec: boolean[]; matrix: boolean; name
  * than a word's own hyphen, apostrophe or dot, or a closing "?"/"!" (not "e-mail", "one-time", "password?");
  * all digits (a PIN) only when asked.
  */
-function credentialShaped(t: string, digitsOnly = false): boolean {
+export function credentialShaped(t: string, digitsOnly = false): boolean {
   if (t.length < 4 || TRIVIAL.test(t)) return false;
   if (/^\p{N}+$/u.test(t)) return digitsOnly;
   if (/\p{L}/u.test(t) && /\p{N}/u.test(t)) return !/^\p{N}+[-‑–]\p{L}+$/u.test(t);

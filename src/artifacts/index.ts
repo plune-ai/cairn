@@ -2,6 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { PageStudy } from "../observe/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
+import type { RecordedRequest } from "../browser/types.js";
 
 /** Codes Windows throws when a just-exited process still holds a handle on a dir/file. */
 const LOCK_CODES = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
@@ -50,6 +51,8 @@ export interface RunWriter {
   writeFlowSnapshots(pages: { dir: string; ariaYaml: string; screenshotB64: string }[]): Promise<void>;
   /** #93: the run's reusable page-understanding artifact → page-understanding.json. */
   writeUnderstanding(map: unknown): Promise<void>;
+  /** #224: the requests exploration's clicks started (method, redacted path, status) → requests.json. */
+  writeRequests(requests: RecordedRequest[]): Promise<void>;
 }
 
 /** Local trail of each run: runs/<id>/ (study, tests, snapshots, report). */
@@ -143,6 +146,9 @@ export class ArtifactStore {
       },
       writeUnderstanding: async (map) => {
         await writeFile(join(dir, "page-understanding.json"), JSON.stringify(map, null, 2), "utf8");
+      },
+      writeRequests: async (requests) => {
+        await writeFile(join(dir, "requests.json"), JSON.stringify(requests, null, 2), "utf8");
       },
     };
   }

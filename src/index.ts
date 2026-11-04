@@ -62,4 +62,4 @@ export type { Score } from "./eval/scorers.js";
 export type { PilotVerdict } from "./eval/pilot.js";
 export type { ValidationReport, ScreencastEntry, ScreencastChapter } from "./validate/index.js";
 export type { ChecklistItem } from "./checklist/index.js";
-export type { ElementRef, VerifiedElement, StorageState, BackendKind } from "./browser/index.js";
+export type { ElementRef, VerifiedElement, StorageState, BackendKind, ClickEffect, ClickOutcome, RecordedRequest } from "./browser/index.js";

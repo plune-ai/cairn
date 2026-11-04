@@ -39,6 +39,21 @@ vi.mock("../../src/agent/graph.js", () => ({
     ],
     stoppedEarly: false,
     attempts: 0,
+    // #224: one click that changed nothing but sent a request that failed.
+    clicks: [
+      {
+        outcome: "no-effect",
+        page: "https://app.test/login",
+        role: "button",
+        name: "Export",
+        opened: [],
+        closed: [],
+        added: [],
+        removed: [],
+        state: [],
+        requests: [{ method: "POST", path: "/api/export", status: 500 }],
+      },
+    ],
   }),
 }));
 
@@ -56,5 +71,18 @@ describe("design report.json · testCaseFiles (#219)", () => {
     await expect(stat(join(result.runDir, report.testCaseFiles[0]!))).resolves.toBeTruthy();
     // CLI and MCP print the path for this machine, so the result keeps it absolute.
     expect(result.testCaseFiles).toEqual([join(result.runDir, "testcases", "ATC-LOGIN-UI-001.md")]);
+  });
+});
+
+describe("design run artifacts · clicks (#224)", () => {
+  it("report.json lists the dead clicks with element and page; requests.json keeps the requests", async () => {
+    const config = loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used" });
+    const result = await runDesign({ url: "https://app.test/login", config, runsBaseDir: base, knowledgeDir: join(base, "none") });
+
+    const report = JSON.parse(await readFile(join(result.runDir, "report.json"), "utf8")) as { deadClicks: unknown };
+    expect(report.deadClicks).toEqual([{ page: "https://app.test/login", role: "button", name: "Export" }]);
+    expect(JSON.parse(await readFile(join(result.runDir, "requests.json"), "utf8"))).toEqual([
+      { method: "POST", path: "/api/export", status: 500 },
+    ]);
   });
 });

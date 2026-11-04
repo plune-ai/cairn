@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A click records its effect, and a failed click names its cause (#224).** On the lib backend `act()` now returns
+  `outcome` beside `ok` (which still means the click was made): `navigated`, `overlay-opened`, `overlay-closed`,
+  `state-changed`, `content-changed`, `network-only` or `no-effect` for a click that happened, and `intercepted`,
+  `not-visible`, `not-enabled`, `detached` or `timeout` for one that failed, read from Playwright's call log instead
+  of a bare timeout. `effect` holds the record: the URL, the dialogs and menus that appeared or went away, the ARIA
+  snapshot diff, the element's checked / expanded / pressed / selected, and the same-origin requests started in the
+  250 ms after the click (method, path, status; no bodies, no headers, token-like query values redacted). The probe
+  keeps each click's outcome. `explore` and `design` write the requests to `requests.json` and the clicks that changed
+  nothing to `report.json` (`deadClicks`, `[]` when none); `report.md` has a *Dead clicks* section, empty when there
+  are none. Each lib click now takes about 250 ms longer. Prompts, generated files and existing `report.json` keys are
+  unchanged.
+
 ## [0.9.0] - 2026-10-29
 
 ### Added

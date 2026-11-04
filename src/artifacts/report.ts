@@ -1,4 +1,4 @@
-import type { ElementRef } from "../browser/types.js";
+import type { ClickEffect, ElementRef } from "../browser/types.js";
 import type { TestCase } from "../design/index.js";
 import type { JourneyCase } from "../design/schema.js";
 import type { CoverageReport } from "../eval/coverage.js";
@@ -14,6 +14,24 @@ import type { DeciderSummary } from "../decider/types.js";
 import type { TriageResult } from "../decider/uses/repair-triage.js";
 import type { HealRecord } from "../decider/uses/locator-heal.js";
 import { displayPath } from "../agent/summary.js";
+
+/** #224: a click that changed nothing — no URL, overlay, state, content, or request answered 2xx — and where. */
+export interface DeadClick {
+  page: string;
+  role: string;
+  name?: string;
+}
+
+/** The run's dead clicks, once per element and page (the probe's revert clicks the same element again). */
+export function deadClicksOf(clicks: ClickEffect[]): DeadClick[] {
+  const seen = new Set<string>();
+  return clicks.flatMap(({ outcome, page, role, name }) => {
+    const key = `${page}\u0000${role}\u0000${name ?? ""}`;
+    if (outcome !== "no-effect" || seen.has(key)) return [];
+    seen.add(key);
+    return [{ page, role, ...(name !== undefined ? { name } : {}) }];
+  });
+}
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
 export function locatorFor(el: ElementRef): string {
@@ -50,7 +68,12 @@ export interface ReportInput {
   healed?: HealRecord[];
   /** ADR-0022: an active decider's calls and fallbacks — rendered only when present. */
   decider?: DeciderSummary;
+  /** #224: clicks that changed nothing — the section is always there, empty when there are none. */
+  deadClicks?: DeadClick[];
 }
+
+/** A pipe in an element's name or a URL must not split a table row. */
+const cell = (s: string): string => s.replace(/\|/g, "\\|");
 
 function mark(status: string): string {
   return status === "passed" ? "✓" : status === "flaky" ? "~" : "✗";
@@ -91,7 +114,6 @@ export function renderReportMd(r: ReportInput): string {
   }
 
   if (r.healed && r.healed.length > 0) {
-    const cell = (s: string): string => s.replace(/\|/g, "\\|"); // a pipe in an element's name must not split the row
     lines.push(
       `## Locators healed (${r.healed.length})`,
       "",
@@ -157,6 +179,20 @@ export function renderReportMd(r: ReportInput): string {
   if (r.consoleErrors && r.consoleErrors.length > 0) {
     lines.push(`## Page JS errors (${r.consoleErrors.length})`, "");
     for (const e of r.consoleErrors.slice(0, 20)) lines.push(`- ${e}`);
+    lines.push("");
+  }
+
+  const dead = r.deadClicks ?? [];
+  lines.push(`## Dead clicks (${dead.length})`, "");
+  if (dead.length === 0) lines.push("None: every click made while exploring changed something.", "");
+  else {
+    lines.push(
+      "Each click below changed nothing: no URL, no dialog or menu, no element state, no page content, no request answered 2xx.",
+      "",
+      "| page | element |",
+      "|---|---|",
+    );
+    for (const d of dead) lines.push(`| ${cell(d.page)} | ${cell(`${d.role}${d.name !== undefined ? ` "${d.name}"` : ""}`)} |`);
     lines.push("");
   }
 

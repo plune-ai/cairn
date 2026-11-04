@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Click effects — Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Click effects</h1>
+      <button type="button" id="go">Go to the list</button>
+      <button type="button" id="open">Open the editor</button>
+      <button type="button" id="save">Save quietly</button>
+      <button type="button" id="noop">Does nothing</button>
+    </main>
+
+    <!-- A modal: its backdrop covers the whole page, so a click on a button behind it is intercepted. -->
+    <div id="backdrop" hidden style="position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4)">
+      <div role="dialog" aria-modal="true" aria-label="Editor" style="background: #fff; margin: 20vh auto; width: 300px; padding: 16px">
+        <button type="button" id="close">Close</button>
+      </div>
+    </div>
+
+    <script>
+      const backdrop = document.getElementById("backdrop");
+      document.getElementById("go").addEventListener("click", () => (location.href = "/list.html"));
+      document.getElementById("open").addEventListener("click", () => backdrop.removeAttribute("hidden"));
+      document.getElementById("close").addEventListener("click", () => backdrop.setAttribute("hidden", ""));
+      // A silent save: nothing on the page changes. The request carries a cookie, an Authorization header and a
+      // token in its query, none of which may reach the recorded traffic.
+      document.getElementById("save").addEventListener("click", () => {
+        document.cookie = "sid=c00kieV4lue; path=/";
+        void fetch("/api/save?token=abc123XYZ789&page=2", {
+          method: "POST",
+          headers: { Authorization: "Bearer s3cretBearer42" },
+        });
+      });
+    </script>
+  </body>
+</html>

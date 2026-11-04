@@ -26,7 +26,7 @@ import { makeHeal, type HealRecord } from "../decider/uses/locator-heal.js";
 import type { Decider } from "../decider/types.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
-import type { BrowserGateway, VerifiedElement } from "../browser/index.js";
+import type { BrowserGateway, ClickEffect, VerifiedElement } from "../browser/index.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { StructuredInvoke } from "../llm/structured.js";
 
@@ -128,6 +128,25 @@ export interface ExploreOutcome {
   notRepaired?: TriageResult[];
   /** ADR-0022: locator replacements proposed in the kept suite's repair hint (absent unless one was). */
   healed?: HealRecord[];
+  /** #224: what every click of this exploration did, in order (empty on the cli backend, which records none). */
+  clicks: ClickEffect[];
+}
+
+/** #224: the same gateway, keeping the effect of every click made through it. */
+function recordingClicks(gateway: BrowserGateway, clicks: ClickEffect[]): BrowserGateway {
+  return {
+    observe: (opts) => gateway.observe(opts),
+    act: async (action) => {
+      const result = await gateway.act(action);
+      if (result.effect) clicks.push(result.effect);
+      return result;
+    },
+    verify: (elements) => gateway.verify(elements),
+    getState: (element) => gateway.getState(element),
+    session: () => gateway.session(),
+    runTests: (globs) => gateway.runTests(globs),
+    close: () => gateway.close(),
+  };
 }
 
 /** Sprint 3: observe → identify → design → generateCode → validate ⇄ repair (bounded by maxRepair). */
@@ -136,6 +155,8 @@ export async function runExploreGraph(
   init: { url: string; runId: string },
 ): Promise<ExploreOutcome> {
   const { url } = init;
+  const clicks: ClickEffect[] = [];
+  deps = { ...deps, gateway: recordingClicks(deps.gateway, clicks) }; // every node below clicks through it
 
   // ── observe ──────────────────────────────────────────────────────────────
   deps.onProgress?.("observe — opening browser + navigating…");
@@ -381,7 +402,7 @@ export async function runExploreGraph(
 
   // ── codeless short-circuit ────────────────────────────────────────────────
   if (deps.codeless) {
-    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans };
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks };
   }
 
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
@@ -439,5 +460,6 @@ export async function runExploreGraph(
     setupPlans,
     ...(notRepaired ? { notRepaired } : {}),
     ...(healed ? { healed } : {}),
+    clicks,
   };
 }

@@ -43,6 +43,19 @@ describe("probeTransitions (act→observe, safe roles)", () => {
     expect(clicks).toBe(2); // click + revert click
   });
 
+  it("keeps what the click did beside checked/enabled — a switch that opened a dialog is not 'nothing happened' (#224)", async () => {
+    const gw = fakeGateway(
+      [
+        { visible: true, enabled: true, checked: false },
+        { visible: true, enabled: true, checked: false },
+      ],
+      () => undefined,
+    );
+    gw.act = async () => ({ ok: true, outcome: "overlay-opened" });
+    const t = await probeTransitions(gw, [{ ref: "e1", role: "switch", name: "Advanced", interactive: true, rank: 3 }]);
+    expect(t[0]?.outcome).toBe("overlay-opened");
+  });
+
   it("disabled switch → skipped (no click)", async () => {
     let clicks = 0;
     const gw = fakeGateway([{ visible: true, enabled: false, checked: false }], () => {
