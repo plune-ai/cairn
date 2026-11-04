@@ -3,6 +3,8 @@ import { resolve, dirname, basename, join, relative, sep } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
+import { ApiTrafficRecorder, parseApiOrigins } from "../browser/api-traffic.js";
+import { DERIVED_SPEC_FILE, writeDerivedSpec } from "../api/derived.js";
 import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
 import type { AppliedEnvironment, Environment } from "../environment/index.js";
 import type { MailboxSession } from "../mailbox/index.js";
@@ -88,6 +90,8 @@ export interface ExploreInput {
   fresh?: boolean;
   /** #82: run the design-time self-critique pass (prune + technique top-up) on the worker tier. Default off. */
   critique?: boolean;
+  /** #229: origins besides the run URL's whose API requests go into openapi.derived.json (comma-separated). */
+  apiOrigins?: string;
   /** #59: follow in-app navigation and design multi-page journey cases. Default off (single page). */
   flow?: boolean;
   /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). */
@@ -220,6 +224,37 @@ async function ejectToProjectIfRequested(opts: {
  * End-to-end exploration → methodological cases → runnable @playwright/test → validation/repair (MVP, Sprint 3).
  * Artifacts land in runsBaseDir/<runId>/; everything is traced in Langfuse.
  */
+/**
+ * #229: the API requests the run saw, folded into an OpenAPI draft → openapi.derived.json in the run dir, scrubbed of
+ * the traffic's own secrets and of the run's (knowledge, environment). Nothing is written when none was seen; the
+ * cli backend records nothing (`recorder` undefined).
+ */
+async function writeTrafficSpec(
+  recorder: ApiTrafficRecorder | undefined,
+  dir: string,
+  url: string,
+  secrets: string[],
+  onProgress: (event: string) => void,
+): Promise<void> {
+  if (!recorder) return;
+  await recorder.flush();
+  const { static: statics, otherOrigin } = recorder.leftOut;
+  const left = [
+    ...(statics ? [`${statics} page/static request(s)`] : []),
+    ...(otherOrigin ? [`${otherOrigin} to other origins (allow one with --api-origin)`] : []),
+  ];
+  const leftText = left.length ? `; left out: ${left.join(", ")}` : "";
+  if (recorder.recorded === 0) {
+    onProgress(`api — no API request seen on ${new URL(url).origin}, no ${DERIVED_SPEC_FILE}${leftText}`);
+    return;
+  }
+  const { doc, secrets: own } = recorder.spec({ title: `${new URL(url).host} (from the UI traffic)` });
+  await writeDerivedSpec(dir, doc, [...own, ...secrets]);
+  onProgress(
+    `api — ${recorder.recorded} API request(s) → ${recorder.operations} operation(s) → ${DERIVED_SPEC_FILE} (inferred, x-cairn-derived)${leftText}`,
+  );
+}
+
 export async function runExploration(input: ExploreInput): Promise<ExploreResult> {
   const cfg = input.config;
   // Onboarding guardrail: explore observes + validates → it needs a browser. Fail fast with a
@@ -227,6 +262,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   // FIX B (0.3.3): pass the channel — skipped when a system browser (chrome/msedge) is configured,
   // since that path needs no bundled Chromium (the bug: this fired even with BROWSER_CHANNEL=chrome).
   ensureBrowsersInstalled({ channel: cfg.browser.channel });
+  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
+  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
 
@@ -286,6 +323,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     channel: cfg.browser.channel,
     headless: !input.headed,
     httpCredentials: envRun?.applied.httpCredentials,
+    apiTraffic,
   });
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
@@ -567,6 +605,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const watchesClicks = cfg.browser.backend === "lib";
         const deadClicks = watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined;
         if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        await writeTrafficSpec(apiTraffic, runWriter.dir, input.url, [...secretValues(knowledgeText, process.env), ...envSecrets], onProgress);
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -698,6 +737,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   // Onboarding guardrail: design drives the bundled Chromium to observe the page (skipped when a
   // system-browser channel is configured) → fail fast with a copy-paste fix before any LLM call.
   ensureBrowsersInstalled({ channel: cfg.browser.channel });
+  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
+  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const logLines: string[] = [];
@@ -740,6 +781,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     channel: cfg.browser.channel,
     headless: !input.headed,
     httpCredentials: envRun?.applied.httpCredentials,
+    apiTraffic,
   });
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
@@ -922,6 +964,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         const watchesClicks = cfg.browser.backend === "lib"; // #224: the cli backend watches no click
         if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        await writeTrafficSpec(apiTraffic, runWriter.dir, input.url, [...secretValues(knowledgeText, process.env), ...envSecrets], onProgress);
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,

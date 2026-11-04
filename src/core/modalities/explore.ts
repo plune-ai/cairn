@@ -35,6 +35,8 @@ interface ExploreFlags {
   maxPages?: string;
   setup?: boolean;
   gaps?: boolean;
+  /** #229: origins besides --url's whose API requests go into openapi.derived.json. */
+  apiOrigin?: string;
   intoProject?: boolean | string;
   screencast?: boolean;
   decider?: string;
@@ -81,6 +83,7 @@ export const exploreModality: Modality = {
       critique: opts.critique,
       flow: opts.flow,
       maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
+      apiOrigins: opts.apiOrigin,
       setup: opts.setup,
       gaps: opts.gaps,
       intoProject: opts.intoProject !== undefined && opts.intoProject !== false,

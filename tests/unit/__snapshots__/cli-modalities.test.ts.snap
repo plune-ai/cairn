@@ -53,48 +53,52 @@ exports[`CLI surface lock (C1-02) > cairn explore --help is stable (flags unchan
 Explore a page and generate methodology-based test cases (Sprint 2: no code)
 
 Options:
-  --url <url>            page URL (required unless --env-file gives a baseUrl)
-  --env-file <path>      environment description (JSON): baseUrl, basicAuth,
-                         user, startPath — Basic Auth → login → start path
-                         before the run; secrets come from the environment
-                         variables it names (also CAIRN_ENV_FILE / CAIRN_ENV_*)
-  --backend <kind>       lib | cli (overrides BROWSER_BACKEND)
-  --channel <channel>    system browser channel, e.g. chrome — drives your
-                         installed Chrome (no bundled-Chromium download; helps
-                         OAuth)
-  --session <name>       name of the saved session
-                         (.auth/<name>.storageState.json)
-  --session-file <path>  direct path to a storageState file (any name)
-  --headed               visible browser (debug)
-  --checklist <file>     checklist file (md/text) — guides what to test
-  --goal <text>          natural-language goal — bias observation + cases toward
-                         it (e.g. "test the checkout flow") instead of a blind
-                         crawl
-  --style <s>            planning style: happy | negative | coverage | all
-  --fresh                ignore prior runs for this URL — generate a full set,
-                         don't dedupe against past cases
-  --routing <preset>     role-routing preset: fast (Groq worker) | volume
-                         (OpenRouter worker) | volume-fast (Anthropic codegen,
-                         cheap judge on OpenRouter) (sets LLM_ROUTING)
-  --critique             self-critique pass after design: prune weak cases + top
-                         up technique gaps (1 extra worker-tier LLM call)
-  --flow                 follow in-app navigation across pages and design
-                         multi-page journey cases (opt-in)
-  --max-pages <n>        max pages to crawl with --flow (page cap; default 3)
-  --setup                for journeys (--flow): plan + emit starting-state setup
-                         (fixture / API seed; manual fallback)
-  --gaps                 suggest cases for the top untested surface (the
-                         coverage view is always emitted)
-  --into-project [dir]   write specs into an existing Playwright project's
-                         testDir (detect playwright.config.*; respects
-                         testDir/naming) instead of runs/<id>/tests
-  --screencast           record a .webm per scenario (with step chapters) during
-                         validation → runs/<id>/screencasts/ for the review gate
-  --decider <provider>   opt-in decision layer: off | jev | laya | compat (sets
-                         DECIDER; see docs/decider.md)
-  --decider-shadow       with a decider: record its answers next to the current
-                         path in runs/<id>/decider-shadow.json, act on none
-                         (sets DECIDER_SHADOW)
-  -h, --help             display help for command
+  --url <url>             page URL (required unless --env-file gives a baseUrl)
+  --env-file <path>       environment description (JSON): baseUrl, basicAuth,
+                          user, startPath — Basic Auth → login → start path
+                          before the run; secrets come from the environment
+                          variables it names (also CAIRN_ENV_FILE / CAIRN_ENV_*)
+  --backend <kind>        lib | cli (overrides BROWSER_BACKEND)
+  --channel <channel>     system browser channel, e.g. chrome — drives your
+                          installed Chrome (no bundled-Chromium download; helps
+                          OAuth)
+  --session <name>        name of the saved session
+                          (.auth/<name>.storageState.json)
+  --session-file <path>   direct path to a storageState file (any name)
+  --headed                visible browser (debug)
+  --checklist <file>      checklist file (md/text) — guides what to test
+  --goal <text>           natural-language goal — bias observation + cases
+                          toward it (e.g. "test the checkout flow") instead of a
+                          blind crawl
+  --style <s>             planning style: happy | negative | coverage | all
+  --fresh                 ignore prior runs for this URL — generate a full set,
+                          don't dedupe against past cases
+  --routing <preset>      role-routing preset: fast (Groq worker) | volume
+                          (OpenRouter worker) | volume-fast (Anthropic codegen,
+                          cheap judge on OpenRouter) (sets LLM_ROUTING)
+  --critique              self-critique pass after design: prune weak cases +
+                          top up technique gaps (1 extra worker-tier LLM call)
+  --flow                  follow in-app navigation across pages and design
+                          multi-page journey cases (opt-in)
+  --max-pages <n>         max pages to crawl with --flow (page cap; default 3)
+  --setup                 for journeys (--flow): plan + emit starting-state
+                          setup (fixture / API seed; manual fallback)
+  --gaps                  suggest cases for the top untested surface (the
+                          coverage view is always emitted)
+  --into-project [dir]    write specs into an existing Playwright project's
+                          testDir (detect playwright.config.*; respects
+                          testDir/naming) instead of runs/<id>/tests
+  --screencast            record a .webm per scenario (with step chapters)
+                          during validation → runs/<id>/screencasts/ for the
+                          review gate
+  --api-origin <origins>  #229: origins besides --url's whose API requests go
+                          into openapi.derived.json (comma-separated, e.g.
+                          https://api.example.com); lib backend
+  --decider <provider>    opt-in decision layer: off | jev | laya | compat (sets
+                          DECIDER; see docs/decider.md)
+  --decider-shadow        with a decider: record its answers next to the current
+                          path in runs/<id>/decider-shadow.json, act on none
+                          (sets DECIDER_SHADOW)
+  -h, --help              display help for command
 "
 `;

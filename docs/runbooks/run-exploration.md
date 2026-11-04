@@ -46,7 +46,17 @@ study.json    # PageStudy
 report.json   # ValidationReport + scores, deadClicks
 report.md     # the same for a person, with a Dead clicks section: clicks with no change seen, to check by hand
 requests.json # requests the clicks started: method, path, status (no bodies, headers or query values); lib backend
+openapi.derived.json # OpenAPI draft from the app's API traffic (#229); lib backend, when any API request was seen
 ```
+
+`openapi.derived.json` (#229) folds the API requests the run saw — while pages loaded and after each click — into
+OpenAPI 3.0: ids in paths become parameters (`/projects/123` → `/projects/{id}`), with methods, response codes and body
+schemas inferred from the examples, all marked `x-cairn-derived: true`. Only `--url`'s origin is kept, plus those given
+with `--api-origin https://api.example.com` (comma-separated); analytics, CDNs and pages, scripts, styles, images and
+fonts stay out (the run log counts them). No body, header, cookie or query value is written, only names, types and
+status codes, and the traffic's credentials are scrubbed from the file as well. Give it straight to
+`cairn api --spec runs/<runId>/openapi.derived.json --base-url <url>`. The sign-in of an `--env-file` environment runs
+in its own browser and is not recorded.
 + a Langfuse trace (link in stdout).
 
 ## Diagnostics

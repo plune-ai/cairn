@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An OpenAPI draft from the traffic recorded while exploring the UI (#229).** On the lib backend `explore` and
+  `design` record the application's API requests — those made while pages load and those clicks start — and at the
+  end of the run fold them into OpenAPI 3.0, saved as `openapi.derived.json` in the run directory, ready for
+  `cairn api --spec`. Ids in a path become parameters (`/projects/123` and `/projects/456` → `/projects/{id}`),
+  with methods, response codes, query keys and body schemas inferred from the examples, all marked
+  `x-cairn-derived: true`. Pages, scripts, styles, images and fonts are left out, and so is every origin but `--url`'s
+  unless `--api-origin <origins>` (comma-separated) allows it; the run log counts what was left out. A JSON response
+  body (up to 1 MB) is read for its schema only and not kept; no body, header, cookie or query value is written, and
+  `Authorization`, cookies and secret-looking values of the traffic, the knowledge and the environment are scrubbed
+  from the file as well. Nothing is written when no API request was seen, or on the cli backend.
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else

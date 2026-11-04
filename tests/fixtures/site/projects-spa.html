@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Projects</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <!-- #229: a small SPA with several screens, each calling its own API; one call goes to a third-party origin. -->
+  <img src="/static/logo.svg" alt="Logo" />
+  <nav>
+    <button id="projects">Projects</button>
+    <button id="settings">Settings</button>
+  </nav>
+  <main id="main"><h1>Welcome</h1></main>
+  <script>
+    // Made-up credentials: none of them may reach openapi.derived.json.
+    const AUTH = { Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzcGEifQ.FAKEspaSIGNATURE0229" };
+    const third = new URLSearchParams(location.search).get("tp");
+    const main = document.getElementById("main");
+    const api = (path, init = {}) =>
+      fetch(path, { ...init, headers: { ...AUTH, ...(init.headers || {}) } }).then((r) => (r.status === 204 ? null : r.json()));
+    const show = (title, lines, buttons = []) => {
+      main.innerHTML = "";
+      const h = document.createElement("h1");
+      h.textContent = title;
+      main.append(h);
+      for (const l of lines) {
+        const p = document.createElement("p");
+        p.textContent = l;
+        main.append(p);
+      }
+      for (const [label, onClick] of buttons) {
+        const b = document.createElement("button");
+        b.textContent = label;
+        b.addEventListener("click", onClick);
+        main.append(b);
+      }
+    };
+    const openProject = async (id) => {
+      const p = await api(`/api/projects/${id}`);
+      show(p.name, [`Owner: ${p.owner ? p.owner.email : "nobody"}`]);
+    };
+    const projects = async () => {
+      const list = await api("/api/projects?page=1&sort=name");
+      show(
+        "Projects",
+        list.map((p) => p.name),
+        [
+          ...list.map((p) => [`Open ${p.name}`, () => openProject(p.id)]),
+          [
+            "New project",
+            async () => {
+              const p = await api("/api/projects", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-Api-Key": "FAKE-spa-xapikey-31337" },
+                body: JSON.stringify({ name: "Gamma", public: false }),
+              });
+              show("Created", [p.name]);
+            },
+          ],
+        ],
+      );
+    };
+    document.getElementById("projects").addEventListener("click", projects);
+    document.getElementById("settings").addEventListener("click", async () => {
+      history.pushState({}, "", "/settings");
+      const s = await api("/api/settings");
+      show("Settings", [`Theme: ${s.theme}`]);
+    });
+    // While the page loads: sign in, read the user, and report to a third party.
+    (async () => {
+      await api("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "qa@example.test", password: "FAKE-spa-Pa55word!" }),
+      });
+      const me = await api("/api/me?access_token=FAKE-spa-qtoken-8c7d");
+      document.title = `Projects · ${me.email}`;
+      if (third) fetch(`${third}/collect?uid=FAKE-spa-tp-uid-4242`, { method: "POST", mode: "no-cors", body: "event=load" }).catch(() => undefined);
+    })();
+  </script>
+</body>
+</html>
