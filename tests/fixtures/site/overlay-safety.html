@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Overlay safety — Fixture</title>
+    <style>
+      [hidden] { display: none !important; }
+      body { margin: 0; padding: 3rem 1rem 1rem; }
+      .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); z-index: 10; }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; z-index: 20; }
+      /* A header link above everything, at the very corner a blind click outside would land on. */
+      #signout { position: fixed; top: 0; left: 0; padding: 4px 8px; background: #fee; z-index: 100; }
+    </style>
+  </head>
+  <body>
+    <a href="#" id="signout">Sign out</a>
+    <main>
+      <h1>Account</h1>
+      <button type="button" id="pay">Pay now</button>
+      <button type="button" id="archive-open" aria-haspopup="dialog">Archive project…</button>
+      <button type="button" id="transfer-open" aria-haspopup="dialog">Transfer ownership</button>
+      <button type="button" id="account-open" aria-haspopup="dialog">Account settings</button>
+      <button type="button" id="shortcuts-open" aria-haspopup="dialog">Keyboard shortcuts</button>
+    </main>
+
+    <div id="backdrop" class="backdrop" hidden></div>
+
+    <div id="archive" class="dialog" role="alertdialog" aria-modal="true" aria-label="Archive project?" hidden>
+      <h2>Archive project?</h2>
+      <button type="button" id="archive-yes">Archive</button>
+      <button type="button" data-close>Cancel</button>
+    </div>
+
+    <div id="transfer" class="dialog" role="dialog" aria-modal="true" aria-label="Transfer ownership? This cannot be undone." hidden>
+      <h2>Transfer ownership? This cannot be undone.</h2>
+      <button type="button" data-close>Cancel</button>
+      <button type="button" id="transfer-continue">Continue</button>
+    </div>
+
+    <div id="account" class="dialog" role="dialog" aria-modal="true" aria-label="Account settings" hidden>
+      <h2>Account settings</h2>
+      <button type="button" id="close-account">Close account</button>
+      <button type="button" id="cancel-subscription">Cancel subscription</button>
+      <button type="button" aria-label="Close" data-close>×</button>
+    </div>
+
+    <div id="shortcuts" class="dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" hidden>
+      <h2>Keyboard shortcuts</h2>
+      <p>Press ? to open this list.</p>
+      <button type="button" aria-label="Close" data-close>×</button>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const post = (path) => fetch(path, { method: "POST" });
+      let open = null;
+      function show(id) {
+        open = id;
+        $("backdrop").hidden = false;
+        $(id).hidden = false;
+      }
+      function hide() {
+        if (open) $(open).hidden = true;
+        $("backdrop").hidden = true;
+        open = null;
+      }
+      $("signout").addEventListener("click", (e) => { e.preventDefault(); post("/api/signout"); });
+      $("pay").addEventListener("click", () => post("/api/pay"));
+      $("archive-open").addEventListener("click", () => show("archive"));
+      $("transfer-open").addEventListener("click", () => show("transfer"));
+      $("account-open").addEventListener("click", () => show("account"));
+      $("shortcuts-open").addEventListener("click", () => show("shortcuts"));
+      $("archive-yes").addEventListener("click", () => { post("/api/archive"); hide(); });
+      $("transfer-continue").addEventListener("click", () => { post("/api/transfer"); hide(); });
+      $("close-account").addEventListener("click", () => post("/api/close-account"));
+      $("cancel-subscription").addEventListener("click", () => post("/api/cancel-subscription"));
+      for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", hide);
+      $("backdrop").addEventListener("click", hide);
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
+    </script>
+  </body>
+</html>

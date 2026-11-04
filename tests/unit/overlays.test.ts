@@ -139,4 +139,50 @@ describe("exits and wizard buttons", () => {
     expect(wizardButtons(els)).toMatchObject({ next: { name: "Next" }, back: { name: "Back" } });
     expect(wizardButtons(parseAriaSnapshot(WITH_MODAL))).toBeUndefined();
   });
+
+  it("an exit is a whole name, never a verb followed by an object (#225 review)", () => {
+    const view = overlayStack(
+      `- dialog "Support":\n  - button "Close ticket"\n  - button "Close account"\n  - button "Cancel subscription"\n  - button "Not now"\n  - button "Закрити"\n  - button "Close": ×`,
+    )[0]!;
+    expect(overlayExits(view).map((x) => [x.kind, x.name])).toEqual([
+      ["close-button", "Закрити"],
+      ["close-button", "Close"],
+      ["cancel", "Not now"],
+    ]);
+  });
+
+  it("a wizard needs a Next and a Back or a step indicator; Continue is no Next; an alertdialog is never one (#225 review)", () => {
+    const wiz = (aria: string, role?: string) => wizardButtons(parseAriaSnapshot(aria), role);
+    // Next alone: a confirmation or a single form, not a wizard
+    expect(wiz(`- dialog "Invite":\n  - button "Next"\n  - button "Cancel"`, "dialog")).toBeUndefined();
+    // Next with a step indicator: a wizard on its first step, where Back is not shown yet
+    expect(wiz(`- dialog "Setup":\n  - heading "Step 1 of 3" [level=2]\n  - button "Next"`, "dialog")).toMatchObject({ next: { name: "Next" } });
+    expect(wiz(`- dialog "Setup":\n  - progressbar "Progress"\n  - button "Next"`, "dialog")).toMatchObject({ next: { name: "Next" } });
+    // Continue is not a step, however the dialog looks
+    expect(wiz(`- dialog "Transfer ownership? This cannot be undone.":\n  - button "Back"\n  - button "Continue"`, "dialog")).toBeUndefined();
+    // an alertdialog asks to confirm; its Next is never pressed as a step
+    expect(wiz(`- alertdialog "Proceed?":\n  - button "Back"\n  - button "Next"`, "alertdialog")).toBeUndefined();
+  });
+
+  it("a disabled button is read as disabled from the snapshot", () => {
+    const [next] = parseAriaSnapshot(`- button "Next" [disabled]`);
+    expect(next).toMatchObject({ name: "Next", disabled: true });
+  });
+});
+
+describe("which button exploration may press (#225 review)", () => {
+  it("only one that announces a popup, and only after the deny-list", async () => {
+    const { refusal } = await import("../../src/agent/overlays.js");
+    expect(refusal({ name: "New project" }, { hasPopup: "dialog" })).toBeUndefined();
+    expect(refusal({ name: "Details" }, { expanded: false })).toBeUndefined();
+    expect(refusal({ name: "Filters" }, { controls: "filters" })).toBeUndefined();
+    // a plain button is not pressed, whatever its name
+    for (const name of ["Pay now", "Archive", "Continue", "Cancel subscription"]) expect(refusal({ name }, {})).toMatch(/does not say it opens anything/);
+    expect(refusal({ name: "Pay now" }, undefined)).toMatch(/does not say it opens anything/); // not readable (cli backend)
+    // the deny-list stays on top of the allow-list
+    expect(refusal({ name: "Sign out" }, { hasPopup: "menu" })).toBe("destructive");
+    expect(refusal({ name: "Close account" }, { hasPopup: "dialog" })).toBe("destructive");
+    expect(refusal({ name: "Save" }, { hasPopup: "dialog" })).toBe("completes the form; not pressed");
+    expect(refusal({ name: "Share", disabled: true }, { hasPopup: "dialog" })).toBe("disabled; not pressed");
+  });
 });

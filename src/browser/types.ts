@@ -29,6 +29,8 @@ export interface ElementRef {
    * `getByRole('row', { name }).getByRole(role, { name })`.
    */
   context?: OverlayScope[];
+  /** #225: the snapshot marks it `[disabled]`. */
+  disabled?: true;
 }
 
 /** #225: a container an element is looked for in: its role and accessible name. */
@@ -43,6 +45,12 @@ export interface ElementState {
   enabled: boolean;
   /** For checkable elements (switch/checkbox/radio); otherwise undefined. */
   checked?: boolean;
+  /**
+   * #225: what the element says it opens — `aria-haspopup` (when not "false"), `aria-expanded`, `aria-controls`.
+   * The ARIA snapshot shows none of these but `[expanded]` when true, so the backend reads them from the element.
+   * Absent when it could not be read (cli backend, element gone).
+   */
+  popup?: { hasPopup?: string; expanded?: boolean; controls?: string };
 }
 
 /** An element with a verified locator (verify-before-design, grounding). */
@@ -109,8 +117,12 @@ export type Action =
   | { kind: "fill"; ref: string; value: string }
   /** #225 (lib backend): press a key on the page, e.g. `Escape`. */
   | { kind: "press"; key: string }
-  /** #225 (lib backend): click on the page outside any overlay, at its top-left corner. */
-  | { kind: "click-outside" };
+  /**
+   * #225 (lib backend): click on the page outside the overlay `scope`, at a point checked first: the element there is
+   * outside the overlay and is nothing a click acts on (no link, button, field, click role or handler cursor). When no
+   * such point is found nothing is clicked and the result is not ok.
+   */
+  | { kind: "click-outside"; scope: OverlayScope };
 
 /**
  * What a click did (#224), most telling first: one name from a closed set. `no-effect` is a click after which Cairn

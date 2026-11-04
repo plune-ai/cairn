@@ -119,6 +119,8 @@ export function parseAriaSnapshot(aria: string, opts: ParseOptions = {}): Elemen
     }
     if (context.length > 0) el.context = context;
     if (inside) el.inside = inside;
+    // #225 review: a disabled control is never pressed (a disabled Next would only wait out the click timeout).
+    if (/\[disabled(?:=true)?\]/.test(content)) el.disabled = true;
     out.push(el);
     const index = out.length - 1;
     const chain = open.filter((x) => SCOPE_ROLES.has(x.role)).map((x) => x.index);

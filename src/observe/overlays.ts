@@ -31,16 +31,28 @@ export interface OverlayExit {
   verified?: boolean;
   /** Submit only: its name passes the destructive-action filter, so it may be pressed at all. */
   safe?: boolean;
+  /** Click outside only: it was not tried, and why (no point outside the overlay was safe to click). */
+  notTried?: string;
 }
 
 const DRAWER_NAME = /\b(drawer|side\s?(?:bar|panel)|panel|sheet|sidebar)\b/i;
 /** Menus, listboxes and side panels are looked for only when they were not on the page to begin with. */
 const POPUP_ROLES = new Set(["menu", "listbox", "complementary"]);
 
-const CLOSE_NAME = /^(?:close|dismiss|×|✕|x|закрити|закрыть)\b|\bclose\b/i;
-const CANCEL_NAME = /^(?:cancel|no|not now|never mind|keep editing|скасувати|відміна|ні|отмена)\b/i;
-const NEXT_NAME = /^(?:next|continue|далі|продовжити|далее|продолжить)\b/i;
-const BACK_NAME = /^(?:back|previous|назад)\b/i;
+/**
+ * An exit is the whole name (#225 review): «Close», never «Close account»; «Cancel», never «Cancel subscription». A
+ * verb followed by an object acts on that object, and an exit is pressed to leave, so only the bare word counts.
+ */
+const CLOSE_NAME = /^\s*(?:close|dismiss|×|✕|x|закрити|закрыть)\s*[.!]?\s*$/i;
+const CANCEL_NAME = /^\s*(?:cancel|no|not now|never mind|keep editing|скасувати|відміна|ні|отмена)\s*[.!]?\s*$/i;
+/**
+ * Next of a wizard. «Continue» is not here (#225 review): «Transfer ownership? [Continue]» confirms an action; it is
+ * no step.
+ */
+const NEXT_NAME = /^\s*(?:next|далі|далее)\b/i;
+const BACK_NAME = /^\s*(?:back|previous|назад)\b/i;
+/** A step indicator: «Step 2 of 3», «Крок 1 з 4», «2 / 3». */
+const STEP_INDICATOR = /\b(?:step|крок|шаг)\s*\d+\s*(?:of|\/|з|із|из)\s*\d+\b|^\s*\d+\s*\/\s*\d+\s*$/i;
 /** The action that completes an overlay. Broad on purpose: whether it may be pressed is the filter's call, not this name's. */
 const SUBMIT_NAME =
   /^(?:save|create|submit|ok|confirm|apply|add|send|update|finish|done|publish|invite|yes|delete|remove|зберегти|створити|підтвердити|додати|готово|видалити|сохранить|создать)\b/i;
@@ -157,12 +169,19 @@ export function overlayExits(view: OverlayView): OverlayExit[] {
   return out.sort((a, b) => EXIT_ORDER.indexOf(a.kind) - EXIT_ORDER.indexOf(b.kind));
 }
 
-/** The Next and Back buttons among `elements`, or undefined when there is no Next (not a wizard). */
-export function wizardButtons(elements: ElementRef[]): { next: ElementRef; back?: ElementRef } | undefined {
+/**
+ * The Next and Back buttons among `elements` (the inside of an overlay whose role is `overlayRole`), or undefined when
+ * it is not a wizard. A wizard has a Next AND either a Back or a step indicator (#225 review): a Next alone is a form
+ * or a confirmation. An `alertdialog` asks to confirm something and is never a wizard.
+ */
+export function wizardButtons(elements: ElementRef[], overlayRole?: string): { next: ElementRef; back?: ElementRef } | undefined {
+  if (overlayRole === "alertdialog") return undefined;
   const buttons = elements.filter((e) => e.role === "button" && !e.underOverlay);
   const next = buttons.find((b) => NEXT_NAME.test(b.name ?? ""));
   if (!next) return undefined;
   const back = buttons.find((b) => BACK_NAME.test(b.name ?? ""));
+  const indicator = elements.some((e) => e.role === "progressbar" || STEP_INDICATOR.test(e.name ?? ""));
+  if (!back && !indicator) return undefined;
   return { next, ...(back ? { back } : {}) };
 }
 
@@ -240,7 +259,7 @@ export function formatOverlays(states: OverlayState[]): string {
       if (s.exits.length > 0) {
         lines.push(
           `    exits: ${s.exits
-            .map((x) => `${x.kind}${x.name ? ` "${x.name}"` : ""}${x.verified === true ? " (verified)" : x.verified === false ? " (does not close it)" : ""}${x.kind === "submit" && x.safe === false ? " (destructive — only check it is visible)" : ""}`)
+            .map((x) => `${x.kind}${x.name ? ` "${x.name}"` : ""}${x.verified === true ? " (verified)" : x.verified === false ? " (does not close it)" : x.notTried ? " (not tried)" : ""}${x.kind === "submit" && x.safe === false ? " (destructive — only check it is visible)" : ""}`)
             .join("; ")}`,
         );
       }

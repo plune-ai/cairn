@@ -16,10 +16,10 @@
       <h1>Projects</h1>
       <p>Page saves: <span id="page-saves">0</span> · deleted: <span id="deleted">no</span></p>
       <button type="button" id="page-save">Save</button>
-      <button type="button" id="new">New project</button>
-      <button type="button" id="details">Details</button>
-      <button type="button" id="actions">Actions</button>
-      <button type="button" id="wizard-open">Start wizard</button>
+      <button type="button" id="new" aria-haspopup="dialog">New project</button>
+      <button type="button" id="details" aria-expanded="false" aria-controls="drawer">Details</button>
+      <button type="button" id="actions" aria-haspopup="menu" aria-controls="menu">Actions</button>
+      <button type="button" id="wizard-open" aria-haspopup="dialog">Start wizard</button>
       <button type="button" id="delete-project">Delete project</button>
       <div id="menu" class="menu" role="menu" aria-label="Project actions" hidden>
         <button type="button" role="menuitem">Rename</button>
@@ -43,7 +43,7 @@
       <button type="button" id="modal-save">Save</button>
       <button type="button" id="modal-cancel">Cancel</button>
       <button type="button" id="modal-close" aria-label="Close">×</button>
-      <button type="button" id="discard">Discard changes</button>
+      <button type="button" id="discard" aria-haspopup="dialog">Discard changes</button>
     </div>
 
     <div id="confirm" class="dialog" role="alertdialog" aria-modal="true" aria-label="Are you sure?" hidden>

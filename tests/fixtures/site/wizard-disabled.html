@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Wizard with a disabled Next — Fixture</title>
+    <style>
+      [hidden] { display: none !important; }
+      .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Imports</h1>
+      <button type="button" id="open" aria-haspopup="dialog">Import data</button>
+    </main>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <div id="wizard" class="dialog" role="dialog" aria-modal="true" aria-label="Import wizard" hidden>
+      <h2>Step 1 of 2</h2>
+      <label><input type="checkbox" id="terms" /> I accept the terms</label>
+      <button type="button" id="next" disabled>Next</button>
+      <button type="button" id="cancel">Cancel</button>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const close = () => { $("wizard").hidden = true; $("backdrop").hidden = true; };
+      $("open").addEventListener("click", () => { $("wizard").hidden = false; $("backdrop").hidden = false; });
+      $("terms").addEventListener("change", () => { $("next").disabled = !$("terms").checked; });
+      $("cancel").addEventListener("click", close);
+      $("backdrop").addEventListener("click", close);
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    </script>
+  </body>
+</html>

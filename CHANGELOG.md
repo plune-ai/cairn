@@ -43,17 +43,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Cookie:` header) or the api-scope credentials; a `--session` option is not part of this change. `--spec` is no
   longer mandatory; without it and without `--base-url` the command still refuses, now naming both flags.
 
-- **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press what
-  could open an overlay (never a delete, sign-out or a completing button such as Save), and record each one found, in
+- **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press a
+  button that says it opens something (`aria-haspopup`, `aria-expanded` or `aria-controls`, read from the element);
+  every other button is listed in `skipped` with the reason and never pressed, and on top of that nothing a
+  destructive-action filter refuses (a delete, a sign-out, «Close account») and no completing button (Save, Submit…)
+  is pressed. Each overlay found is recorded, in
   stack order (page → overlay → nested overlay), in `overlays.json` and `report.json` (`overlays`) and as an *Overlays*
   section of `report.md`: its kind (`dialog`, `alertdialog`, `drawer`, `menu`, `listbox`), what opened it, its
   elements, its exits and the wizard steps in it. Detection is deterministic and reads the ARIA snapshot only: a
   `dialog` or `alertdialog` is an overlay; a `menu`, `listbox` or `complementary` is one when it was not on the page
   before the click; `status` and `alert` texts (toasts, validation messages) are recorded, never states. Exits are
-  read from the buttons (close, Cancel, Submit; Submit is marked destructive when the existing filters refuse its
-  name) and probed for Escape and a click outside (`verified`). A wizard's Next and Back are pressed to list its steps;
-  where Next is blocked the page's message is recorded, the empty fields are filled once and Next tried again. Nothing
-  is submitted. Elements inside a dialog now carry its scope, so their locator is
+  read from the buttons (a close button and Cancel only by their whole name — «Close», «×», «Cancel», «Not now»,
+  never «Close account» or «Cancel subscription»; Submit is marked destructive when the existing filters refuse its
+  name) and probed for Escape and a click outside (`verified`). The click outside is made only at a point checked
+  first: the element there lies outside the overlay and is no link, button, field or other control; when there is no
+  such point it is recorded as not tried (`notTried`). A dialog is a wizard only when it has a Next and a Back or a
+  step indicator («Step 1 of 3», a progressbar); an `alertdialog` never is, and «Continue» is no Next. Its Next and
+  Back are pressed, each only when enabled and passing the filters, to list its steps; where Next is blocked the
+  page's message is recorded, the empty fields are filled once and Next tried again. Nothing is submitted. Elements inside a dialog now carry its scope, so their locator is
   `getByRole('dialog', { name }).getByRole(role, { name })` (in `act`, `verify`, `getState`, `report.md`, the
   interaction map and the codegen prompt), and a same-named element on the page is not confused with them. While a
   modal overlay is open (`aria-modal`, a native `showModal()` dialog, an `alertdialog`), `act()` does not click an
