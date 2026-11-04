@@ -28,11 +28,16 @@
    ```
    Cairn tries `/openapi.json`, `/openapi.yaml`, `/swagger.json`, `/v3/api-docs`, `/v2/api-docs`, `/api-docs`,
    `/swagger/v1/swagger.json` and `/docs/openapi.json` on the base URL, in that order, and uses the first answer that
-   reads as an OpenAPI 3.x spec; the output says where (`✓ OpenAPI spec found at …`). Each try is a `GET` with no body,
-   gives up after 5 s, sends the same headers as the run (below), counts against `--max-requests`/`--rps` and does not
-   follow redirects. The addresses are joined to the base URL as given, so with `--base-url https://host/api` the first
-   try is `https://host/api/openapi.json`. Nothing found → exit `1` with every address tried and its answer; pass
-   `--spec <path|url>` then.
+   reads as an OpenAPI 3.x spec; the output says where (`✓ OpenAPI spec found at …`) and the run goes on as if that
+   spec had been given. The eight lookup requests are `GET` only, with no body, and give up after 5 s each; they count
+   against `--max-requests` and `--rps`, do not follow redirects, and send the same headers as the run (below). A path
+   that `--allowed-paths` does not allow is skipped, not requested. A found spec's external references are not
+   followed: a served spec whose `$ref` points at a file or another address is not used
+   (`external $ref is not followed for a spec found on the server`) and the next path is tried. The addresses go on the
+   base URL's path and keep its query string, so with `--base-url https://host/api?key=k` the first try is
+   `https://host/api/openapi.json?key=k`. A spec behind a sign-in is reached with `--header` (for example a `Cookie:`
+   header) or the api-scope credentials. Nothing found → exit `1` (`4` when the request budget ran out first) with
+   every address tried and its answer, and every address skipped; pass `--spec <path|url>` then.
 
 ## Auth / headers (nothing hardcoded)
 - **Config (per run):** `--header "Authorization: Bearer $TOKEN"` — repeatable. Config headers win.
@@ -92,7 +97,8 @@ Always on, no flag:
   that echo them.
 
 The run ends with a `Guardrails` section (also in `report.json` under `guardrails` and in `report.md`): cases executed, skipped by
-reason, blocked, redirects not followed, and the budget used. Not-sent cases are not test failures.
+reason, blocked, redirects not followed, and the budget used; after a spec lookup on the server (step 3) also the lookup's
+own requests (`spec lookup: N requests`, already in the budget), and in `report.json` what each address answered. Not-sent cases are not test failures.
 
 Exit codes: `0` ok, `1` a test failed or the input was bad, `3` `--min-coverage` not reached, `4` the request budget ran out, `5` every case was
 skipped or blocked, so nothing was tested. When several apply, the first of 1, 3, 4, 5 wins. Only `GET`/`HEAD`/`OPTIONS` count as read-only; any other method (`TRACE`, `PURGE`,

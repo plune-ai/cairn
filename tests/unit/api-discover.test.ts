@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ingestOpenApi } from "../../src/api/openapi.js";
 import { discoverSpec, SPEC_PATHS } from "../../src/api/discover.js";
-import { RequestGuard } from "../../src/api/guard.js";
+import { BUDGET_EXIT_CODE, RequestGuard, parseBaseUrl } from "../../src/api/guard.js";
 
 /**
  * #227: `cairn api --base-url <url>` without `--spec` looks for a spec the server already serves.
@@ -18,6 +18,8 @@ const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures",
 interface Hit {
   method: string;
   path: string;
+  /** The request target as sent, query included. */
+  url: string;
   headers: IncomingHttpHeaders;
   body: string;
 }
@@ -35,7 +37,7 @@ async function serve(routes: Record<string, (res: ServerResponse) => void> = {})
     req.on("data", (c: Buffer) => (body += c.toString()));
     req.on("end", () => {
       const path = (req.url ?? "/").split("?")[0] ?? "/";
-      hits.push({ method: req.method ?? "", path, headers: req.headers, body });
+      hits.push({ method: req.method ?? "", path, url: req.url ?? "/", headers: req.headers, body });
       const route = routes[path];
       if (route) return route(res);
       res.writeHead(404, { "content-type": "text/plain" });
@@ -59,6 +61,44 @@ const send = (type: string, text: string) => (res: ServerResponse) => {
   res.end(text);
 };
 
+/** Text that must never leave a local file: not in a request, not in the output. */
+const MARKER = "LOCAL-MARKER-5b1e";
+/** A one-operation spec whose query parameter's schema is `$ref: ref`; a resolved schema's `example` becomes the value sent. */
+const specWithRef = (ref: string): string =>
+  JSON.stringify({
+    openapi: "3.0.3",
+    info: { title: "Ref", version: "1" },
+    paths: {
+      "/echo": {
+        get: {
+          parameters: [{ name: "q", in: "query", required: true, schema: { $ref: ref } }],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    },
+  });
+/** A temp dir holding `ref.json`, a schema whose example is {@link MARKER}. */
+async function markerFile(): Promise<{ dir: string; file: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "qa-api-discover-ref-"));
+  const file = join(dir, "ref.json");
+  await writeFile(file, JSON.stringify({ type: "string", example: MARKER }));
+  return { dir, file };
+}
+/** Stand-in for the network: every `fetch` is answered here by URL (404 otherwise) and recorded; nothing leaves the process. */
+function stubFetch(answers: Record<string, string>): string[] {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (u: string | URL) => {
+      const url = String(u);
+      calls.push(url);
+      const body = answers[url];
+      return body === undefined ? new Response("not found", { status: 404 }) : new Response(body, { status: 200 });
+    }),
+  );
+  return calls;
+}
+
 let srv: Served | undefined;
 let out: string;
 let outChunks: string[];
@@ -77,6 +117,7 @@ beforeEach(async () => {
 afterEach(async () => {
   outSpy.mockRestore();
   errSpy.mockRestore();
+  vi.unstubAllGlobals();
   process.exitCode = 0;
   await srv?.close();
   srv = undefined;
@@ -95,9 +136,23 @@ describe("cairn api without --spec looks for a served spec (#227)", () => {
     srv = await serve({ "/v3/api-docs": send("application/yaml", yaml) });
 
     await cli("--base-url", srv.url);
-    const found = outChunks.join("").split("\n").filter((l) => l.includes("/v3/api-docs"));
+    // Fetched once: the parser reads the text the lookup already has, it does not download the address again.
+    expect(srv.hits.filter((h) => h.path === "/v3/api-docs")).toHaveLength(1);
+    const text = outChunks.join("");
+    const found = text.split("\n").filter((l) => l.includes("/v3/api-docs"));
     expect(found).toEqual([`✓ OpenAPI spec found at ${srv.url}/v3/api-docs`, `Source: ${srv.url}/v3/api-docs`]);
-    expect(outChunks.join("")).toContain("API spec: Pet Store v1.2.0 (OpenAPI 3.0.3)");
+    expect(text).toContain("API spec: Pet Store v1.2.0 (OpenAPI 3.0.3)");
+    // The Guardrails section counts the lookup's own requests (3 misses + the find), which are inside the run's budget.
+    expect(text).toContain("spec lookup: 4 requests");
+    expect(text).toContain(`request budget: ${srv.hits.length}/300 used`);
+    const report = JSON.parse(await readFile(join(out, "report.json"), "utf8")) as { guardrails: { specLookup?: unknown } };
+    expect(report.guardrails.specLookup).toEqual({
+      requests: 4,
+      foundAt: `${srv.url}/v3/api-docs`,
+      tried: ["/openapi.json", "/openapi.yaml", "/swagger.json"].map((p) => ({ url: `${srv!.url}${p}`, outcome: "404" })),
+      skipped: [],
+    });
+    expect(await readFile(join(out, "report.md"), "utf8")).toContain("spec lookup: 4 requests");
 
     const viaLookup = await discoverSpec({ baseUrl: srv.url, headers: {}, guard: openGuard() });
     expect(viaLookup.found).toBe(true);
@@ -143,6 +198,94 @@ describe("cairn api without --spec looks for a served spec (#227)", () => {
     if (res.found) return;
     expect(res.tried[0]).toEqual({ url: `${srv.url}/openapi.json`, outcome: "no answer within 0.3 s" });
     expect(res.tried).toHaveLength(8);
+  });
+
+  it("a body that stalls after the headers times out too, and the next path is tried", { timeout: 10_000 }, async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({
+      "/openapi.json": (res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write('{"openapi":"3.0.3",'); // headers and a first chunk, then nothing
+      },
+      "/openapi.yaml": send("application/json", json),
+    });
+    const started = Date.now();
+    const res = await discoverSpec({ baseUrl: srv.url, headers: {}, guard: openGuard(), timeoutMs: 300 });
+    expect(res.found && res.url).toBe(`${srv.url}/openapi.yaml`);
+    expect(res.tried[0]).toEqual({ url: `${srv.url}/openapi.json`, outcome: "no answer within 0.3 s" });
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it("a redirect is not followed: a 302 to a real spec is reported and its target is never asked", async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({
+      "/openapi.json": (res) => {
+        res.writeHead(302, { location: "/real.json" });
+        res.end();
+      },
+      "/real.json": send("application/json", json),
+    });
+    const res = await discoverSpec({ baseUrl: srv.url, headers: {}, guard: openGuard() });
+    expect(res.found).toBe(false);
+    expect(res.tried[0]).toEqual({ url: `${srv.url}/openapi.json`, outcome: "302 redirect, not followed" });
+    expect(srv.hits.filter((h) => h.path === "/real.json")).toHaveLength(0);
+  });
+
+  it("a served spec whose $ref points at a local file is not used: the file is not read, nothing of it is sent or printed", async () => {
+    const { dir, file } = await markerFile();
+    try {
+      srv = await serve({
+        "/openapi.json": send("application/json", specWithRef(pathToFileURL(file).href)),
+        "/echo": send("text/plain", "ok"),
+      });
+      await cli("--base-url", srv.url);
+      expect(srv.hits.map((h) => h.url).join("\n")).not.toContain(MARKER);
+      expect(outChunks.join("") + errChunks.join("")).not.toContain(MARKER);
+      expect(errChunks.join("")).toMatch(/\/openapi\.json — 200, .*external \$ref is not followed for a spec found on the server/);
+      expect(srv.hits.map((h) => h.path)).toEqual([...SPEC_PATHS]); // the next paths were tried, /echo never
+      expect(process.exitCode).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a served spec whose $ref points at another address is not used, and that address is not fetched", async () => {
+    const calls = stubFetch({
+      "https://api.test/openapi.json": specWithRef("./schemas.json#/Q"),
+      "https://api.test/schemas.json": JSON.stringify({ Q: { type: "string" } }),
+    });
+    const res = await discoverSpec({ baseUrl: "https://api.test", headers: {}, guard: openGuard() });
+    expect(res.found).toBe(false);
+    expect(res.tried[0]?.outcome).toContain("external $ref is not followed for a spec found on the server");
+    expect(calls).toEqual(SPEC_PATHS.map((p) => `https://api.test${p}`)); // never /schemas.json
+  });
+
+  it("--spec <url> does not read a local file its $ref points at; a spec file on disk still does (multi-file specs)", async () => {
+    const { dir, file } = await markerFile();
+    try {
+      const spec = specWithRef(pathToFileURL(file).href);
+      const calls = stubFetch({ "https://api.test/openapi.json": spec });
+      await cli("--spec", "https://api.test/openapi.json");
+      expect(outChunks.join("") + errChunks.join("")).not.toContain(MARKER);
+      expect(errChunks.join("")).toContain('Could not read OpenAPI spec "https://api.test/openapi.json"');
+      expect(process.exitCode).toBe(1);
+      expect(calls).toEqual(["https://api.test/openapi.json"]);
+
+      const onDisk = join(dir, "openapi.json");
+      await writeFile(onDisk, spec);
+      expect(JSON.stringify((await ingestOpenApi(onDisk)).endpoints[0]?.parameters)).toContain(MARKER);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a query string in --base-url stays on each lookup address, after the path", async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({ "/api/openapi.json": send("application/json", json) });
+    const { baseUrl } = parseBaseUrl(`${srv.url}/api/?sig=abcd1234`);
+    const res = await discoverSpec({ baseUrl, headers: {}, guard: openGuard() });
+    expect(srv.hits.map((h) => h.url)).toEqual(["/api/openapi.json?sig=abcd1234"]);
+    expect(res.found && res.url).toBe(`${srv.url}/api/openapi.json?sig=abcd1234`);
   });
 
   it("a 200 answer that is not a spec (an HTML page) is skipped and the next path is tried", async () => {
@@ -192,7 +335,7 @@ describe("cairn api without --spec looks for a served spec (#227)", () => {
     await cli("--base-url", srv.url, "--max-requests", "3");
     expect(srv.hits).toHaveLength(3);
     expect(errChunks.join("")).toContain("request budget ran out (--max-requests 3)");
-    expect(process.exitCode).not.toBe(0);
+    expect(process.exitCode).toBe(BUDGET_EXIT_CODE); // the runner's code for a spent budget, not 1
 
     errChunks.length = 0;
     process.exitCode = 0;
@@ -200,6 +343,17 @@ describe("cairn api without --spec looks for a served spec (#227)", () => {
     expect(srv.hits).toHaveLength(3); // nothing new
     expect(errChunks.join("")).toContain("--allowed-methods does not include GET");
     expect(process.exitCode).not.toBe(0);
+  });
+
+  it("--allowed-paths limits the lookup: a path it does not allow is skipped, not requested", async () => {
+    srv = await serve();
+    await cli("--base-url", srv.url, "--allowed-paths", "/pets/*");
+    expect(srv.hits).toHaveLength(0);
+    const err = errChunks.join("");
+    expect(err).toContain("Skipped (not requested):");
+    for (const p of SPEC_PATHS) expect(err).toContain(`${srv.url}${p} — not in --allowed-paths`);
+    expect(err).not.toContain("Tried (GET):");
+    expect(process.exitCode).toBe(1);
   });
 
   it("neither --spec nor --base-url: refused, and the message says either flag will do", async () => {

@@ -5,7 +5,8 @@
  * first answer `ingestOpenApi` reads without an error.
  *
  * Every try is a GET with no body, carries the run's headers (method-override ones dropped), takes a slot of the run's request
- * budget and rate limit, never follows a redirect, and has its own deadline.
+ * budget and rate limit, never follows a redirect, and has its own deadline. A path `--allowed-paths` does not allow is
+ * skipped, not asked. A found spec's external `$ref`s are not followed (`ingestOpenApi` gets the served text only).
  */
 import { ingestOpenApi, type ApiModel } from "./openapi.js";
 import { METHOD_OVERRIDE_HEADER, type RequestGuard } from "./guard.js";
@@ -29,16 +30,18 @@ export const SPEC_PATHS = [
  */
 export const SPEC_PROBE_TIMEOUT_MS = 5_000;
 
-/** One address tried without finding a spec, and what came back. */
+/** One address: what came back when it was tried without finding a spec, or why it was not asked. */
 export interface SpecTry {
   url: string;
   outcome: string;
 }
 
-export type SpecDiscovery =
+/** `tried`: addresses asked that gave no spec; `skipped`: addresses not asked (`--allowed-paths`). */
+export type SpecDiscovery = { tried: SpecTry[]; skipped: SpecTry[] } & (
   | { found: true; url: string; model: ApiModel }
   /** `stopped`: why the lookup ended before every address was tried (a guardrail). */
-  | { found: false; tried: SpecTry[]; stopped?: string };
+  | { found: false; stopped?: string }
+);
 
 export interface DiscoverOptions {
   /** `--base-url`, already checked by `parseBaseUrl`. */
@@ -53,25 +56,34 @@ export interface DiscoverOptions {
 
 export async function discoverSpec(opts: DiscoverOptions): Promise<SpecDiscovery> {
   const timeoutMs = opts.timeoutMs ?? SPEC_PROBE_TIMEOUT_MS;
-  const base = opts.baseUrl.replace(/\/+$/, "");
+  const base = new URL(opts.baseUrl);
+  const basePath = base.pathname.replace(/\/+$/, "");
   const tried: SpecTry[] = [];
+  const skipped: SpecTry[] = [];
   // Read-only whatever the run allows: an override header (`X-HTTP-Method-Override: DELETE`) would turn the GET into another method.
   const headers = Object.fromEntries(Object.entries(opts.headers).filter(([k]) => !METHOD_OVERRIDE_HEADER.test(k)));
   const stripped = Object.keys(opts.headers).length - Object.keys(headers).length;
   if (!opts.guard.allowsMethod("GET")) {
-    return { found: false, tried, stopped: "--allowed-methods does not include GET, the only method the lookup sends" };
+    return { found: false, tried, skipped, stopped: "--allowed-methods does not include GET, the only method the lookup sends" };
   }
   for (const path of SPEC_PATHS) {
-    const url = `${base}${path}`;
+    // On the base's path, its query kept: `https://h/api?key=k` → `https://h/api/openapi.json?key=k`.
+    const at = new URL(base);
+    at.pathname = `${basePath}${path}`;
+    const url = at.href;
+    if (!opts.guard.allowsPath(path)) {
+      skipped.push({ url, outcome: "not in --allowed-paths" });
+      continue;
+    }
     if (!(await opts.guard.acquire())) {
-      return { found: false, tried, stopped: `the request budget ran out (--max-requests ${opts.guard.maxRequests})` };
+      return { found: false, tried, skipped, stopped: `the request budget ran out (--max-requests ${opts.guard.maxRequests})` };
     }
     if (stripped) opts.guard.recordStripped(stripped);
     const got = await tryAddress(url, headers, timeoutMs);
-    if (typeof got !== "string") return { found: true, url, model: got };
+    if (typeof got !== "string") return { found: true, url, model: got, tried, skipped };
     tried.push({ url, outcome: got });
   }
-  return { found: false, tried };
+  return { found: false, tried, skipped };
 }
 
 /** The model when `url` serves a spec, else a short reason why not. */

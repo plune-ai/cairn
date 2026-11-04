@@ -36,6 +36,7 @@ import {
   parsePositiveInt,
   parsePositiveNumber,
   renderGuardrails,
+  type GuardrailReport,
 } from "../../api/guard.js";
 import { generateApiScenarios, type ApiScenario } from "../../api/scenarios.js";
 import { runApiScenarios, type ApiScenarioResult } from "../../api/scenario-runner.js";
@@ -334,6 +335,7 @@ export const apiModality: Modality = {
 
     let source: string;
     let model: ApiModel;
+    let specLookup: GuardrailReport["specLookup"]; // #227: what the lookup on the server did, for the guardrails report
     if (spec) {
       source = isUrl(spec) ? spec : resolve(spec);
       ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
@@ -346,21 +348,24 @@ export const apiModality: Modality = {
         return;
       }
     } else {
-      // #227: no --spec — try the addresses frameworks serve their spec at, then go on as with --spec <that url>.
+      // #227: no --spec — try the addresses frameworks serve their spec at, then go on as if that spec had been given.
       const baseUrl = base!.baseUrl; // no --spec means --base-url was given (checked above)
       ctx.err(`▸ No --spec given: looking for an OpenAPI spec served at ${baseUrl}…\n`);
       const found = await discoverSpec({ baseUrl, headers, guard });
       if (!found.found) {
         const lines = [`✗ No OpenAPI 3.x spec found at ${baseUrl}.`];
         if (found.tried.length) lines.push("  Tried (GET):", ...found.tried.map((t) => `    ${t.url} — ${t.outcome}`));
+        if (found.skipped.length) lines.push("  Skipped (not requested):", ...found.skipped.map((t) => `    ${t.url} — ${t.outcome}`));
         if (found.stopped) lines.push(`  Stopped: ${found.stopped}.`);
         lines.push("  Give the spec instead: --spec <path|url> (an OpenAPI 3.x JSON/YAML file or URL).");
         ctx.err(`${lines.join("\n")}\n`);
-        process.exitCode = 1;
+        // A budget spent on the lookup is the same outcome as one spent on the cases.
+        process.exitCode = guard.budgetExhausted ? BUDGET_EXIT_CODE : 1;
         return;
       }
       source = found.url;
       model = found.model;
+      specLookup = { requests: found.tried.length + 1, foundAt: found.url, tried: found.tried, skipped: found.skipped };
       ctx.out(`✓ OpenAPI spec found at ${source}\n`);
     }
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
@@ -424,7 +429,7 @@ export const apiModality: Modality = {
     // past-run browser already read for web runs — no parallel reporting layer.
     const sent = results.filter((r) => !wasNotSent(r));
     const passed = sent.filter((r) => r.passed).length;
-    const guardrails = guard.report();
+    const guardrails: GuardrailReport = specLookup ? { ...guard.report(), specLookup } : guard.report();
     const runId = basename(outDir);
     await write(
       join(outDir, "report.json"),
