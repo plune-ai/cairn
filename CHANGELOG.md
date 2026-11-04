@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
+  Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
+  collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else
+  `runs/api-<id>/`, also without `--base-url`) and read from there like a written spec. Ids in a path become
+  parameters (`/projects/123` → `/projects/{id}`; `:id` and `{{id}}` keep their names), query keys become optional
+  parameters, request and response body schemas are inferred from the examples (types and keys, `required` only for a
+  key in every example), and the document, each operation and each inferred schema carry `x-cairn-derived: true`.
+  From a HAR only the API requests of the origin most of them went to are kept; pages, scripts, styles, images, fonts
+  and other origins are left out and counted in the output. No header, cookie, query or body value is written (only
+  names, types and status codes), and the values of `Authorization`, `Cookie`, `Set-Cookie` and other sensitive
+  headers, the secret-looking query, form, body and variable values (`decider/redact.ts`) and credential-shaped
+  values are scrubbed from the file too.
 - **`cairn view <runDir>` builds one offline HTML page for a run (#211).** It writes `view.html` into the run
   directory: the scenario video (a relative path to the local `.webm`) and the steps from `screencasts.json` as
   chapters; a click or Enter on a step seeks the video, the current step is marked, light and dark. A run with no steps
@@ -64,6 +76,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
+  The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private
+  networks and reported it as an unresolved `$ref`. The text is read the way the lookup of #227 reads it: `GET`, no
+  body, no redirect, a 15 s deadline, one request of the run's budget through the shared guard (`--allowed-methods`
+  without `GET` sends nothing). The run's headers (`--header`, api-scope knowledge, Basic auth from `--base-url`; never
+  a method-override header) go with it only when the spec is on the `--base-url` origin, or when there is no
+  `--base-url`; a spec on another origin gets none of them. A refusal names the status, the redirect that was not
+  followed and where it pointed, or the timeout, and for `401`/`403` says to pass `--header`. A `$ref` on the spec's
+  own origin (a multi-file spec on a dev server) is read the same way, one request each; a `$ref` to any other origin
+  or to a local file is never fetched, so neither a redirect nor a host name that resolves to a private address
+  turns the named spec into another read.
 - **`cairn api --base-url` with a query string no longer sends every case to the server root (#235).** The request URL
   is now built from the parsed base URL: the case path follows the base path, the base query (a signed address, a key
   in a parameter) is kept on every request and the case's own query parameters are added to it. A base URL without a

@@ -12,12 +12,16 @@
  * BORROW-07 (#95): with `--adversarial`, also generate/run cases in one or more named styles —
  *   normal/curious/psycho/hacker (`src/api/adversarial.ts`) — alongside the existing cases.
  * #227: without `--spec`, look for a spec the `--base-url` server serves (`src/api/discover.ts`).
+ * #228: `--spec` also takes a Postman collection or a HAR file; it is converted to OpenAPI 3.x
+ *   (`src/api/collection.ts`), saved as `openapi.derived.json` in the run's directory and read from there.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
-import { discoverSpec } from "../../api/discover.js";
+import { discoverSpec, readSpecFromUrl } from "../../api/discover.js";
+import { deriveSpec, type DerivedSpec } from "../../api/collection.js";
+import { DERIVED_KEY, writeDerivedSpec } from "../../api/derived.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
 import { generateAdversarialCases, ADVERSARIAL_STYLES, type AdversarialStyle } from "../../api/adversarial.js";
 import { runApiCases, wasNotSent, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
@@ -396,6 +400,11 @@ export const apiModality: Modality = {
     // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
     // Built before the spec is read: a spec looked up on the base URL (#227) may sit behind the same sign-in.
     const headers: Record<string, string> = {};
+    if (!base) {
+      // #234: --header also reaches a spec read from a URL when there is no --base-url
+      Object.assign(headers, parseHeaderFlags(opts.header));
+      secrets.push(...collectSecrets(headers));
+    }
     if (base) {
       const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
       Object.assign(headers, await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl }), parseHeaderFlags(opts.header));
@@ -411,14 +420,59 @@ export const apiModality: Modality = {
     // One guard for the whole run: the spec lookup's tries and the cases share its budget and rate limit.
     const guard = new RequestGuard({ allowMutations: opts.allowMutations, allowedMethods, allowedPaths, maxRequests, rps });
 
+    const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     let source: string;
     let model: ApiModel;
     let specLookup: GuardrailReport["specLookup"]; // #227: what the lookup on the server did, for the guardrails report
     if (spec) {
       source = isUrl(spec) ? spec : resolve(spec);
-      ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
+      let ingestFrom = source;
+      // #228: a local Postman collection or HAR becomes an OpenAPI spec in the run's directory, read from there.
+      const text = isUrl(spec) ? undefined : await readFile(source, "utf8").catch(() => undefined);
+      let derived: DerivedSpec | undefined;
       try {
-        model = await ingestOpenApi(source);
+        derived = text === undefined ? undefined : deriveSpec(text);
+      } catch (e) {
+        ctx.err(`✗ Could not read ${source}: ${(e as Error).message}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      if (derived) {
+        ctx.err(`▸ ${derived.format === "har" ? "HAR file" : "Postman collection"} detected: converting it to OpenAPI 3.x…\n`);
+        for (const note of derived.notes) ctx.err(`  ${note}\n`);
+        secrets.push(...derived.secrets);
+        ingestFrom = await writeDerivedSpec(outDir, derived.doc, secrets);
+        ctx.out(`✓ Derived OpenAPI spec saved to ${ingestFrom} — operations and schemas inferred from examples (${DERIVED_KEY})\n`);
+      }
+      ctx.err(`▸ Ingesting OpenAPI spec from ${ingestFrom}…\n`);
+      try {
+        if (isUrl(spec)) {
+          // #234: read the text like the lookup does (GET, no redirect, deadline, run headers, shared guard), so a
+          // local or private address works and a refusal says what happened. The parser gets the text, not the address.
+          const unreadable = (why: string): Error => new Error(`Could not read OpenAPI spec "${source}": ${why}`);
+          if (!guard.allowsMethod("GET")) throw unreadable("--allowed-methods does not include GET, the only method the read sends.");
+          if (!(await guard.acquire())) throw unreadable(`the request budget ran out (--max-requests ${guard.maxRequests}).`);
+          // The run's credentials (api-scope knowledge, Basic auth from --base-url, --header) belong to the target:
+          // they go with the read only when the spec sits on the --base-url origin, or when there is no --base-url.
+          const specOrigin = new URL(source).origin;
+          const credsGo = !base || new URL(base.baseUrl).origin === specOrigin;
+          const specHeaders = credsGo ? headers : {};
+          const withheld = credsGo
+            ? ""
+            : ` The run's credentials are not sent to ${specOrigin}, because it is not the --base-url origin; download the spec and pass it as a file.`;
+          const got = await readSpecFromUrl(source, specHeaders);
+          if (!got.ok) throw unreadable(`${got.message}${withheld}`);
+          // A $ref on the spec's origin is read the same way (one more request of the budget); any other is refused.
+          const readRef = async (url: string): Promise<string> => {
+            if (!(await guard.acquire())) throw new Error(`the request budget ran out (--max-requests ${guard.maxRequests}) reading ${url}.`);
+            const ref = await readSpecFromUrl(url, specHeaders);
+            if (!ref.ok) throw new Error(`could not read $ref ${url}: ${ref.message}`);
+            return ref.text;
+          };
+          model = await ingestOpenApi(source, got.text, { readRef });
+        } else {
+          model = await ingestOpenApi(ingestFrom);
+        }
       } catch (e) {
         // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
         ctx.err(`✗ ${(e as Error).message}\n`);
@@ -497,7 +551,6 @@ export const apiModality: Modality = {
     // API-9 (#146): scenario chains run after the per-operation cases — independent of them.
     const scenarioResults = scenarios.length ? await runApiScenarios(scenarios, runnerOpts) : [];
 
-    const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
     await mkdir(outDir, { recursive: true });
     const evidencePath = join(outDir, "api-evidence.json");
     // #196: nothing reaches disk with a secret in it, whatever field it ended up in.

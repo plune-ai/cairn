@@ -39,6 +39,21 @@
    header) or the api-scope credentials. Nothing found → exit `1` (`4` when the request budget ran out first) with
    every address tried and its answer, and every address skipped; pass `--spec <path|url>` then.
 
+4. **A Postman collection or a HAR instead of a spec (#228)** — give it to `--spec` as a local file:
+   ```
+   cairn api --spec ./collection.postman.json --out runs/api-1
+   cairn api --spec ./recorded.har --base-url https://staging.example.com
+   ```
+   The format is told from the content (a Postman collection v2.x, a HAR's `log.entries`; anything else is read as
+   OpenAPI, as before). It is converted to OpenAPI 3.0 and saved as `openapi.derived.json` in the run directory
+   (`--out`, else `runs/api-<id>/`), and the run reads that file as if it had been given. Ids in a path become
+   parameters (`/projects/123` → `/projects/{id}`, `:id` and `{{id}}` keep their name), body schemas are inferred
+   from the request and response examples, and every operation and inferred schema is marked `x-cairn-derived: true`:
+   trust it less than a written spec. From a HAR only the API requests of the origin most of them went to are kept;
+   pages, scripts, styles, images and fonts are left out, and the output counts what was. No header, cookie, query or
+   body value is written (only names, types and status codes); `Authorization`, `Cookie`, `Set-Cookie` and values
+   that look secret are scrubbed from the file as well. A Postman v1 collection is refused: export it as v2.1.
+
 ## Save scenario chains as API flows (`--save-flows`, #230)
 `cairn api --spec ./openapi.yaml --scenarios --save-flows flows.json` saves each chain that has a `DELETE` as an API
 flow: its create step, the id the `DELETE` needs, and the `DELETE` as the cleanup. `cairn api --flows flows.json --out
