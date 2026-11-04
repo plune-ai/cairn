@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
-import { discoverSpec } from "../../api/discover.js";
+import { discoverSpec, readSpecFromUrl } from "../../api/discover.js";
 import { deriveSpec, type DerivedSpec } from "../../api/collection.js";
 import { DERIVED_KEY, writeDerivedSpec } from "../../api/derived.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
@@ -322,6 +322,11 @@ export const apiModality: Modality = {
     // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
     // Built before the spec is read: a spec looked up on the base URL (#227) may sit behind the same sign-in.
     const headers: Record<string, string> = {};
+    if (!base) {
+      // #234: --header also reaches a spec read from a URL when there is no --base-url
+      Object.assign(headers, parseHeaderFlags(opts.header));
+      secrets.push(...collectSecrets(headers));
+    }
     if (base) {
       const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
       Object.assign(headers, await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl }), parseHeaderFlags(opts.header));
@@ -363,7 +368,33 @@ export const apiModality: Modality = {
       }
       ctx.err(`▸ Ingesting OpenAPI spec from ${ingestFrom}…\n`);
       try {
-        model = await ingestOpenApi(ingestFrom);
+        if (isUrl(spec)) {
+          // #234: read the text like the lookup does (GET, no redirect, deadline, run headers, shared guard), so a
+          // local or private address works and a refusal says what happened. The parser gets the text, not the address.
+          const unreadable = (why: string): Error => new Error(`Could not read OpenAPI spec "${source}": ${why}`);
+          if (!guard.allowsMethod("GET")) throw unreadable("--allowed-methods does not include GET, the only method the read sends.");
+          if (!(await guard.acquire())) throw unreadable(`the request budget ran out (--max-requests ${guard.maxRequests}).`);
+          // The run's credentials (api-scope knowledge, Basic auth from --base-url, --header) belong to the target:
+          // they go with the read only when the spec sits on the --base-url origin, or when there is no --base-url.
+          const specOrigin = new URL(source).origin;
+          const credsGo = !base || new URL(base.baseUrl).origin === specOrigin;
+          const specHeaders = credsGo ? headers : {};
+          const withheld = credsGo
+            ? ""
+            : ` The run's credentials are not sent to ${specOrigin}, because it is not the --base-url origin; download the spec and pass it as a file.`;
+          const got = await readSpecFromUrl(source, specHeaders);
+          if (!got.ok) throw unreadable(`${got.message}${withheld}`);
+          // A $ref on the spec's origin is read the same way (one more request of the budget); any other is refused.
+          const readRef = async (url: string): Promise<string> => {
+            if (!(await guard.acquire())) throw new Error(`the request budget ran out (--max-requests ${guard.maxRequests}) reading ${url}.`);
+            const ref = await readSpecFromUrl(url, specHeaders);
+            if (!ref.ok) throw new Error(`could not read $ref ${url}: ${ref.message}`);
+            return ref.text;
+          };
+          model = await ingestOpenApi(source, got.text, { readRef });
+        } else {
+          model = await ingestOpenApi(ingestFrom);
+        }
       } catch (e) {
         // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
         ctx.err(`✗ ${(e as Error).message}\n`);

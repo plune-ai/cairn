@@ -110,3 +110,42 @@ async function tryAddress(url: string, headers: Record<string, string>, timeoutM
     return `${status}, not an OpenAPI 3.x spec (${(e as Error).message.split("\n")[0]})`;
   }
 }
+
+/** Deadline for reading the spec a user named with `--spec <url>`: one document, but a slow dev server may build it first. */
+export const SPEC_READ_TIMEOUT_MS = 15_000;
+
+/**
+ * #234: the text of the spec at `url`, read the way the lookup reads its tries (GET, no body, run headers
+ * without method-override ones, no redirect, a deadline). On a refusal `message` says what happened — the
+ * status, the redirect not followed, the timeout — and how to go on, never a `$ref` error. The caller
+ * counts the request against the run's guard.
+ */
+export async function readSpecFromUrl(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number = SPEC_READ_TIMEOUT_MS,
+): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
+  const sent = Object.fromEntries(Object.entries(headers).filter(([k]) => !METHOD_OVERRIDE_HEADER.test(k)));
+  try {
+    const res = await fetch(url, { method: "GET", headers: sent, redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    const status = res.status;
+    if (status >= 200 && status <= 299) return { ok: true, text: await res.text() };
+    await res.body?.cancel();
+    if (status >= 300 && status < 400) {
+      const to = res.headers.get("location");
+      return {
+        ok: false,
+        message: `the server answered ${status}${to ? ` and pointed to ${to}` : ""}; a redirect is not followed. Give the address it points to as --spec.`,
+      };
+    }
+    const hint =
+      status === 401 || status === 403
+        ? " The spec needs a sign-in: pass it with --header (for example --header \"Authorization: Bearer <token>\") or as api-scope knowledge."
+        : "";
+    return { ok: false, message: `the server answered ${status}.${hint}` };
+  } catch (e) {
+    const err = e as Error & { cause?: { code?: string; message?: string } };
+    if (err.name === "TimeoutError") return { ok: false, message: `no answer within ${timeoutMs / 1000} s.` };
+    return { ok: false, message: `the address could not be reached (${err.cause?.code ?? err.cause?.message ?? err.message}).` };
+  }
+}
