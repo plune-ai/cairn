@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cairn api --spec`. Ids in a path become parameters (`/projects/123` and `/projects/456` → `/projects/{id}`),
   with methods, response codes, query keys and body schemas inferred from the examples, all marked
   `x-cairn-derived: true`. Pages, scripts, styles, images and fonts are left out, and so is every origin but `--url`'s
-  unless `--api-origin <origins>` (comma-separated) allows it; the run log counts what was left out. A JSON response
+  unless `--api-origin <list>` (comma-separated origins) allows it; the run log counts what was left out. A JSON response
   body (up to 1 MB) is read for its schema only and not kept; no body, header, cookie or query value is written, and
   `Authorization`, cookies and secret-looking values of the traffic, the knowledge and the environment are scrubbed
   from the file as well. Nothing is written when no API request was seen, or on the cli backend.

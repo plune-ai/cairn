@@ -262,8 +262,6 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   // FIX B (0.3.3): pass the channel — skipped when a system browser (chrome/msedge) is configured,
   // since that path needs no bundled Chromium (the bug: this fired even with BROWSER_CHANNEL=chrome).
   ensureBrowsersInstalled({ channel: cfg.browser.channel });
-  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
-  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
 
@@ -287,6 +285,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       onProgress(`⚠ approaching the LLM-call budget (${used}/${max} calls — cost guardrail)`);
     }
   };
+  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
+  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const telemetry = await initTelemetry(cfg);
   const router = new RoleRouter(
     cfg,
@@ -737,8 +737,6 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
   // Onboarding guardrail: design drives the bundled Chromium to observe the page (skipped when a
   // system-browser channel is configured) → fail fast with a copy-paste fix before any LLM call.
   ensureBrowsersInstalled({ channel: cfg.browser.channel });
-  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
-  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const keys = { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey };
   const budget = new CallBudget(80); // cost-guardrail: safeguard (normally ~6-10 calls/run)
   const logLines: string[] = [];
@@ -753,6 +751,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     persistLog();
   };
 
+  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
+  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const telemetry = await initTelemetry(cfg);
   const router = new RoleRouter(
     cfg,

@@ -129,7 +129,7 @@ export function buildProgram(): Command {
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .option("--screencast", "record a .webm per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
-    .option("--api-origin <origins>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
+    .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(async (opts: Record<string, unknown>) => {
@@ -285,7 +285,7 @@ export function buildProgram(): Command {
     .option("--setup", "for journeys (--flow): plan + emit starting-state setup (fixture / API seed; manual fallback)")
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--headed", "visible browser (debug)")
-    .option("--api-origin <origins>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
+    .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(

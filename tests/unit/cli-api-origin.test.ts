@@ -22,7 +22,8 @@ afterEach(() => {
 
 describe("--api-origin (#229)", () => {
   it.each(["explore", "design"])("%s has the option and passes it to the run", async (command) => {
-    vi.stubEnv("ANTHROPIC_API_KEY", "test-key-not-used");
+    vi.stubEnv("LLM_PROFILE", "openrouter");
+    vi.stubEnv("OPENROUTER_API_KEY", "test-key-not-used");
     const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       const { buildProgram } = await import("../../src/cli/index.js");

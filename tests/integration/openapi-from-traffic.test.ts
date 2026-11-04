@@ -20,6 +20,12 @@ vi.mock("../../src/eval/judge.js", async (orig) => ({
   ...(await orig<typeof import("../../src/eval/judge.js")>()),
   judgeTestCases: async () => [],
 }));
+vi.mock("../../src/eval/pilot.js", async (orig) => ({
+  ...(await orig<typeof import("../../src/eval/pilot.js")>()),
+  pilotReview: async () => {
+    throw new Error("no LLM in this test");
+  },
+}));
 vi.mock("../../src/agent/graph.js", () => ({
   runExploreGraph: async (deps: { gateway: BrowserGateway }, { url }: { url: string }) => {
     const g = deps.gateway;
@@ -151,7 +157,7 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
   });
 
   const start = (): string => `${appUrl}/app.html?tp=${encodeURIComponent(thirdUrl)}`;
-  const config = () => loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used", BROWSER_BACKEND: "lib" });
+  const config = () => loadConfig({ LLM_PROFILE: "openrouter", OPENROUTER_API_KEY: "test-key-not-used", BROWSER_BACKEND: "lib" });
 
   it("after explore, openapi.derived.json is in the run dir: ingestOpenApi reads it, ids are folded, no third party, no token", { timeout: 90_000 }, async () => {
     const events: string[] = [];
