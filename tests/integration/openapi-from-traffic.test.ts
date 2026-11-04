@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -112,6 +112,12 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
         send(200, project(Number(path.split("/").pop())));
       } else if (req.method === "POST" && path === "/api/projects") {
         send(201, project(789));
+      } else if (req.method === "GET" && path === "/api/watch") {
+        // A watch stream: the answer starts and never ends.
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write("[");
+      } else if (req.method === "GET" && path === "/api/vault/opensesame") {
+        send(200, { open: true });
       } else if (req.method === "GET" && path === "/api/settings") {
         send(200, { theme: "dark", notifications: true });
       } else {
@@ -209,5 +215,26 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
     expect(model.endpoints.map((e) => `${e.method} ${e.path}`)).toContain("POST /collect");
     const saved = await readFile(join(result.runDir, "openapi.derived.json"), "utf8");
     expect(saved).not.toContain("FAKE-spa-tp-uid-4242");
+  });
+  it("a JSON answer that never ends does not hold the run: its body is cut off after a few seconds and the request is kept", { timeout: 90_000 }, async () => {
+    const events: string[] = [];
+    const t0 = Date.now();
+    const result = await runExploration({ url: `${start()}&call=/api/watch`, config: config(), runsBaseDir: base, knowledgeDir: join(base, "none"), fresh: true, onProgress: (e) => events.push(e) });
+    expect(Date.now() - t0).toBeLessThan(60_000);
+    expect(events.join("\n")).toMatch(/1 response body cut off/);
+    const model = await ingestOpenApi(join(result.runDir, "openapi.derived.json"));
+    const watch = model.endpoints.find((e) => e.method === "GET" && e.path === "/api/watch");
+    expect(watch?.responses.map((r) => r.status)).toEqual(["200"]);
+    await readFile(join(result.runDir, "report.json"), "utf8");
+  });
+
+  it("a value known only from the run's own secrets (knowledge) is scrubbed from the file when the traffic carries it", { timeout: 90_000 }, async () => {
+    const knowledge = join(base, "knowledge-vault");
+    await mkdir(knowledge, { recursive: true });
+    await writeFile(join(knowledge, "vault.md"), "The vault opens with these credentials.\n\nLogin: qa@example.test\nPassword: opensesame\n");
+    const result = await runExploration({ url: `${start()}&call=/api/vault/opensesame`, config: config(), runsBaseDir: base, knowledgeDir: knowledge, fresh: true });
+    const saved = await readFile(join(result.runDir, "openapi.derived.json"), "utf8");
+    expect(saved).toContain("/api/vault/");
+    expect(saved).not.toContain("opensesame");
   });
 });

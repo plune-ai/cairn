@@ -3,7 +3,7 @@ import { resolve, dirname, basename, join, relative, sep } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
-import { ApiTrafficRecorder, parseApiOrigins } from "../browser/api-traffic.js";
+import { ApiTrafficRecorder, FLUSH_TIMEOUT_MS, parseApiOrigins } from "../browser/api-traffic.js";
 import { DERIVED_SPEC_FILE, writeDerivedSpec } from "../api/derived.js";
 import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
 import type { AppliedEnvironment, Environment } from "../environment/index.js";
@@ -243,6 +243,8 @@ async function writeTrafficSpec(
     ...(statics ? [`${statics} page/static request(s)`] : []),
     ...(otherOrigin ? [`${otherOrigin} to other origins (allow one with --api-origin)`] : []),
   ];
+  const cut = recorder.cutOff;
+  if (cut) left.push(`${cut} response ${cut === 1 ? "body" : "bodies"} cut off after ${FLUSH_TIMEOUT_MS / 1000}s (recorded without a schema)`);
   const leftText = left.length ? `; left out: ${left.join(", ")}` : "";
   if (recorder.recorded === 0) {
     onProgress(`api — no API request seen on ${new URL(url).origin}, no ${DERIVED_SPEC_FILE}${leftText}`);

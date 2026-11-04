@@ -62,6 +62,15 @@ const decoded = (s: string): string => {
   }
 };
 
+/** Holds an e-mail address: `alice@example.com`, `mailto:bob@example.com`. */
+const EMAIL = /[^\s@/]+@[^\s@/]+\.[A-Za-z]{2,}/;
+
+/**
+ * A name that is somebody's data, not the API's: an e-mail address or a credential-shaped run. In a path it becomes a
+ * parameter; as an object key it makes the object a map; as a query name it is dropped. Never written as a name.
+ */
+export const personalName = (s: string): boolean => EMAIL.test(s) || secretShaped(s);
+
 /** `projects` → `projectId`, `categories` → `categoryId`, `v2` (or nothing) → `id`. */
 function nameFor(previous: string | undefined): string {
   if (!previous || !/^[A-Za-z][A-Za-z_-]*$/.test(previous)) return "id";
@@ -72,7 +81,7 @@ function nameFor(previous: string | undefined): string {
 
 /**
  * The templated form of a path: a segment named as a parameter (`:id`, `{{id}}`, `{id}`) keeps its name; one that is
- * an id (digits, a UUID, long hex, a credential-shaped run, a `‹v›` already put there) becomes a parameter named for
+ * an id (digits, a UUID, long hex, a credential-shaped run, an e-mail address, a `‹v›` already put there) becomes a parameter named for
  * the segment before it (`/projects/123/tasks/9` → `/projects/{projectId}/tasks/{taskId}`), or `{id}` when it is the
  * only one. Words, slugs and `v2` stay.
  */
@@ -86,7 +95,7 @@ export function templatePath(path: string): { path: string; params: PathParam[] 
       if (m?.[1]) return { name: m[1].replace(/[^\w-]/g, "_"), integer: false };
     }
     if (/^\d+$/.test(s)) return { integer: true };
-    if (s === "‹v›" || s === "{}" || secretShaped(s)) return { integer: false };
+    if (s === "‹v›" || s === "{}" || personalName(s)) return { integer: false };
     return { literal: s };
   });
   const count = parsed.filter((p) => !("literal" in p)).length;
@@ -115,7 +124,8 @@ const MAX_KEYS = 200;
 /**
  * The JSON schema of one example value: types, object keys (all `required`) and array items — never the value. A
  * `null` gives `{ nullable: true }` with no type, so a later example can say what the type is. An empty array has no
- * `items` yet for the same reason. A credential-shaped key (a map keyed by token) is not kept.
+ * `items` yet for the same reason. An object with a key that is an e-mail address or credential-shaped is a map keyed by
+ * people or tokens: its schema is `additionalProperties` with the values' merged schema, and no key is kept.
  */
 export function schemaOf(v: unknown, depth = 0): JsonSchema {
   if (v === null) return { nullable: true };
@@ -136,7 +146,16 @@ export function schemaOf(v: unknown, depth = 0): JsonSchema {
     case "string":
       return { type: "string" };
     case "object": {
-      const keys = Object.keys(v as object).filter((k) => !secretShaped(k)).slice(0, MAX_KEYS);
+      const all = Object.keys(v as object);
+      if (all.some(personalName)) {
+        let values: JsonSchema | undefined;
+        for (const k of all.slice(0, MAX_KEYS)) {
+          const s = schemaOf((v as Record<string, unknown>)[k], depth + 1);
+          values = values ? mergeSchema(values, s) : s;
+        }
+        return { type: "object", additionalProperties: values ?? {} };
+      }
+      const keys = all.slice(0, MAX_KEYS);
       const properties: Record<string, JsonSchema> = {};
       for (const k of keys) properties[k] = schemaOf((v as Record<string, unknown>)[k], depth + 1);
       return keys.length ? { type: "object", properties, required: keys } : { type: "object" };
@@ -147,14 +166,21 @@ export function schemaOf(v: unknown, depth = 0): JsonSchema {
 }
 
 /** Two examples' schemas as one: keys of either, `required` only when in both, `integer` + `number` is `number`, a
- * `null` makes it `nullable`, and two types that do not agree make it anything (`{}`). */
+ * `null` makes it `nullable`, and two types that do not agree make it anything (`{}`). A map merged with an object is
+ * a map whose values take every value seen. */
 export function mergeSchema(a: JsonSchema, b: JsonSchema): JsonSchema {
   if (Object.keys(a).length === 0 || Object.keys(b).length === 0) return {};
   if (a.type === undefined) return b.type === undefined ? { nullable: true } : { ...b, nullable: true };
   if (b.type === undefined) return { ...a, nullable: true };
   const nullable = a.nullable === true || b.nullable === true;
   let out: JsonSchema;
-  if (a.type === b.type && a.type === "object") {
+  if (a.type === b.type && a.type === "object" && (a.additionalProperties !== undefined || b.additionalProperties !== undefined)) {
+    const values = [a, b].flatMap((x) => [
+      ...(x.additionalProperties !== undefined ? [x.additionalProperties as JsonSchema] : []),
+      ...Object.values((x.properties ?? {}) as Record<string, JsonSchema>),
+    ]);
+    out = { type: "object", additionalProperties: values.reduce((m, x) => mergeSchema(m, x)) };
+  } else if (a.type === b.type && a.type === "object") {
     const pa = (a.properties ?? {}) as Record<string, JsonSchema>;
     const pb = (b.properties ?? {}) as Record<string, JsonSchema>;
     const properties: Record<string, JsonSchema> = { ...pa };
@@ -183,6 +209,9 @@ function finalSchema(s: JsonSchema, top = true): JsonSchema {
   let out: JsonSchema = { ...s };
   if (out.type === undefined) out = {};
   if (out.type === "array") out.items = out.items ? finalSchema(out.items as JsonSchema, false) : {};
+  if (out.additionalProperties && typeof out.additionalProperties === "object") {
+    out.additionalProperties = finalSchema(out.additionalProperties as JsonSchema, false);
+  }
   if (out.properties) {
     out.properties = Object.fromEntries(
       Object.entries(out.properties as Record<string, JsonSchema>).map(([k, v]) => [k, finalSchema(v, false)]),
@@ -277,7 +306,7 @@ export class DerivedSpecBuilder {
       });
     }
     op.seen += 1;
-    for (const q of x.queryKeys ?? []) if (q && !secretShaped(q)) op.query.add(q);
+    for (const q of x.queryKeys ?? []) if (q && !personalName(q)) op.query.add(q);
     if (op.summary === undefined && x.summary) op.summary = x.summary;
     for (const tag of x.tags ?? []) op.tags.add(tag);
     const reqType = mediaType(x.request?.contentType);

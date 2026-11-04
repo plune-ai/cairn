@@ -28,6 +28,11 @@ export interface SeenExchange {
 
 /** The largest response body read for its schema; a larger one gives the status only. */
 export const MAX_BODY_BYTES = 1_000_000;
+/**
+ * How long {@link ApiTrafficRecorder.flush} waits for the bodies still being read. A page may hold a JSON answer open
+ * (a long poll, a watch stream, a slow export): the run must still end, so a body not read by then is cut off.
+ */
+export const FLUSH_TIMEOUT_MS = 3_000;
 /** The most secret values kept aside for the writer: a long run must not grow without end. */
 const MAX_SECRETS = 5_000;
 
@@ -64,10 +69,12 @@ export class ApiTrafficRecorder {
   private readonly builder = new DerivedSpecBuilder();
   private readonly origins: Set<string>;
   private readonly maxBodyBytes: number;
-  private readonly pending = new Set<Promise<void>>();
+  /** Bodies being read, each with what to record if it is cut off. */
+  private readonly pending = new Map<Promise<void>, { cut: boolean; cutOff: () => void }>();
   private readonly secrets = new Set<string>();
   private readonly seenOrigins = new Map<string, number>();
   private count = 0;
+  private cut = 0;
   private readonly left = { static: 0, otherOrigin: 0 };
 
   constructor(opts: { origins: string[]; maxBodyBytes?: number }) {
@@ -82,6 +89,10 @@ export class ApiTrafficRecorder {
   /** Requests left out: pages and static files, and API requests to an origin not allowed. */
   get leftOut(): { static: number; otherOrigin: number } {
     return { ...this.left };
+  }
+  /** Response bodies {@link flush} stopped waiting for: those requests are kept with method, path and status only. */
+  get cutOff(): number {
+    return this.cut;
   }
   /** Operations the recorded requests make. */
   get operations(): number {
@@ -135,25 +146,54 @@ export class ApiTrafficRecorder {
       this.builder.add(base);
       return;
     }
+    const entry = {
+      cut: false,
+      cutOff: (): void => {
+        this.keep(exchangeSecrets({ headers, fields }));
+        this.builder.add(base);
+      },
+    };
     const p = x.body!()
       .then(
         (text) => {
+          if (entry.cut) return;
           const parsed = text.length <= this.maxBodyBytes ? parse(text) : undefined;
           if (parsed !== undefined) fields.push(...bodyFields(parsed));
           this.builder.add({ ...base, ...(parsed !== undefined ? { response: { contentType: resType, body: parsed } } : {}) });
         },
-        () => this.builder.add(base), // a redirect or a page gone: the status is still worth having
+        () => {
+          if (!entry.cut) this.builder.add(base); // a redirect or a page gone: the status is still worth having
+        },
       )
       .finally(() => {
-        this.keep(exchangeSecrets({ headers, fields }));
+        if (!entry.cut) this.keep(exchangeSecrets({ headers, fields }));
         this.pending.delete(p);
       });
-    this.pending.add(p);
+    this.pending.set(p, entry);
   }
 
-  /** Waits for the bodies still being read. */
-  async flush(): Promise<void> {
-    while (this.pending.size > 0) await Promise.allSettled([...this.pending]);
+  /**
+   * Waits for the bodies still being read, at most `timeoutMs`. A body not read by then is cut off: its request is
+   * recorded with method, path and status only ({@link cutOff} counts them), and a later answer is ignored.
+   */
+  async flush(timeoutMs = FLUSH_TIMEOUT_MS): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"late">((resolve) => {
+      timer = setTimeout(() => resolve("late"), timeoutMs);
+    });
+    try {
+      while (this.pending.size > 0) {
+        if ((await Promise.race([Promise.allSettled([...this.pending.keys()]), late])) === "late") break;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    for (const [p, entry] of this.pending) {
+      entry.cut = true;
+      entry.cutOff();
+      this.cut += 1;
+      this.pending.delete(p);
+    }
   }
 
   /** The OpenAPI draft and the values to scrub from it. Call {@link flush} first. */

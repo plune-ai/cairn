@@ -100,4 +100,26 @@ describe("ApiTrafficRecorder (#229)", () => {
     expect(() => parseApiOrigins("https://app.example.test/", "ftp://x.test")).toThrow(/--api-origin/);
     expect(() => parseApiOrigins("https://app.example.test/", "not a url")).toThrow(/--api-origin/);
   });
+  it("flush gives up on a body that never arrives: the request is kept without a schema, and counted as cut off", async () => {
+    const rec = new ApiTrafficRecorder({ origins: [APP] });
+    rec.note({ method: "GET", url: `${APP}/api/watch`, resourceType: "fetch", status: 200, responseContentType: "application/json", body: () => new Promise<string>(() => undefined) });
+    rec.note({ method: "GET", url: `${APP}/api/a`, resourceType: "fetch", status: 200, responseContentType: "application/json", body: json({ ok: true }) });
+    const t0 = Date.now();
+    await rec.flush(100);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(rec.cutOff).toBe(1);
+    const paths = (rec.spec({ title: "app" }).doc as { paths: Record<string, { get: { responses: Record<string, Record<string, unknown>> } }> }).paths;
+    expect(paths["/api/watch"]!.get.responses["200"]).toEqual({ description: "Status 200, as recorded" });
+    expect(paths["/api/a"]!.get.responses["200"]!.content).toBeDefined();
+  });
+
+  it("an e-mail address in the path or as a response key does not reach the spec", async () => {
+    const rec = new ApiTrafficRecorder({ origins: [APP] });
+    rec.note({ method: "GET", url: `${APP}/api/users/alice.smith@example.com/avatar`, resourceType: "fetch", status: 200, responseContentType: "application/json", body: json({ "bob.jones@example.com": { role: "admin" } }) });
+    await rec.flush();
+    const text = JSON.stringify(rec.spec({ title: "app" }).doc);
+    expect(text).not.toContain("alice.smith@example.com");
+    expect(text).not.toContain("bob.jones@example.com");
+    expect(text).toContain("/api/users/{id}/avatar");
+  });
 });

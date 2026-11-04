@@ -16,7 +16,10 @@
   <script>
     // Made-up credentials: none of them may reach openapi.derived.json.
     const AUTH = { Authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJzcGEifQ.FAKEspaSIGNATURE0229" };
-    const third = new URLSearchParams(location.search).get("tp");
+    const params = new URLSearchParams(location.search);
+    const third = params.get("tp");
+    // One more API call the Settings screen starts, named by the test: a watch stream that never ends, a path with a value in it.
+    const call = params.get("call");
     const main = document.getElementById("main");
     const api = (path, init = {}) =>
       fetch(path, { ...init, headers: { ...AUTH, ...(init.headers || {}) } }).then((r) => (r.status === 204 ? null : r.json()));
@@ -65,6 +68,7 @@
     document.getElementById("projects").addEventListener("click", projects);
     document.getElementById("settings").addEventListener("click", async () => {
       history.pushState({}, "", "/settings");
+      if (call) fetch(call, { headers: AUTH }).catch(() => undefined);
       const s = await api("/api/settings");
       show("Settings", [`Theme: ${s.theme}`]);
     });

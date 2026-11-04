@@ -54,7 +54,9 @@ OpenAPI 3.0: ids in paths become parameters (`/projects/123` → `/projects/{id}
 schemas inferred from the examples, all marked `x-cairn-derived: true`. Only `--url`'s origin is kept, plus those given
 with `--api-origin https://api.example.com` (comma-separated); analytics, CDNs and pages, scripts, styles, images and
 fonts stay out (the run log counts them). No body, header, cookie or query value is written, only names, types and
-status codes, and the traffic's credentials are scrubbed from the file as well. Give it straight to
+status codes, and the traffic's credentials are scrubbed from the file as well. An e-mail address in a path becomes a parameter, and an
+object keyed by e-mail addresses or tokens is a map (`additionalProperties`). A response body still open 3 s after the
+run ends (a long poll, a watch stream) is cut off: the request stays, without a schema, and the run log counts it. Give it straight to
 `cairn api --spec runs/<runId>/openapi.derived.json --base-url <url>`. The sign-in of an `--env-file` environment runs
 in its own browser and is not recorded.
 + a Langfuse trace (link in stdout).
