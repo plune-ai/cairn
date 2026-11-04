@@ -44,8 +44,8 @@ tests/        # generated *.spec.ts, page objects, fixtures, *.aria.yml
 snapshots/    # screenshot.png, aria.yaml
 study.json    # PageStudy
 report.json   # ValidationReport + scores, deadClicks
-report.md     # the same for a person, with a Dead clicks section (empty when every click had an effect)
-requests.json # requests the exploration's clicks started: method, path, status (no bodies, no headers)
+report.md     # the same for a person, with a Dead clicks section: clicks with no change seen, to check by hand
+requests.json # requests the clicks started: method, path, status (no bodies, headers or query values); lib backend
 ```
 + a Langfuse trace (link in stdout).
 

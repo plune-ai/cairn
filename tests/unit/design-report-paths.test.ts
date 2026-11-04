@@ -50,6 +50,7 @@ vi.mock("../../src/agent/graph.js", () => ({
         closed: [],
         added: [],
         removed: [],
+        appeared: [],
         state: [],
         requests: [{ method: "POST", path: "/api/export", status: 500 }],
       },
@@ -84,5 +85,14 @@ describe("design run artifacts · clicks (#224)", () => {
     expect(JSON.parse(await readFile(join(result.runDir, "requests.json"), "utf8"))).toEqual([
       { method: "POST", path: "/api/export", status: 500 },
     ]);
+  });
+
+  it("on the cli backend nothing is recorded: report.json has no deadClicks and no requests.json is written", async () => {
+    const config = loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used", BROWSER_BACKEND: "cli" });
+    const result = await runDesign({ url: "https://app.test/login", config, runsBaseDir: base, knowledgeDir: join(base, "none") });
+
+    const report = JSON.parse(await readFile(join(result.runDir, "report.json"), "utf8")) as Record<string, unknown>;
+    expect("deadClicks" in report).toBe(false);
+    await expect(stat(join(result.runDir, "requests.json"))).rejects.toThrow();
   });
 });

@@ -411,7 +411,7 @@ describe("runExploreGraph — what each click did (#224)", () => {
     );
     gateway.getState = async () => ({ visible: true, enabled: true, checked: false });
     const effect = (name: string, outcome: "no-effect" | "state-changed"): ClickEffect => ({
-      outcome, page: "https://app.test/page", role: "button", name, opened: [], closed: [], added: [], removed: [], state: [], requests: [],
+      outcome, page: "https://app.test/page", role: "button", name, opened: [], closed: [], added: [], removed: [], appeared: [], state: [], requests: [],
     });
     let clicks = 0;
     gateway.act = async () =>

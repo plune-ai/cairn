@@ -1,4 +1,6 @@
 import type { ClickEffect, ElementRef } from "../browser/types.js";
+import { DEAD_CLICK_RECHECK_MS, REQUEST_ANSWER_MS, recordedUrl } from "../browser/click-effect.js";
+import { norm, type FlowEdge } from "../flow/crawl.js";
 import type { TestCase } from "../design/index.js";
 import type { JourneyCase } from "../design/schema.js";
 import type { CoverageReport } from "../eval/coverage.js";
@@ -15,21 +17,28 @@ import type { TriageResult } from "../decider/uses/repair-triage.js";
 import type { HealRecord } from "../decider/uses/locator-heal.js";
 import { displayPath } from "../agent/summary.js";
 
-/** #224: a click that changed nothing — no URL, overlay, state, content, or request answered 2xx — and where. */
+/** #224: a click after which Cairn saw no change (outcome `no-effect`), and where; `page` as {@link recordedUrl} writes it. */
 export interface DeadClick {
   page: string;
   role: string;
   name?: string;
 }
 
-/** The run's dead clicks, once per element and page (the probe's revert clicks the same element again). */
-export function deadClicksOf(clicks: ClickEffect[]): DeadClick[] {
+const clickKey = (page: string, role: string, name?: string): string => `${page}\u0000${role}\u0000${name ?? ""}`;
+
+/**
+ * The run's dead clicks, once per element and page (exploreStates clicks the same switcher again). An `unknown` click
+ * is not one, and neither is a link the crawl followed to another page: its page loaded later than the click was watched.
+ */
+export function deadClicksOf(clicks: ClickEffect[], edges: FlowEdge[] = []): DeadClick[] {
+  const followed = new Set(edges.filter((e) => norm(e.to) !== norm(e.from)).map((e) => clickKey(norm(e.from), e.via.role, e.via.name)));
   const seen = new Set<string>();
   return clicks.flatMap(({ outcome, page, role, name }) => {
-    const key = `${page}\u0000${role}\u0000${name ?? ""}`;
-    if (outcome !== "no-effect" || seen.has(key)) return [];
-    seen.add(key);
-    return [{ page, role, ...(name !== undefined ? { name } : {}) }];
+    if (outcome !== "no-effect" || followed.has(clickKey(norm(page), role, name))) return [];
+    const shown = recordedUrl(page);
+    if (seen.has(clickKey(shown, role, name))) return [];
+    seen.add(clickKey(shown, role, name));
+    return [{ page: shown, role, ...(name !== undefined ? { name } : {}) }];
   });
 }
 
@@ -68,7 +77,7 @@ export interface ReportInput {
   healed?: HealRecord[];
   /** ADR-0022: an active decider's calls and fallbacks — rendered only when present. */
   decider?: DeciderSummary;
-  /** #224: clicks that changed nothing — the section is always there, empty when there are none. */
+  /** #224: clicks Cairn saw no change after — the section is always there, empty when there are none (lib backend). */
   deadClicks?: DeadClick[];
 }
 
@@ -183,11 +192,17 @@ export function renderReportMd(r: ReportInput): string {
   }
 
   const dead = r.deadClicks ?? [];
-  lines.push(`## Dead clicks (${dead.length})`, "");
-  if (dead.length === 0) lines.push("None: every click made while exploring changed something.", "");
-  else {
+  if (r.backend === "cli") lines.push("## Dead clicks", "", "Not recorded on the cli backend.", "");
+  else if (dead.length === 0) {
+    lines.push("## Dead clicks (0)", "", `None: Cairn saw a change within ${DEAD_CLICK_RECHECK_MS} ms of every click it could judge.`, "");
+  } else {
     lines.push(
-      "Each click below changed nothing: no URL, no dialog or menu, no element state, no page content, no request answered 2xx.",
+      `## Dead clicks (${dead.length})`,
+      "",
+      `Cairn saw no change within ${DEAD_CLICK_RECHECK_MS} ms of each click below — check it by hand.`,
+      `It cannot see: a server-side effect whose request got no answer within ${REQUEST_ANSWER_MS} ms or went to another ` +
+        "origin, a change that comes later than that, a change inside an iframe or drawn on a canvas, and a change of " +
+        "style alone (a colour, an animation).",
       "",
       "| page | element |",
       "|---|---|",

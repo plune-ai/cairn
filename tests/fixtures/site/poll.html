@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Polling — Fixture</title>
+  </head>
+  <!-- ?long=1: a long poll that never answers; otherwise a short poll every 100 ms. Its one button does nothing. -->
+  <body>
+    <main>
+      <h1>Polling</h1>
+      <button type="button">Nothing</button>
+    </main>
+    <script>
+      const long = new URLSearchParams(location.search).has("long");
+      setInterval(() => void fetch(long ? "/api/long" : "/api/ok"), long ? 200 : 100);
+    </script>
+  </body>
+</html>

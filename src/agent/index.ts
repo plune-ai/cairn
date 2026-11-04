@@ -563,8 +563,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             })),
           );
         }
-        const deadClicks = deadClicksOf(out.clicks); // #224
-        await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        // #224: only the lib backend watches clicks — on cli there is nothing to report, not "none".
+        const watchesClicks = cfg.browser.backend === "lib";
+        const deadClicks = watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined;
+        if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -582,7 +584,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           flow: flowReport, // #59: page/flow graph + journey cases (undefined for single-page runs)
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
-          deadClicks, // #224: clicks that changed nothing, [] when none
+          deadClicks, // #224: clicks Cairn saw no change after, [] when none, absent on cli
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -918,7 +920,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         }
 
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
-        await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests)); // #224
+        const watchesClicks = cfg.browser.backend === "lib"; // #224: the cli backend watches no click
+        if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -935,7 +938,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           flow: flowReportPayload(out.flowGraph, out.journeys, out.setupPlans), // #59/#60: graph + journeys + setup
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
-          deadClicks: deadClicksOf(out.clicks), // #224: clicks that changed nothing, [] when none
+          deadClicks: watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined, // #224: absent on cli
           ...deciderReportKeys(decider), // ADR-0022: only on an opted-in run
         });
         await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));

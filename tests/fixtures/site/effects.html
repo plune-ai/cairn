@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Late and quiet effects — Fixture</title>
+  </head>
+  <!-- Controls that work, but whose effect comes late, leaves no trace in the DOM, or happens outside the page. -->
+  <body style="min-height: 3000px">
+    <main>
+      <h1>Late and quiet effects</h1>
+      <p id="out">idle</p>
+      <button type="button" id="debounce">Debounced</button>
+      <button type="button" id="pushlate">Push late</button>
+      <button type="button" id="newtab">New tab</button>
+      <a href="/list.html" target="_blank">Help in new tab</a>
+      <a href="/list.html" target="_blank" id="latetab">Late tab</a>
+      <button type="button" id="flash">Flash</button>
+      <button type="button" id="cross">Cross-origin load</button>
+      <label>Search <input id="q" type="search" /></label>
+      <button type="button" id="focus">Focus search</button>
+      <button type="button" id="download">Download</button>
+      <button type="button" id="chunk">Lazy chunk</button>
+      <button type="button" id="nothing">Nothing</button>
+      <a href="/list.html?delay=3000">Slow page</a>
+      <button type="button" id="slowgo">Slow redirect</button>
+      <div style="height: 2000px"></div>
+      <button type="button" id="top">Back to top</button>
+    </main>
+
+    <script>
+      const out = document.getElementById("out");
+      const on = (id, f) => document.getElementById(id).addEventListener("click", f);
+      // The other origin to load from: ?cross=<origin>, given by the test.
+      const cross = new URLSearchParams(location.search).get("cross");
+      on("debounce", () => setTimeout(() => (out.textContent = "debounced done"), 400));
+      on("pushlate", () => setTimeout(() => history.pushState({}, "", "/route-b"), 400));
+      on("newtab", () => window.open("/list.html", "_blank"));
+      on("flash", () => {
+        const toast = document.createElement("div");
+        toast.setAttribute("role", "status");
+        toast.textContent = "Saved!";
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 150);
+      });
+      on("cross", async () => {
+        const r = await fetch(`${cross}/api/ok?delay=600`);
+        out.textContent = `cross ${await r.text()}`;
+      });
+      on("focus", () => document.getElementById("q").focus());
+      on("download", () => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob(["x"]));
+        a.download = "report.txt";
+        a.click();
+      });
+      on("chunk", () => {
+        const s = document.createElement("script");
+        s.src = "/chunk.js?delay=600";
+        document.head.appendChild(s);
+      });
+      on("top", () => window.scrollTo(0, 0));
+      // A browser busy elsewhere can take this long to open the tab of a target="_blank" link.
+      on("latetab", (e) => {
+        e.preventDefault();
+        setTimeout(() => window.open("/list.html", "_blank"), 1500);
+      });
+      on("slowgo", () => setTimeout(() => (location.href = "/list.html?delay=10000"), 300));
+    </script>
+  </body>
+</html>

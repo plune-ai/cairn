@@ -19,7 +19,10 @@ export interface FixtureServer {
   close: () => Promise<void>;
 }
 
-/** Starts a static HTTP server for the fixture site on a random port (real localhost origin). A POST answers 204. */
+/**
+ * Starts a static HTTP server for the fixture site on a random port (real localhost origin). A POST answers 204;
+ * `?delay=<ms>` holds any answer that long; `/api/ok` answers "ok" (to any origin), `/api/long` never answers.
+ */
 export async function startFixtureServer(): Promise<FixtureServer> {
   const posts: FixtureServer["posts"] = [];
   const server = createServer((req, res) => {
@@ -30,8 +33,16 @@ export async function startFixtureServer(): Promise<FixtureServer> {
         res.end();
         return;
       }
+      const query = new URL(req.url ?? "/", "http://fixture").searchParams;
+      await new Promise((r) => setTimeout(r, Number(query.get("delay") ?? 0)));
+      res.setHeader("access-control-allow-origin", "*");
       try {
         const urlPath = (req.url ?? "/").split("?")[0] ?? "/";
+        if (urlPath === "/api/ok") {
+          res.end("ok");
+          return;
+        }
+        if (urlPath === "/api/long") return; // a long poll: the answer never comes while the test runs
         const rel = urlPath === "/" ? "/login.html" : urlPath;
         const filePath = normalize(join(root, rel));
         if (!filePath.startsWith(root)) {
@@ -58,6 +69,9 @@ export async function startFixtureServer(): Promise<FixtureServer> {
     url: `http://127.0.0.1:${port}`,
     posts,
     close: () =>
-      new Promise<void>((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
+      new Promise<void>((resolve, reject) => {
+        server.close((e) => (e ? reject(e) : resolve()));
+        server.closeAllConnections(); // a long poll still holds one open
+      }),
   };
 }

@@ -61,7 +61,7 @@ function sameOrigin(a: string, b: string): boolean {
 }
 
 /** Normalize a URL for the visited set: drop the hash + a trailing slash (same page, different anchor). */
-function norm(u: string): string {
+export function norm(u: string): string {
   try {
     const url = new URL(u);
     url.hash = "";

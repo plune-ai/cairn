@@ -197,16 +197,17 @@ describe("renderReportMd — decision layer sections (ADR-0022)", () => {
 
 describe("renderReportMd — dead clicks (#224)", () => {
   const base = { runId: "r1", url: "http://x/login", backend: "lib", profile: "anthropic", pageSemantics: "Login form", elements: [btn], testCases: [] };
-  const click = (outcome: ClickEffect["outcome"], name: string, page = "http://x/login"): ClickEffect => ({
-    outcome, page, role: "button", name, opened: [], closed: [], added: [], removed: [], state: [], requests: [],
+  const click = (outcome: ClickEffect["outcome"], name: string, page = "http://x/login", role = "button"): ClickEffect => ({
+    outcome, page, role, name, opened: [], closed: [], added: [], removed: [], appeared: [], state: [], requests: [],
   });
 
-  it("lists each click that changed nothing with its element and page, once per element", () => {
+  it("lists each click Cairn saw no change after, with its element and page, once per element", () => {
     const dead = deadClicksOf([
       click("no-effect", "Export"),
       click("state-changed", "Remember me"),
-      click("no-effect", "Export"), // the probe's revert click on the same element
+      click("no-effect", "Export"), // exploreStates clicks the same element again
       click("network-only", "Save"),
+      click("unknown", "Sync"), // could not be judged: not a dead click
       click("no-effect", "Export", "http://x/list"),
     ]);
     expect(dead).toEqual([
@@ -215,16 +216,39 @@ describe("renderReportMd — dead clicks (#224)", () => {
     ]);
     const md = renderReportMd({ ...base, deadClicks: dead });
     expect(md).toContain("## Dead clicks (2)");
+    expect(md).toContain("Cairn saw no change within 1200 ms of each click below — check it by hand.");
+    expect(md).toMatch(/It cannot see: .*no answer within 2000 ms/);
+    expect(md).not.toContain("changed nothing");
     expect(md).toContain('| http://x/login | button "Export" |');
     expect(md).toContain('| http://x/list | button "Export" |');
+  });
+
+  it("a link the crawl followed to another page is not dead, even when its click looked quiet", () => {
+    const quietLink = click("no-effect", "Pricing", "http://x/", "link");
+    const edges = [{ from: "http://x", to: "http://x/pricing", via: { ref: "e3", role: "link", name: "Pricing" } }];
+    expect(deadClicksOf([quietLink], edges)).toEqual([]);
+    // A link the crawl saw land on the same page stays dead.
+    expect(deadClicksOf([quietLink], [{ ...edges[0]!, to: "http://x/#top" }])).toHaveLength(1);
+  });
+
+  it("the page of a dead click keeps no query value, no fragment and no user", () => {
+    const dead = deadClicksOf([click("no-effect", "Export", "http://jdoe:pw@x/orders?token=abc123XYZ789#k=1")]);
+    expect(dead).toEqual([{ page: "http://x/orders?token=‹v›", role: "button", name: "Export" }]);
   });
 
   it("the section is there, and empty, when every click had an effect", () => {
     for (const md of [renderReportMd({ ...base, deadClicks: [] }), renderReportMd(base)]) {
       expect(md).toContain("## Dead clicks (0)");
-      expect(md).toContain("None: every click made while exploring changed something.");
+      expect(md).toContain("None: Cairn saw a change within 1200 ms of every click it could judge.");
       expect(md).not.toContain("| page | element |");
     }
+  });
+
+  it("on the cli backend the section says the clicks were not recorded, not that there were none", () => {
+    const md = renderReportMd({ ...base, backend: "cli" });
+    expect(md).toContain("## Dead clicks");
+    expect(md).toContain("Not recorded on the cli backend.");
+    expect(md).not.toContain("None:");
   });
 });
 

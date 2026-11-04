@@ -41,21 +41,41 @@ export function makeGateway(cfg: AppConfig): BrowserGateway; // the factory sele
 `ActResult.ok` says the action happened: for a click, that it was made. On the lib backend a click also returns
 `outcome`, one name from a closed set, and `effect`, the record behind it (`src/browser/types.ts`):
 
-- **Effects**, most telling first: `navigated` (the URL changed), `overlay-opened` / `overlay-closed` (a `dialog`,
-  `alertdialog`, `menu` or `listbox` appeared or went away), `state-changed` (the element's own `checked`,
-  `expanded`, `pressed` or `selected`), `content-changed` (other lines of the page's ARIA snapshot), `network-only`
-  (nothing visible, but a request answered 2xx: a silent save), `no-effect` (a dead click, still `ok: true`).
+- **Effects**, most telling first: `navigated` (the URL changed, `pushState` included), `opened-tab` (a new tab or
+  window; it is closed again), `downloaded` (a file; the download is cancelled), `overlay-opened` / `overlay-closed`
+  (a `dialog`, `alertdialog`, `menu` or `listbox` appeared or went away), `state-changed` (the element's own
+  `checked`, `expanded`, `pressed` or `selected`, the focus moved to another element, or the page scrolled),
+  `content-changed` (other lines of the page's ARIA snapshot, or a text that appeared, even one gone again by the
+  time the page is read), `network-only` (nothing visible, but a request answered 2xx: a silent save), `unknown` (the
+  page could not be read before or after the click, or its next page is still on its way), `no-effect` (no change
+  seen, still `ok: true`).
 - **Failure causes**, read from Playwright's call log (`ok: false`): `intercepted` (another element takes the
-  pointer, usually an overlay), `not-visible`, `not-enabled`, `detached` (the element observed a moment ago is no
-  longer on the page), `timeout` (found, but no reason given before the limit).
+  pointer, usually an overlay), `not-visible` (also an element still in the DOM but hidden), `not-enabled`,
+  `detached` (found, then gone during the click), `not-found` (nothing matches the element observed a moment ago:
+  removed or renamed), `timeout` (found, but no reason given before the limit).
 
-After the click the backend watches 250 ms for the requests it starts and the DOM it changes, waits up to 2 s for
-those requests to answer, and reads the page again. Only document, fetch and XHR requests on the page's own origin
-are recorded: method, path and status, never a body or a header, and query values that look like secrets are
-redacted with `src/decider/redact.ts`. The cli backend records none of this (`outcome` is absent).
+Before the click a small page-side watch notes the element's state, the focus and the scroll, and a
+`MutationObserver` notes whether the DOM changed and which texts appeared. After the click the backend waits 250 ms,
+and while document, fetch, XHR or script requests of any origin are in flight it waits for them, up to 2 s after
+the click, then gives their answers 250 ms to render. It reads the ARIA snapshot again only when the DOM changed, so
+a quiet click costs no snapshot. A click that still looks dead is read again every 100 ms until 1.2 s after the
+click (2 s for a link with a `target`, whose tab can be slow to open). A page whose next document is still on its
+way is not read: it is `unknown`, not waited for. Clicks made only to set things up are not watched
+(`{ kind: "click", watch: false }`: the probe's reverting click, the sign-in click).
 
-A run keeps every click's effect (`ExploreOutcome.clicks`): the clicks with no effect are listed in `report.md`
-(*Dead clicks*) and `report.json` (`deadClicks`), and the requests go to `requests.json`.
+Only document, fetch and XHR requests on the page's own origin are recorded: method, path and status, never a body,
+a header or a query value. The path keeps its query keys (`/api/save?token=‹v›&page=‹v›`), credential-shaped path
+segments (a JWT, long hex, a UUID, a long number, a long run mixing letters and digits or cases) become `‹v›`, and
+`;` parameters are dropped. A request the page sends on a timer (one endpoint seen twice within 10 s outside any
+click) is a poll: neither waited for nor recorded. The cli backend records none of this (`outcome` is absent).
+
+A run keeps every click's effect (`ExploreOutcome.clicks`), and the requests go to `requests.json`. The clicks with
+`no-effect` go to `report.json` (`deadClicks`) and `report.md` (*Dead clicks*), page URLs written the same way and
+without a fragment; a link the crawl followed to another page is left out. The report says that Cairn saw no change
+within 1.2 s of the click and that it is to be checked by hand, and lists what Cairn cannot see: a server-side
+effect whose request got no answer within 2 s or went to another origin, a later change, a change inside an iframe
+or drawn on a canvas, a change of style alone. On the cli backend `deadClicks` is absent and the section says the
+clicks are not recorded there.
 
 ## Routing contract (IMPORTANT)
 

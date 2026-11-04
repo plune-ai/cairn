@@ -181,7 +181,7 @@ async function login(gateway: BrowserGateway, env: Environment, r: ResolvedEnvir
   for (const step of [
     { kind: "fill" as const, ref: userBox.ref, value: r.login!.username },
     { kind: "fill" as const, ref: passBox.ref, value: r.login!.password },
-    { kind: "click" as const, ref: submit.ref },
+    { kind: "click" as const, ref: submit.ref, watch: false }, // setup, not exploration: its effect is checked below (#224)
   ]) {
     const res = await gateway.act(step);
     if (!res.ok) return failure(`the form could not be filled in: ${res.error ?? "unknown error"}`);

@@ -114,7 +114,7 @@ describe("probeTransitions has an end (#213)", () => {
     expect(log).toContain("probeInteractions — stopped at the 2500 ms limit: 3 of 5 safe elements tried");
   });
 
-  it("clicks with a 2 s limit, not the backend's 30 s default, the revert too", async () => {
+  it("clicks with a 2 s limit, not the backend's 30 s default, the revert too — and does not watch the revert (#224)", async () => {
     const acts: unknown[] = [];
     const gw = stuckGateway(new Set());
     gw.act = async (action) => {
@@ -124,7 +124,7 @@ describe("probeTransitions has an end (#213)", () => {
     await probeTransitions(gw, switches(1));
     expect(acts).toEqual([
       { kind: "click", ref: "e1", timeoutMs: 2_000 },
-      { kind: "click", ref: "e1", timeoutMs: 2_000 },
+      { kind: "click", ref: "e1", timeoutMs: 2_000, watch: false },
     ]);
   });
 

@@ -104,7 +104,8 @@ export async function probeTransitions(
       });
       if (transition) {
         out.push(transition);
-        await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS }).catch(() => undefined); // revert (reversibility)
+        // revert (reversibility): not watched, its effect is the click's own undone (#224)
+        await gateway.act({ kind: "click", ref: el.ref, timeoutMs: CLICK_TIMEOUT_MS, watch: false }).catch(() => undefined);
       }
     } catch (e) {
       if (!(e instanceof ProbeTimeout)) throw e;
