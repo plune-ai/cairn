@@ -76,4 +76,9 @@ describe("parseAriaSnapshot", () => {
     expect(cli.find((e) => e.role === "button")?.ref).toBe("e15");
     expect(cli.find((e) => e.role === "textbox")?.ref).toBe("e9");
   });
+
+  it("#238: a name with escaped quotes or a backslash is read whole and unescaped", () => {
+    const els = parseAriaSnapshot('- button "Say \\"hi\\""\n- link "C:\\\\temp \\"x\\"":\n  - /url: /t\n- button "Next"');
+    expect(els.map((e) => e.name)).toEqual(['Say "hi"', 'C:\\temp "x"', "Next"]);
+  });
 });

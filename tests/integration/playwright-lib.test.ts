@@ -53,4 +53,14 @@ describe("playwright-lib backend (integration, real Chromium)", () => {
     expect(elsewhere).toEqual({ visible: false, enabled: false, checked: undefined });
     expect(Date.now() - started).toBeLessThan(5_000);
   });
+
+  it("#238: a button named with quotes is found and clicked", async () => {
+    const obs = await backend.observe({ url: `${server.url}/quotes.html` });
+    const say = parseAriaSnapshot(obs.ariaSnapshot).find((e) => e.role === "button");
+    expect(say?.name).toBe('Say "hi"');
+    if (!say) throw new Error("the button is not in the snapshot");
+    const clicked = await backend.act({ kind: "click", ref: say.ref });
+    expect(clicked.ok).toBe(true);
+    expect(clicked.outcome).toBe("content-changed");
+  });
 });

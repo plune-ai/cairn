@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A spec given as `--spec <url>` no longer reads local files (#227).** A `$ref` such as `file:///…/secret.json` in a
   downloaded spec was read from disk, and its content could end up in the requests sent to the target; a remote spec's
   `$ref`s now resolve over http(s) only. A spec file on disk still reads the files it references (multi-file specs).
+- **An element whose name has quotes is found again (#238).** The ARIA snapshot escapes a quote inside a name
+  (`- button "Say \"hi\""`); the name was cut at the escaped quote (`Say \`), so the element's locator found nothing
+  and a click on it ended `not-found`. The name is now read whole and unescaped.
 
 ## [0.9.0] - 2026-10-29
 
