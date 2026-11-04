@@ -52,12 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
   The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private
   networks and reported it as an unresolved `$ref`. The text is read the way the lookup of #227 reads it: `GET`, no
-  body, no redirect, a 15 s deadline, the run's headers (`--header`, api-scope knowledge, Basic auth from
-  `--base-url`; never a method-override header; `--header` also works without `--base-url`), one request of the run's
-  budget through the shared guard (`--allowed-methods` without `GET` sends nothing). A refusal names the status, the
-  redirect that was not followed and where it pointed, or the timeout, and for `401`/`403` says to pass `--header`.
-  The guard for `$ref` stays: a local file is never read from a spec at an address, and another `http(s)` `$ref` in it
-  is still read only by the parser's guarded reader, which keeps refusing private addresses.
+  body, no redirect, a 15 s deadline, one request of the run's budget through the shared guard (`--allowed-methods`
+  without `GET` sends nothing). The run's headers (`--header`, api-scope knowledge, Basic auth from `--base-url`; never
+  a method-override header) go with it only when the spec is on the `--base-url` origin, or when there is no
+  `--base-url`; a spec on another origin gets none of them. A refusal names the status, the redirect that was not
+  followed and where it pointed, or the timeout, and for `401`/`403` says to pass `--header`. A `$ref` on the spec's
+  own origin (a multi-file spec on a dev server) is read the same way, one request each; a `$ref` to any other origin
+  or to a local file is never fetched, so neither a redirect nor a host name that resolves to a private address
+  turns the named spec into another read.
 - **`cairn api --base-url` with a query string no longer sends every case to the server root (#235).** The request URL
   is now built from the parsed base URL: the case path follows the base path, the base query (a signed address, a key
   in a parameter) is kept on every request and the case's own query parameters are added to it. A base URL without a

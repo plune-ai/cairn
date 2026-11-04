@@ -335,7 +335,7 @@ describe("cairn api source resolution (mocked ingest)", () => {
     // #234: a URL is read by the run itself and the parser gets its address together with the text.
     vi.stubGlobal("fetch", vi.fn(async () => new Response("openapi: 3.0.0", { status: 200 })));
     await buildProgram().parseAsync(["node", "cairn", "api", "--spec", "https://example.com/openapi.yaml"]);
-    expect(ingestOpenApi).toHaveBeenLastCalledWith("https://example.com/openapi.yaml", "openapi: 3.0.0", { followRemoteRefs: true });
+    expect(ingestOpenApi).toHaveBeenLastCalledWith("https://example.com/openapi.yaml", "openapi: 3.0.0", { readRef: expect.any(Function) });
     vi.unstubAllGlobals();
 
     await buildProgram().parseAsync(["node", "cairn", "api", "--spec", "./spec.json"]);

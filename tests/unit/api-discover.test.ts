@@ -416,6 +416,64 @@ describe("cairn api --spec <url> on a local or private address (#234)", () => {
     expect(srv.hits.map((h) => h.path)).toEqual(["/openapi.json"]);
   });
 
+  it("the run's credentials are not sent to a spec on another origin than --base-url", async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({ "/openapi.json": send("application/json", json) });
+    const target = await serve({ "/health": send("application/json", "{}") });
+    try {
+      const withCreds = target.url.replace("http://", "http://admin:hunter2pass@");
+      await cli("--spec", `${srv.url}/openapi.json`, "--base-url", withCreds, "--header", "X-Token: t0k3n-abc");
+      expect(srv.hits.map((h) => h.path)).toEqual(["/openapi.json"]);
+      expect(srv.hits[0]?.headers.authorization).toBeUndefined();
+      expect(srv.hits[0]?.headers["x-token"]).toBeUndefined();
+      // the target itself still gets them
+      expect(target.hits[0]?.headers.authorization).toBe(`Basic ${Buffer.from("admin:hunter2pass").toString("base64")}`);
+      expect(target.hits[0]?.headers["x-token"]).toBe("t0k3n-abc");
+    } finally {
+      await target.close();
+    }
+  });
+
+  it("a spec on the --base-url origin gets the run's credentials", async () => {
+    const json = await readFile(join(fixtures, "tiny.json"), "utf8");
+    srv = await serve({ "/openapi.json": send("application/json", json), "/health": send("application/json", "{}") });
+    await cli("--spec", `${srv.url}/openapi.json`, "--base-url", srv.url.replace("http://", "http://admin:hunter2pass@"));
+    expect(srv.hits[0]?.path).toBe("/openapi.json");
+    expect(srv.hits[0]?.headers.authorization).toBe(`Basic ${Buffer.from("admin:hunter2pass").toString("base64")}`);
+  });
+
+  it("a relative $ref on the spec's own origin is read the same way: GET, the run's headers, one request of the budget", async () => {
+    srv = await serve({
+      "/openapi.json": send("application/json", specWithRef("./schemas/q.json")),
+      "/schemas/q.json": send("application/json", JSON.stringify({ type: "string" })),
+    });
+    await cli("--spec", `${srv.url}/openapi.json`, "--header", "X-Token: t0k3n-abc");
+    expect(errChunks.join("")).not.toContain("Could not read");
+    expect(process.exitCode).toBe(0);
+    expect(srv.hits.map((h) => h.path)).toEqual(["/openapi.json", "/schemas/q.json"]);
+    expect(srv.hits[1]?.headers["x-token"]).toBe("t0k3n-abc");
+  });
+
+  it("a $ref to another origin is never fetched, whatever its host name resolves to", async () => {
+    const other = await serve({ "/x.json": send("application/json", JSON.stringify({ type: "string" })) });
+    try {
+      const port = new URL(other.url).port;
+      for (const ref of [`${other.url}/x.json`, `http://localtest.me:${port}/x.json`]) {
+        errChunks.length = 0;
+        process.exitCode = 0;
+        await srv?.close();
+        srv = await serve({ "/openapi.json": send("application/json", specWithRef(ref)) });
+        await cli("--spec", `${srv.url}/openapi.json`);
+        expect(process.exitCode).toBe(1);
+        expect(errChunks.join("")).toContain("a $ref to another origin than the spec's is not followed");
+        expect(errChunks.join("")).toContain(ref);
+      }
+      expect(other.hits).toHaveLength(0);
+    } finally {
+      await other.close();
+    }
+  });
+
   it("the read counts against --max-requests, and --allowed-methods without GET sends nothing", async () => {
     srv = await serve({ "/openapi.json": send("application/json", "{}") });
     await cli("--spec", `${srv.url}/openapi.json`, "--allowed-methods", "HEAD");

@@ -122,6 +122,9 @@ const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch"
 
 /** Why a spec found on the server (#227) is not used when it needs another document. */
 const EXTERNAL_REF_NOT_FOLLOWED = "external $ref is not followed for a spec found on the server";
+/** #234: why a spec read from `--spec <url>` is not used when it needs a document on another origin. */
+const OTHER_ORIGIN_REF_NOT_FOLLOWED =
+  "a $ref to another origin than the spec's is not followed; download the documents and pass the spec as a file";
 
 /**
  * Read an OpenAPI 3.x spec (JSON or YAML; file path or URL) and flatten it into an {@link ApiModel}.
@@ -141,8 +144,12 @@ const EXTERNAL_REF_NOT_FOLLOWED = "external $ref is not followed for a spec foun
 export async function ingestOpenApi(
   spec: string,
   content?: string,
-  /** #234: with `content` read from the address the user named (`--spec <url>`), other http(s) `$ref`s are still read by the parser's guarded reader. */
-  opts: { followRemoteRefs?: boolean } = {},
+  /**
+   * #234: with `content` read from the address the user named (`--spec <url>`), a `$ref` on the same origin is read
+   * through `readRef` (the caller's guarded GET, no redirect). A `$ref` to any other origin is never fetched: neither
+   * a redirect nor a host name that resolves to a private address can turn the named spec into another read.
+   */
+  opts: { readRef?: (url: string) => Promise<string> } = {},
 ): Promise<ApiModel> {
   // Lazy: keep swagger-parser (and its YAML/ref-resolver deps) off every non-`api` code path.
   const { default: SwaggerParser } = await import("@apidevtools/swagger-parser");
@@ -154,19 +161,29 @@ export async function ingestOpenApi(
     // cycles rather than throwing), so the walk below sees concrete params/schemas.
     if (content !== undefined) {
       const served = new URL(spec).href;
+      const servedOrigin = new URL(spec).origin;
+      const sameOrigin = (u: string): boolean => {
+        try {
+          return new URL(u).origin === servedOrigin;
+        } catch {
+          return false;
+        }
+      };
       // No file or http reader: a `$ref: file:///…` would put a local file into the requests sent to the
       // target, and one to another address would be fetched outside the run's guardrails. This reader
       // answers the served address with its text and refuses everything else.
       const resolve = {
         file: false,
-        http: opts.followRemoteRefs ? undefined : false,
+        http: false,
         served: {
           order: 1,
-          canRead: opts.followRemoteRefs ? (f: { url: string }) => f.url === served : true,
-          read: (f: { url: string }) => {
+          canRead: true,
+          read: async (f: { url: string }) => {
             if (f.url === served) return content;
+            const readRef = opts.readRef;
+            if (readRef && sameOrigin(f.url)) return await readRef(f.url);
             notFollowed = f.url;
-            throw new Error(EXTERNAL_REF_NOT_FOLLOWED);
+            throw new Error(readRef ? OTHER_ORIGIN_REF_NOT_FOLLOWED : EXTERNAL_REF_NOT_FOLLOWED);
           },
         },
       };
@@ -178,7 +195,9 @@ export async function ingestOpenApi(
       doc = (await SwaggerParser.dereference(spec)) as unknown as RawDoc;
     }
   } catch (e) {
-    const why = notFollowed ? `${EXTERNAL_REF_NOT_FOLLOWED} (${notFollowed})` : (e as Error).message;
+    const why = notFollowed
+      ? `${opts.readRef ? OTHER_ORIGIN_REF_NOT_FOLLOWED : EXTERNAL_REF_NOT_FOLLOWED} (${notFollowed})`
+      : (e as Error).message;
     throw new Error(`Could not read OpenAPI spec "${spec}": ${why}`);
   }
 

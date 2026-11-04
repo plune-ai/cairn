@@ -351,9 +351,24 @@ export const apiModality: Modality = {
           const unreadable = (why: string): Error => new Error(`Could not read OpenAPI spec "${source}": ${why}`);
           if (!guard.allowsMethod("GET")) throw unreadable("--allowed-methods does not include GET, the only method the read sends.");
           if (!(await guard.acquire())) throw unreadable(`the request budget ran out (--max-requests ${guard.maxRequests}).`);
-          const got = await readSpecFromUrl(source, headers);
-          if (!got.ok) throw unreadable(got.message);
-          model = await ingestOpenApi(source, got.text, { followRemoteRefs: true });
+          // The run's credentials (api-scope knowledge, Basic auth from --base-url, --header) belong to the target:
+          // they go with the read only when the spec sits on the --base-url origin, or when there is no --base-url.
+          const specOrigin = new URL(source).origin;
+          const credsGo = !base || new URL(base.baseUrl).origin === specOrigin;
+          const specHeaders = credsGo ? headers : {};
+          const withheld = credsGo
+            ? ""
+            : ` The run's credentials are not sent to ${specOrigin}, because it is not the --base-url origin; download the spec and pass it as a file.`;
+          const got = await readSpecFromUrl(source, specHeaders);
+          if (!got.ok) throw unreadable(`${got.message}${withheld}`);
+          // A $ref on the spec's origin is read the same way (one more request of the budget); any other is refused.
+          const readRef = async (url: string): Promise<string> => {
+            if (!(await guard.acquire())) throw new Error(`the request budget ran out (--max-requests ${guard.maxRequests}) reading ${url}.`);
+            const ref = await readSpecFromUrl(url, specHeaders);
+            if (!ref.ok) throw new Error(`could not read $ref ${url}: ${ref.message}`);
+            return ref.text;
+          };
+          model = await ingestOpenApi(source, got.text, { readRef });
         } else {
           model = await ingestOpenApi(source);
         }
