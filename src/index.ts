@@ -40,6 +40,10 @@ export type { Environment, AppliedEnvironment } from "./environment/index.js";
 export { MailboxSession, MailsacProvider, mailsacFromEnv } from "./mailbox/index.js";
 export type { MailboxStep } from "./mailbox/index.js";
 
+// Saved API flows as Playwright fixtures (#230): ExploreInput.apiFlows (design) and runAutomate's apiFlows.
+export { loadApiFlows, parseApiFlows, renderFlowFixture, flowChangesData, FLOW_FIXTURE_FILE } from "./api/flows.js";
+export type { ApiFlowFile, ApiFlow, FlowStep } from "./api/flows.js";
+
 // Config.
 export { loadConfig } from "./config/index.js";
 export { resolveConfig } from "./core/index.js";

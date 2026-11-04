@@ -52,6 +52,7 @@ import type { PageStudy } from "../observe/index.js";
 import type { PageAnalysis } from "../analyze/index.js";
 import type { TestCase } from "../design/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
+import { FLOW_FIXTURE_FILE, formatFlowsForPrompt, renderFlowFixture, withFlowFixture, type ApiFlowFile } from "../api/flows.js";
 
 export { runExploreGraph } from "./graph.js";
 export type { ExploreDeps, ExploreOutcome } from "./graph.js";
@@ -96,6 +97,8 @@ export interface ExploreInput {
   setup?: boolean;
   /** #61: also suggest cases for the top untested surface (the coverage VIEW is always emitted). Default off. */
   gaps?: boolean;
+  /** #230: `design` only — the saved API flows the cases may use for data and sign-in preconditions. Absent = as before. */
+  apiFlows?: ApiFlowFile;
   /** #51: write the final specs into an existing Playwright project's testDir (conventions-respecting) instead of runs/<id>/tests. */
   intoProject?: boolean;
   /** #51: explicit project dir for --into-project; when omitted, detection searches from cwd upward. */
@@ -801,6 +804,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     experienceText,
     styleText,
     languageText,
+    apiFlowsText: input.apiFlows ? formatFlowsForPrompt(input.apiFlows) : undefined, // #230
     runWriter,
     validate: () => Promise.resolve({ results: [], greenRatio: 0, flakyCount: 0 }),
     maxRepair: 0,
@@ -1006,6 +1010,15 @@ export interface AutomateResult {
   decider?: DeciderSummary;
 }
 
+/** The origin of a URL, or undefined when it is not one (#230: the API flows' default address). */
+function originOrUndefined(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * `automate` command: from ready cases (runDir/testcases/*.md) → @playwright/test code in runDir/tests/.
  * The second half of the decoupled flow (design → automate). Optionally validates (requires a session).
@@ -1029,6 +1042,10 @@ export async function runAutomate(input: {
   environment?: Environment;
   /** Mailbox/TOTP session (src/mailbox, ADR-0023): its addresses, links, codes and TOTP secret are masked in progress, run.log and validation errors. Off when absent. */
   mailbox?: MailboxSession;
+  /** #230: saved API flows — the specs use their fixture for data and sign-in preconditions; `api-flows.fixture.ts` is written beside them. */
+  apiFlows?: ApiFlowFile;
+  /** #230: with `apiFlows`, flows that change data may run against the API's address (the file's baseUrl, else the run's origin). */
+  allowMutations?: boolean;
   headed?: boolean;
   onProgress?: (event: string) => void;
 }): Promise<AutomateResult> {
@@ -1089,6 +1106,7 @@ export async function runAutomate(input: {
     for (const f of mdFiles) apiCases.push(parseApiTestCaseMd(await readFile(join(tcDir, f), "utf8")));
     onProgress(`automate — ${apiCases.length} API case(s) from ${displayPath(tcDir)}`);
     if (input.validate) onProgress("automate — --validate needs a browser/session (web-only); skipping for an API run.");
+    if (input.apiFlows) onProgress("automate — --flows is for UI tests; an API run's cases do not use it.");
     suite = automateApiCases(apiCases, { baseUrl });
   } else {
     const allCases: ReturnType<typeof parseTestCaseMd>[] = [];
@@ -1100,8 +1118,23 @@ export async function runAutomate(input: {
 
     const invoke = router.invoke("worker", router.tierFor("worker", cfg.models.bulk));
     const prompts = new PromptRegistry();
-    const buildSuite = (repairHint?: string): Promise<GeneratedSuite> =>
-      automateCases(cases, { baseUrl, pageSemantics }, { invoke, prompts }, repairHint);
+    // #230: with flows, the codegen is told about them and the suite carries the fixture module the specs import.
+    const flows = input.apiFlows;
+    const flowsText = flows ? formatFlowsForPrompt(flows) : undefined;
+    const apiBase = flows ? (flows.baseUrl ?? originOrUndefined(baseUrl)) : undefined;
+    const fixture = flows
+      ? renderFlowFixture(flows, { baseUrl: apiBase, allowMutationsFor: input.allowMutations ? apiBase : undefined })
+      : undefined;
+    if (flows) {
+      onProgress(
+        `automate — ${flows.flows.length} API flow(s) → ${FLOW_FIXTURE_FILE}` +
+          (input.allowMutations && apiBase ? ` · flows that change data may run against ${new URL(apiBase).origin}` : " · flows that change data are skipped (no --allow-mutations)"),
+      );
+    }
+    const buildSuite = async (repairHint?: string): Promise<GeneratedSuite> => {
+      const s = await automateCases(cases, { baseUrl, pageSemantics, apiFlows: flowsText }, { invoke, prompts }, repairHint);
+      return fixture ? withFlowFixture(s, fixture) : s;
+    };
 
     let sessionPath: string | undefined;
     if (input.sessionFile) sessionPath = resolve(input.sessionFile);
