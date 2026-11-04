@@ -11,11 +11,13 @@
  *   (e.g. create → read → delete), threading a captured response value through each step.
  * BORROW-07 (#95): with `--adversarial`, also generate/run cases in one or more named styles —
  *   normal/curious/psycho/hacker (`src/api/adversarial.ts`) — alongside the existing cases.
+ * #227: without `--spec`, look for a spec the `--base-url` server serves (`src/api/discover.ts`).
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { ingestOpenApi, type ApiModel } from "../../api/openapi.js";
+import { discoverSpec } from "../../api/discover.js";
 import { generateApiCases, generateNegativeCases, type ApiCase } from "../../api/cases.js";
 import { generateAdversarialCases, ADVERSARIAL_STYLES, type AdversarialStyle } from "../../api/adversarial.js";
 import { runApiCases, wasNotSent, type ApiCaseResult, type RunnerOptions } from "../../api/runner.js";
@@ -294,9 +296,10 @@ export const apiModality: Modality = {
     if (base) secrets.push(...base.secrets);
     if (allowedPaths && allowedPaths.length === 0) throw new Error("--allowed-paths needs at least one path mask (e.g. /pets/*).");
     const spec = opts.spec;
-    if (!spec) {
-      // commander enforces requiredOption in the CLI; this guards programmatic/test callers.
-      throw new Error("`cairn api` requires --spec <path|url> (an OpenAPI 3.x JSON/YAML spec).");
+    if (!spec && !base) {
+      throw new Error(
+        "`cairn api` needs --spec <path|url> (an OpenAPI 3.x JSON/YAML spec) or --base-url <url> (to look for a spec the server serves).",
+      );
     }
     // Validate before any work: a bad threshold must not look like a passing run.
     const minCoverage = opts.minCoverage === undefined ? undefined : parseMinCoverage(opts.minCoverage);
@@ -311,16 +314,54 @@ export const apiModality: Modality = {
       // A failed test (exit 1) is reported first; the gate only sets its own code when nothing else did.
       if (!gate.passed && !process.exitCode) process.exitCode = COVERAGE_GATE_EXIT_CODE;
     };
-    const source = isUrl(spec) ? spec : resolve(spec);
-    ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
+    // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
+    // Built before the spec is read: a spec looked up on the base URL (#227) may sit behind the same sign-in.
+    const headers: Record<string, string> = {};
+    if (base) {
+      const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
+      Object.assign(headers, await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl }), parseHeaderFlags(opts.header));
+      if (base.basicAuth && !Object.keys(headers).some((h) => h.toLowerCase() === "authorization")) {
+        headers["Authorization"] = base.basicAuth;
+      }
+      const weak = tooShortSecrets(headers);
+      if (weak.length) {
+        ctx.err(`⚠ The secret in ${weak.join(", ")} is shorter than 4 characters and will NOT be masked in the output.\n`);
+      }
+      secrets.push(...collectSecrets(headers));
+    }
+    // One guard for the whole run: the spec lookup's tries and the cases share its budget and rate limit.
+    const guard = new RequestGuard({ allowMutations: opts.allowMutations, allowedMethods, allowedPaths, maxRequests, rps });
+
+    let source: string;
     let model: ApiModel;
-    try {
-      model = await ingestOpenApi(source);
-    } catch (e) {
-      // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
-      ctx.err(`✗ ${(e as Error).message}\n`);
-      process.exitCode = 1;
-      return;
+    if (spec) {
+      source = isUrl(spec) ? spec : resolve(spec);
+      ctx.err(`▸ Ingesting OpenAPI spec from ${source}…\n`);
+      try {
+        model = await ingestOpenApi(source);
+      } catch (e) {
+        // Clean, non-crashing failure (acceptance): clear message, exit non-zero.
+        ctx.err(`✗ ${(e as Error).message}\n`);
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      // #227: no --spec — try the addresses frameworks serve their spec at, then go on as with --spec <that url>.
+      const baseUrl = base!.baseUrl; // no --spec means --base-url was given (checked above)
+      ctx.err(`▸ No --spec given: looking for an OpenAPI spec served at ${baseUrl}…\n`);
+      const found = await discoverSpec({ baseUrl, headers, guard });
+      if (!found.found) {
+        const lines = [`✗ No OpenAPI 3.x spec found at ${baseUrl}.`];
+        if (found.tried.length) lines.push("  Tried (GET):", ...found.tried.map((t) => `    ${t.url} — ${t.outcome}`));
+        if (found.stopped) lines.push(`  Stopped: ${found.stopped}.`);
+        lines.push("  Give the spec instead: --spec <path|url> (an OpenAPI 3.x JSON/YAML file or URL).");
+        ctx.err(`${lines.join("\n")}\n`);
+        process.exitCode = 1;
+        return;
+      }
+      source = found.url;
+      model = found.model;
+      ctx.out(`✓ OpenAPI spec found at ${source}\n`);
     }
     for (const line of renderApiSummary(model, source)) ctx.out(`${line}\n`);
     // BORROW-07 (#95): "normal" style is the always-generated happy path itself — tag in place rather
@@ -358,24 +399,10 @@ export const apiModality: Modality = {
       return;
     }
 
-    // Auth/headers: api-scope knowledge (#92) as the base, config --header flags on top (config wins).
-    const knowledgeDir = resolve(opts.knowledgeDir ?? "knowledge");
-    const fromKnowledge = await loadApiCreds(knowledgeDir, { scope: "api", endpoint: base.baseUrl });
-    const headers = { ...fromKnowledge, ...parseHeaderFlags(opts.header) };
-    if (base.basicAuth && !Object.keys(headers).some((h) => h.toLowerCase() === "authorization")) {
-      headers["Authorization"] = base.basicAuth;
-    }
-    const weak = tooShortSecrets(headers);
-    if (weak.length) {
-      ctx.err(`⚠ The secret in ${weak.join(", ")} is shorter than 4 characters and will NOT be masked in the output.\n`);
-    }
-
-    secrets.push(...collectSecrets(headers));
     const adversarialNeedsMutations = adversarialStyles.some((s) => s === "psycho" || s === "hacker");
     if (adversarialNeedsMutations && !opts.allowMutations) {
       ctx.err("⚠ The psycho/hacker styles need --allow-mutations; their cases are listed but will not be sent.\n");
     }
-    const guard = new RequestGuard({ allowMutations: opts.allowMutations, allowedMethods, allowedPaths, maxRequests, rps });
     const runnerOpts: RunnerOptions = { baseUrl: base.baseUrl, auth: { headers }, guard, secrets };
     ctx.err(`▸ Running ${cases.length} case(s) against ${base.baseUrl}…\n`);
     const results = await runApiCases(cases, runnerOpts);

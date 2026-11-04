@@ -22,6 +22,17 @@
    ```
    If every case ends up skipped or blocked the run exits `5` (nothing was tested). Each case that is sent; per case Cairn asserts the **status** matches the declared success code and the
    **response body** conforms to the declared success schema. Any failed assertion → non-zero exit.
+3. **No spec file? Let the server give it (#227)** — leave out `--spec`:
+   ```
+   cairn api --base-url https://api.example.com/v1
+   ```
+   Cairn tries `/openapi.json`, `/openapi.yaml`, `/swagger.json`, `/v3/api-docs`, `/v2/api-docs`, `/api-docs`,
+   `/swagger/v1/swagger.json` and `/docs/openapi.json` on the base URL, in that order, and uses the first answer that
+   reads as an OpenAPI 3.x spec; the output says where (`✓ OpenAPI spec found at …`). Each try is a `GET` with no body,
+   gives up after 5 s, sends the same headers as the run (below), counts against `--max-requests`/`--rps` and does not
+   follow redirects. The addresses are joined to the base URL as given, so with `--base-url https://host/api` the first
+   try is `https://host/api/openapi.json`. Nothing found → exit `1` with every address tried and its answer; pass
+   `--spec <path|url>` then.
 
 ## Auth / headers (nothing hardcoded)
 - **Config (per run):** `--header "Authorization: Bearer $TOKEN"` — repeatable. Config headers win.

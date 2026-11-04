@@ -32,12 +32,13 @@ afterEach(() => {
 });
 
 describe("cairn api command (real ingest)", () => {
-  it("is registered with a required --spec option", async () => {
+  it("is registered with a --spec option that takes a value but is not mandatory (#227: --base-url alone looks for one)", async () => {
     const { buildProgram } = await import("../../src/cli/index.js");
     const api = buildProgram().commands.find((c) => c.name() === "api");
     expect(api).toBeDefined();
     const spec = api?.options.find((o) => o.long === "--spec");
-    expect(spec?.required).toBe(true);
+    expect(spec?.required).toBe(true); // commander: the flag needs a value when given
+    expect(spec?.mandatory).toBe(false);
   });
 
   it("ingests a YAML spec and prints the parsed-model summary", async () => {

@@ -126,8 +126,11 @@ const HTTP_METHODS = ["get", "put", "post", "delete", "options", "head", "patch"
  * Throws a single, message-clear `Error` on anything we can't use — unreadable/invalid spec,
  * unresolvable `$ref`, or an unsupported version (Swagger 2.0 / non-3.x) — so the command can report
  * it instead of crashing.
+ *
+ * `content` (#227): the spec's text when it has already been downloaded from `spec` (a URL); the
+ * parser reads it instead of fetching that address again. JSON or YAML is told apart as for any spec.
  */
-export async function ingestOpenApi(spec: string): Promise<ApiModel> {
+export async function ingestOpenApi(spec: string, content?: string): Promise<ApiModel> {
   // Lazy: keep swagger-parser (and its YAML/ref-resolver deps) off every non-`api` code path.
   const { default: SwaggerParser } = await import("@apidevtools/swagger-parser");
 
@@ -135,7 +138,14 @@ export async function ingestOpenApi(spec: string): Promise<ApiModel> {
   try {
     // dereference = parse (JSON/YAML, file/URL) + resolve every $ref (circular refs become object
     // cycles rather than throwing), so the walk below sees concrete params/schemas.
-    doc = (await SwaggerParser.dereference(spec)) as unknown as RawDoc;
+    if (content === undefined) {
+      doc = (await SwaggerParser.dereference(spec)) as unknown as RawDoc;
+    } else {
+      const served = new URL(spec).href;
+      // Runs before the built-in file/http readers (order 1), for this one address only.
+      const resolve = { served: { order: 1, canRead: (f: { url: string }) => f.url === served, read: () => content } };
+      doc = (await SwaggerParser.dereference(spec, { resolve })) as unknown as RawDoc;
+    }
   } catch (e) {
     throw new Error(`Could not read OpenAPI spec "${spec}": ${(e as Error).message}`);
   }

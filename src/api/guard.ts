@@ -236,7 +236,7 @@ export class RequestGuard {
 
   /** Policy check before anything is sent: why this case must not run, if it must not. */
   check(c: ApiCase): SkipReason | undefined {
-    if (this.methods && !this.methods.has(c.method.toUpperCase())) return "not allowed";
+    if (!this.allowsMethod(c.method)) return "not allowed";
     if (this.masks && !this.masks.some((m) => m.test(c.path))) return "not allowed";
     const mutating = !READ_ONLY_METHODS.has(c.method.toUpperCase()) || MUTATING_STYLES.has(c.adversarialStyle ?? "");
     if (mutating && !this.allowMutations) return "mutations disabled";
@@ -259,6 +259,11 @@ export class RequestGuard {
     this.nextSlot = slot + 1000 / this.rps;
     if (slot > now) await this.sleepFn(slot - now);
     return true;
+  }
+
+  /** `--allowed-methods` lets this method through (no list = every method). */
+  allowsMethod(method: string): boolean {
+    return !this.methods || this.methods.has(method.toUpperCase());
   }
 
   get allowsMutations(): boolean {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`cairn api --base-url <url>` without `--spec` looks for a spec the server already serves (#227).** It tries
+  `/openapi.json`, `/openapi.yaml`, `/swagger.json`, `/v3/api-docs`, `/v2/api-docs`, `/api-docs`,
+  `/swagger/v1/swagger.json` and `/docs/openapi.json` on the base URL, in that order, and takes the first answer that
+  reads as an OpenAPI 3.x spec (JSON or YAML, whatever the content type); the output names the address
+  (`✓ OpenAPI spec found at …`) and the run goes on as with `--spec <that address>`. Each try is a `GET` with no body
+  and a 5 s deadline, carries the run's headers (`--header`, api-scope knowledge, Basic auth from the URL; never an
+  `X-HTTP-Method-Override`-style header), counts
+  against `--max-requests` and `--rps`, needs `GET` in `--allowed-methods` when that is given, and does not follow
+  redirects. When nothing is found the run exits `1` and lists every address tried with what it answered, and
+  suggests `--spec <path|url>`. `--spec` is no longer mandatory; without it and without `--base-url` the command
+  still refuses, now naming both flags. Runs with `--spec` are unchanged.
+
 ## [0.9.0] - 2026-10-29
 
 ### Added
