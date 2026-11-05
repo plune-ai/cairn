@@ -142,7 +142,7 @@ export class ApiTrafficRecorder {
     const known = this.builder.known;
     // A value counts wherever it was seen, on a request left out too, and whatever becomes of the answer.
     const query = formParts(u.search.slice(1));
-    for (const [, v] of query.fields) known.add(v);
+    for (const [k, v] of query.fields) known.field(k, v);
     for (const v of query.bare) known.add(v);
     const headers = Object.entries(x.requestHeaders ?? {});
     for (const [k, v] of headers) known.header(k, v);
@@ -201,7 +201,7 @@ export class ApiTrafficRecorder {
     if (type === FORM) {
       known.json(parsed);
       const form = formParts(postData);
-      for (const [, v] of form.fields) known.add(v);
+      for (const [k, v] of form.fields) known.field(k, v);
       for (const v of form.bare) known.add(v);
       return { contentType: type, body: Object.fromEntries(form.fields.map(([k]) => [k, ""])) };
     }

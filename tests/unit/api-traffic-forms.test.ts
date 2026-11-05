@@ -12,8 +12,8 @@ import { ingestOpenApi } from "../../src/api/openapi.js";
 
 /**
  * #229: whatever the traffic says, openapi.derived.json holds a string that came from the traffic only when that
- * string has passed a fixed form that a free-text value cannot have. Everything goes through the recorder and the
- * writer the run uses, and every check reads the file.
+ * string has passed a fixed form. Everything goes through the recorder and the writer the run uses, and every check
+ * reads the file.
  */
 const APP = "https://acme-tenant.app.example.test:8443";
 const J = "application/json";
@@ -27,6 +27,7 @@ interface Schema {
   items?: Schema;
 }
 interface Operation {
+  summary?: string;
   parameters?: { name: string; in: string }[];
   requestBody?: { content: Record<string, { schema?: Schema }> };
   responses: Record<string, { content?: Record<string, { schema?: Schema }> }>;
@@ -65,44 +66,82 @@ async function draft(feed: Feed, runSecrets: string[] = []): Promise<{ saved: st
   }
 }
 
+const har = (...entries: unknown[]): unknown => ({ log: { entries } });
+const harGet = (url: string, res: unknown = {}, request: object = {}): unknown => ({
+  _resourceType: "xhr",
+  request: { method: "GET", url: url.startsWith("/") ? `https://app.example.test${url}` : url, headers: [], queryString: [], cookies: [], ...request },
+  response: { status: 200, headers: [], cookies: [], content: { mimeType: J, text: JSON.stringify(res) } },
+});
+const postman = (item: unknown[], extra: object = {}): unknown => ({ info: { name: "Acme", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" }, item, ...extra });
+const pmGet = (url: string, res?: unknown, method = "GET"): unknown => ({
+  request: { method, url: url.startsWith("/") ? `https://app.example.test${url}` : url },
+  ...(res !== undefined ? { response: [{ code: 200, header: [{ key: "Content-Type", value: J }], body: JSON.stringify(res) }] } : {}),
+});
+
+/** The file `cairn api --spec` leaves for a HAR or a Postman collection, read back. */
+async function derived(source: unknown, runSecrets: string[] = []): Promise<{ saved: string; doc: Doc; ingested: string }> {
+  const d = deriveSpec(JSON.stringify(source), runSecrets)!;
+  const dir = await mkdtemp(join(tmpdir(), "cairn-forms-"));
+  try {
+    const file = await writeDerivedSpec(dir, d.doc, [...d.secrets, ...runSecrets]);
+    const saved = await readFile(file, "utf8");
+    const ingested = await ingestOpenApi(file).then(
+      () => "ok",
+      (e: Error) => e.message,
+    );
+    return { saved, doc: JSON.parse(saved) as Doc, ingested };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 const paths = (d: { doc: Doc }): string[] => Object.keys(d.doc.paths).sort();
 const responseSchema = (d: { doc: Doc }, path: string): Schema => d.doc.paths[path]!.get!.responses["200"]!.content![J]!.schema!;
 const requestSchema = (d: { doc: Doc }, path: string, media = J): Schema => d.doc.paths[path]!.post!.requestBody!.content[media]!.schema!;
 
+/** Keys that each pass the form, the values all of one shape: a dictionary keyed by people. */
+const people = (n: number): Record<string, { role: string; team: string | null }> => {
+  const first = ["alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan", "judy", "olena", "petro", "sofia", "taras", "yulia", "zoya"];
+  const last = ["smith", "jones", "petrenko", "koval", "shevchenko", "bondar", "melnyk", "tkach", "moroz", "lysenko"];
+  return Object.fromEntries(Array.from({ length: n }, (_, i) => [`${first[i % first.length]}_${last[Math.floor(i / first.length) % last.length]}`, { role: "viewer", team: i % 2 ? "ops" : null }]));
+};
+
 /** [what, the traffic, the strings the file must not hold, the run's secrets]. */
 const NEVER_IN_THE_FILE: [string, Feed, string[], string[]?][] = [
-  // B1: a text or JSON body sent as a form, and a query part with no `=`, have no names.
-  ["B1 JSON body sent as a form", (r) => post(r, "/api/submit", FORM, JSON.stringify({ name: "Alice Smith", diagnosis: "private note" })), ["Alice Smith", "private note", "diagnosis"]],
-  ["B1 text sent as a form", (r) => post(r, "/api/submit", FORM, "this is my private message to Bob"), ["this is my private message to Bob", "private"]],
-  ["B1 JSON with a password sent as a form", (r) => post(r, "/api/submit", FORM, JSON.stringify({ login: "alice", password: "x" })), ["alice", "login", "password"]],
-  ["B1 bare query", (r) => get(r, "/api/lookup?Alice%20Smith"), ["Alice Smith", "Alice%20Smith"]],
-  ["B1 JSON as a query", (r) => get(r, '/api/lookup?{"note":"private"}'), ["private", "note"]],
-  ["B1 one bare word as a query", (r) => get(r, "/api/lookup?alice"), ["alice"]],
-  ["B1 one bare word as a form", (r) => post(r, "/api/submit", FORM, "alice"), ["alice"]],
+  // A text or JSON body sent as a form, and a query part with no `=`, have no names.
+  ["JSON body sent as a form", (r) => post(r, "/api/submit", FORM, JSON.stringify({ name: "Alice Smith", diagnosis: "private note" })), ["Alice Smith", "private note", "diagnosis"]],
+  ["text sent as a form", (r) => post(r, "/api/submit", FORM, "this is my private message to Bob"), ["this is my private message to Bob", "private"]],
+  ["JSON with a password sent as a form", (r) => post(r, "/api/submit", FORM, JSON.stringify({ login: "alice", password: "x" })), ["alice", "login", "password"]],
+  ["bare query", (r) => get(r, "/api/lookup?Alice%20Smith"), ["Alice Smith", "Alice%20Smith"]],
+  ["JSON as a query", (r) => get(r, '/api/lookup?{"note":"private"}'), ["private", "note"]],
+  ["one bare word as a query", (r) => get(r, "/api/lookup?alice"), ["alice"]],
+  ["one bare word as a form", (r) => post(r, "/api/submit", FORM, "alice"), ["alice"]],
 
-  // B2: a word in a path.
-  ["B2 Cyrillic name", (r) => get(r, "/api/x/Леонід"), ["Леонід", encodeURIComponent("Леонід")]],
-  ["B2 phone", (r) => get(r, "/api/x/+380441234567"), ["380441234567"]],
-  ["B2 invite token", (r) => get(r, "/api/x/x7f-9kq-2mz"), ["x7f-9kq-2mz"]],
-  ["B2 letters-only token", (r) => get(r, "/api/x/kdjfhgkdjfhgkdjf"), ["kdjfhgkdjfhgkdjf"]],
-  ["B2 short mixed id", (r) => get(r, "/api/x/a1b2c3d"), ["a1b2c3d"]],
-  ["B2 hex without digits", (r) => get(r, "/api/x/deadbeef"), ["deadbeef"]],
-  ["B2 file name", (r) => get(r, "/api/x/john_doe_passport.pdf"), ["john_doe_passport", "passport"]],
-  ["B2 e-mail without a dot", (r) => get(r, "/api/x/alice@corp"), ["alice"]],
-  ["B2 e-mail on a Cyrillic domain", (r) => get(r, "/api/x/олена@пошта.укр"), ["олена", encodeURIComponent("олена")]],
-  ["B2 a word longer than 32 characters", (r) => get(r, "/api/x/averyveryveryveryveryverylongwordinapath"), ["averyveryvery"]],
-  ["B2 a credential-shaped word that ends in digits", (r) => get(r, "/api/x/resettoken12345678"), ["resettoken12345678"]],
-  ["B2 a word that reads as :name", (r) => get(r, "/api/x/:alicesmith/y"), ["alicesmith"]],
-  ["B2 a word that reads as {name}", (r) => get(r, "/api/x/%7Balicesmith%7D/y"), ["alicesmith"]],
+  // A word in a path.
+  ["Cyrillic name", (r) => get(r, "/api/x/Леонід"), ["Леонід", encodeURIComponent("Леонід")]],
+  ["phone", (r) => get(r, "/api/x/+380441234567"), ["380441234567"]],
+  ["invite token", (r) => get(r, "/api/x/x7f-9kq-2mz"), ["x7f-9kq-2mz"]],
+  ["letters-only token", (r) => get(r, "/api/x/kdjfhgkdjfhgkdjf"), ["kdjfhgkdjfhgkdjf"]],
+  ["short mixed id", (r) => get(r, "/api/x/a1b2c3d"), ["a1b2c3d"]],
+  ["hex without digits", (r) => get(r, "/api/x/deadbeef"), ["deadbeef"]],
+  ["file name", (r) => get(r, "/api/x/john_doe_passport.pdf"), ["john_doe_passport", "passport"]],
+  ["e-mail without a dot", (r) => get(r, "/api/x/alice@corp"), ["alice"]],
+  ["e-mail on a Cyrillic domain", (r) => get(r, "/api/x/олена@пошта.укр"), ["олена", encodeURIComponent("олена")]],
+  ["a word longer than 32 characters", (r) => get(r, "/api/x/averyveryveryveryveryverylongwordinapath"), ["averyveryvery"]],
+  ["a credential-shaped word that ends in digits", (r) => get(r, "/api/x/resettoken12345678"), ["resettoken12345678"]],
+  ["five letters with no vowel", (r) => get(r, "/api/x/bcdfg"), ["bcdfg"]],
+  ["a word with digits in it that is shaped like a credential", (r) => get(r, "/api/x/resettoken123"), ["resettoken123"]],
+  ["a word that reads as :name", (r) => get(r, "/api/x/:alicesmith/y"), ["alicesmith"]],
+  ["a word that reads as {name}", (r) => get(r, "/api/x/%7Balicesmith%7D/y"), ["alicesmith"]],
   [
-    "B2 people in the same place of a path",
+    "people in the same place of a path",
     (r) => {
       for (const who of ["alice", "bob", "carol", "jane-roe", "john-doe"]) get(r, `/api/users/${who}/profile`);
     },
     ["alice", "bob", "carol", "jane-roe", "john-doe"],
   ],
   [
-    "B2 a slug a response names, the response after the path",
+    "a slug a response names, the response after the path",
     (r) => {
       get(r, "/api/tenants/john-doe");
       get(r, "/api/lookup", answer({ slug: "john-doe" }));
@@ -110,14 +149,14 @@ const NEVER_IN_THE_FILE: [string, Feed, string[], string[]?][] = [
     ["john-doe"],
   ],
 
-  // B3: a key of a JSON object.
-  ["B3 person as a key", (r) => get(r, "/api/a", answer({ "Alice Smith": { role: "admin" } })), ["Alice Smith"]],
-  ["B3 phone as a key", (r) => get(r, "/api/a", answer({ "+380441234567": 1 })), ["380441234567"]],
-  ["B3 address as a key", (r) => get(r, "/api/a", answer({ "10.0.0.17": 1 })), ["10.0.0.17"]],
-  ["B3 a client's domain as a key", (r) => get(r, "/api/a", answer({ "customer-bank.example": 1 })), ["customer-bank"]],
-  ["B3 numeric id as a key", (r) => get(r, "/api/a", answer({ 1234567: { a: 1 } })), ["1234567"]],
-  ["B3 date as a key", (r) => get(r, "/api/a", answer({ "2026-11-05": 3 })), ["2026-11-05"]],
-  ["B3 text as a key in a request", (r) => post(r, "/api/a", J, JSON.stringify({ "private note text": 1 })), ["private note text"]],
+  // A key of a JSON object.
+  ["person as a key", (r) => get(r, "/api/a", answer({ "Alice Smith": { role: "admin" } })), ["Alice Smith"]],
+  ["phone as a key", (r) => get(r, "/api/a", answer({ "+380441234567": 1 })), ["380441234567"]],
+  ["address as a key", (r) => get(r, "/api/a", answer({ "10.0.0.17": 1 })), ["10.0.0.17"]],
+  ["a client's domain as a key", (r) => get(r, "/api/a", answer({ "customer-bank.example": 1 })), ["customer-bank"]],
+  ["numeric id as a key", (r) => get(r, "/api/a", answer({ 1234567: { a: 1 } })), ["1234567"]],
+  ["date as a key", (r) => get(r, "/api/a", answer({ "2026-11-05": 3 })), ["2026-11-05"]],
+  ["text as a key in a request", (r) => post(r, "/api/a", J, JSON.stringify({ "private note text": 1 })), ["private note text"]],
 
   // Names: a query name or a form field has the same form as a key.
   ["query name that is a person", (r) => get(r, "/api/a?Alice%20Smith=1"), ["Alice Smith", "Alice%20Smith"]],
@@ -129,7 +168,7 @@ const NEVER_IN_THE_FILE: [string, Feed, string[], string[]?][] = [
   ["run secret as a form field", (r) => post(r, "/api/submit", FORM, "opensesame=1&page=2"), ["opensesame"], ["opensesame"]],
   ["a cookie's value as a key", (r) => get(r, "/api/a", { requestHeaders: { cookie: "sess=plainsessionword" }, ...answer({ plainsessionword: 1, id: 2 }) }), ["plainsessionword"]],
 
-  // Rule 4: a word equal to a value seen anywhere.
+  // A word of several parts equal to a value seen anywhere, and a word that is or holds a secret.
   ["a header's value in a path", (r) => get(r, "/api/tenants/acme-corp", { requestHeaders: { "x-tenant": "acme-corp" } }), ["acme-corp"]],
   ["a cookie's value in a path", (r) => get(r, "/api/sess/plainsessionword", { requestHeaders: { cookie: "sess=plainsessionword; theme=dark" } }), ["plainsessionword"]],
   ["a bearer credential in a path", (r) => get(r, "/api/k/plainbearerword", { requestHeaders: { authorization: "Bearer plainbearerword" } }), ["plainbearerword"]],
@@ -150,7 +189,7 @@ const NEVER_IN_THE_FILE: [string, Feed, string[], string[]?][] = [
   ["a query name that holds a run secret as a part", (r) => get(r, "/api/a?x-opensesame=1&page=2"), ["opensesame"], ["opensesame"]],
   ["a form field that holds a run secret as a part", (r) => post(r, "/api/submit", FORM, "opensesame_hint=1&page=2"), ["opensesame"], ["opensesame"]],
   [
-    "M3 a value seen after 5050 others",
+    "a value seen after 5050 others",
     (r) => {
       for (let n = 0; n < 101; n++) {
         const ids = Array.from({ length: 50 }, (_, i) => `3f2b9c1e-9a7d-4c11-8b2e-${String(n).padStart(6, "0")}${String(i).padStart(6, "0")}`);
@@ -161,18 +200,65 @@ const NEVER_IN_THE_FILE: [string, Feed, string[], string[]?][] = [
     ["opensesame"],
   ],
 
-  // Rule 5: a parameter's name.
-  ["M1 a run secret names no parameter", (r) => get(r, "/api/opensesame/5/parts/6"), ["opensesame"], ["opensesame"]],
-  ["M1 a known slug names no parameter", (r) => { get(r, "/api/john-doe/5/parts/6"); get(r, "/api/lookup", answer({ slug: "john-doe" })); }, ["john-doe", "johnDoe"]],
-  ["M1 a dashed run secret names no parameter", (r) => get(r, "/api/open-sesame/5/parts/6"), ["open-sesame", "openSesame"], ["open-sesame"]],
+  // A value under a name that says password, token, API key, cookie or secret is as secret as a cookie.
+  ["a body's password, as a part of a word", (r) => { post(r, "/api/login", J, '{"password":"opensesame"}'); get(r, "/api/x/reset-opensesame"); }, ["opensesame"]],
+  ["a body's password, as a key", (r) => { post(r, "/api/login", J, '{"password":"opensesame"}'); get(r, "/api/a", answer({ opensesame: 1, id: 2 })); }, ["opensesame"]],
+  ["a body's password, as one word of a path", (r) => { post(r, "/api/login", J, '{"password":"opensesame"}'); get(r, "/api/vault/opensesame"); }, ["opensesame"]],
+  ["an answer's token, as a part of a key", (r) => get(r, "/api/a", answer({ access_token: "plaintokenword", plaintokenword_id: 1, id: 2 })), ["plaintokenword"]],
+  ["a token deep in an answer's array, as a key", (r) => get(r, "/api/a", answer({ users: [{ api_key: "plainkeyword" }], plainkeyword: 1, id: 2 })), ["plainkeyword"]],
+  ["a list of tokens in an answer, as a key", (r) => get(r, "/api/a", answer({ tokens: ["plaintokenword"], plaintokenword_id: 1, id: 2 })), ["plaintokenword"]],
+  ["a query's token, as a part of a word", (r) => get(r, "/api/x/old-plaintokenword?token=plaintokenword"), ["plaintokenword"]],
+  ["a form's password, as a query name", (r) => { post(r, "/api/login", FORM, "password=plainformword"); get(r, "/api/a?plainformword=1&page=2"); }, ["plainformword"]],
+  ["a form's password, as a word", (r) => { post(r, "/api/login", FORM, "password=plainformword"); get(r, "/api/vault/plainformword"); }, ["plainformword"]],
+  ["a password in a JSON body sent as a form, as a word", (r) => { post(r, "/api/login", FORM, '{"password":"plainformword"}'); get(r, "/api/vault/plainformword"); }, ["plainformword"]],
+  ["a secret on a request left out, as a word", (r) => { r.note({ method: "GET", url: "https://sso.example.test/in?token=plaintokenword", resourceType: "fetch", status: 200 }); get(r, "/api/vault/plaintokenword"); }, ["plaintokenword"]],
 
-  // Rule 6: a media type.
-  ["M8 a tenant in a request's media type", (r) => post(r, "/api/a", "application/vnd.tenant.acme-corp.v2+json", "{}"), ["acme-corp"]],
-  ["M8 an e-mail address as a media type", (r) => post(r, "/api/a", "alice@example.com", "{}"), ["alice@example.com"]],
-  ["M8 a customer in a response's media type", (r) => get(r, "/api/a", { responseContentType: "application/vnd.customer-77.bank+json", body: () => Promise.resolve("{}") }), ["customer-77"]],
+  // A secret in a slightly different spelling.
+  ["a dashed secret with an underscore", (r) => get(r, "/api/x/open_sesame"), ["open_sesame"], ["open-sesame"]],
+  ["a secret with a space, dashed", (r) => get(r, "/api/x/open-sesame"), ["open-sesame"], ["open sesame"]],
+  ["a secret after a word in camelCase", (r) => get(r, "/api/resetOpensesame"), ["pensesame"], ["opensesame"]],
+  ["a secret before a word in a key", (r) => get(r, "/api/a", answer({ opensesameId: 1, id: 2 })), ["pensesame"], ["opensesame"]],
+  ["a secret in capitals before a word in a key", (r) => get(r, "/api/a", answer({ OPENSESAMEId: 1, id: 2 })), ["OPENSESAME"], ["opensesame"]],
+  ["a cookie in quotes", (r) => get(r, "/api/sess/plainsessionword", { requestHeaders: { cookie: 'sess="plainsessionword"' } }), ["plainsessionword"]],
+  ["a signed cookie", (r) => get(r, "/api/sess/plainsessionword", { requestHeaders: { cookie: "sess=s%3Aplainsessionword.abcdef" } }), ["plainsessionword"]],
+  ["a cookie with a plus", (r) => get(r, "/api/x/plain-word", { requestHeaders: { cookie: "sess=plain+word" } }), ["plain-word"]],
+  ["a secret in full-width letters", (r) => get(r, "/api/vault/opensesame"), ["opensesame"], ["ｏｐｅｎｓｅｓａｍｅ"]],
+  ["a secret with a zero-width space", (r) => get(r, "/api/vault/opensesame"), ["opensesame"], ["open\u200bsesame"]],
+  ["a secret with a soft hyphen", (r) => get(r, "/api/vault/opensesame"), ["opensesame"], ["open\u00adsesame"]],
+  ["a secret with a non-breaking hyphen", (r) => get(r, "/api/x/open-sesame"), ["open-sesame"], ["open\u2011sesame"]],
 
-  // Rule 7: the host and the port.
-  ["M7 the host and the port", (r) => get(r, "/api/a"), ["acme-tenant", "8443", "app.example.test"]],
+  // A value of several words in another spelling.
+  ["a name with a space, dashed", (r) => { get(r, "/api/lookup", answer({ name: "Jane Roe" })); get(r, "/api/u/jane-roe"); }, ["jane-roe"]],
+  ["a slug with an underscore", (r) => { get(r, "/api/lookup", answer({ slug: "jane-roe" })); get(r, "/api/u/jane_roe"); }, ["jane_roe"]],
+  ["a slug in camelCase", (r) => { get(r, "/api/lookup", answer({ slug: "jane-roe" })); get(r, "/api/u/janeRoe"); }, ["janeRoe"]],
+  ["the local part of an address", (r) => { get(r, "/api/lookup", answer({ email: "jane-roe@corp.test" })); get(r, "/api/u/jane-roe"); }, ["jane-roe"]],
+  ["a query value with a plus", (r) => get(r, "/api/u/jane-roe?who=jane+roe"), ["jane-roe"]],
+  ["a value sent encoded", (r) => get(r, "/api/u/jane-roe", { requestHeaders: { "x-tenant": "jane%2Droe" } }), ["jane-roe"]],
+
+  // A word and a name share one form.
+  ...["my-private-note-about-bob", "hiv-clinic-in-kyiv-near-me", "hqzkvbtmzarwplng", "hqzkvbtmzarwplngxwqkdjfuehtzmpqa", "kqz-mwpt-rhx", "aBcDeFgHiJkL", "AbCdEfGhIjKlMnO", "dead-beef-cafe", "abcd-ef12", "emp4521", "nov1985"].flatMap((word): [string, Feed, string[]][] => [
+    [`${word} as a word of a path`, (r) => get(r, `/api/x/${word}`), [word]],
+    [`${word} as a key`, (r) => get(r, "/api/a", answer({ [word]: 1, id: 2, title: "x" })), [word]],
+  ]),
+  ["a sentence as a key", (r) => get(r, "/api/a", answer({ "this-is-my-private-message-to-bob-about-the-diagnosis": 1, id: 2 })), ["private-message"]],
+
+  // A map.
+  ["a dictionary of 160 people", (r) => get(r, "/api/a", answer(people(160))), ["alice", "smith", "petrenko"]],
+  ["a dictionary of people, three at a time", (r) => { const all = Object.entries(people(30)); for (let i = 0; i < 30; i += 3) get(r, "/api/a", answer(Object.fromEntries(all.slice(i, i + 3)))); }, ["alice", "smith", "petrenko"]],
+  ["an object most of whose keys are secrets is a map: its other key goes too", (r) => get(r, "/api/a", answer({ opensesame: 1, hunterword: 2, plain_key: 3 })), ["opensesame", "hunterword", "plain_key"], ["opensesame", "hunterword"]],
+
+  // A parameter's name.
+  ["a run secret names no parameter", (r) => get(r, "/api/opensesame/5/parts/6"), ["opensesame"], ["opensesame"]],
+  ["a known slug names no parameter", (r) => { get(r, "/api/john-doe/5/parts/6"); get(r, "/api/lookup", answer({ slug: "john-doe" })); }, ["john-doe", "johnDoe"]],
+  ["a dashed run secret names no parameter", (r) => get(r, "/api/open-sesame/5/parts/6"), ["open-sesame", "openSesame"], ["open-sesame"]],
+
+  // A media type.
+  ["a tenant in a request's media type", (r) => post(r, "/api/a", "application/vnd.tenant.acme-corp.v2+json", "{}"), ["acme-corp"]],
+  ["an e-mail address as a media type", (r) => post(r, "/api/a", "alice@example.com", "{}"), ["alice@example.com"]],
+  ["a customer in a response's media type", (r) => get(r, "/api/a", { responseContentType: "application/vnd.customer-77.bank+json", body: () => Promise.resolve("{}") }), ["customer-77"]],
+
+  // The host and the port.
+  ["the host and the port", (r) => get(r, "/api/a"), ["acme-tenant", "8443", "app.example.test"]],
 ];
 
 describe("what the traffic says stays out of the file (#229)", () => {
@@ -223,7 +309,137 @@ describe("what the traffic says stays out of the file (#229)", () => {
   });
 });
 
+/** [what, the traffic, every path the file must hold, the run's secrets]. */
+const THE_ROUTES_STAY: [string, Feed, string[], string[]?][] = [
+  ["resources with ids and their lists", (r) => { for (const p of ["/api/projects", "/api/projects/1", "/api/users", "/api/users/2", "/api/teams", "/api/teams/3"]) get(r, p); }, ["/api/projects", "/api/projects/{id}", "/api/teams", "/api/teams/{id}", "/api/users", "/api/users/{id}"]],
+  ["four resources under /api/v1", (r) => { for (const p of ["/api/v1/projects/1", "/api/v1/users/2", "/api/v1/teams/3", "/api/v1/tasks/4"]) get(r, p); }, ["/api/v1/projects/{id}", "/api/v1/tasks/{id}", "/api/v1/teams/{id}", "/api/v1/users/{id}"]],
+  ["words at the end of a path", (r) => { for (const p of ["/api/projects", "/api/users", "/api/teams", "/api/settings"]) get(r, p); }, ["/api/projects", "/api/settings", "/api/teams", "/api/users"]],
+  ["an API version in an answer", (r) => get(r, "/api/v1/me", answer({ apiVersion: "v1" })), ["/api/v1/me"]],
+  ["a source named in an answer", (r) => get(r, "/api/v1/me", answer({ source: "api" })), ["/api/v1/me"]],
+  ["the words of a query's values", (r) => get(r, "/api/v1/me?source=api&v=v1"), ["/api/v1/me"]],
+  ["a JSON:API type", (r) => { get(r, "/api/projects/1", answer({ data: { type: "projects", id: "1" } })); get(r, "/api/projects", answer({ data: [{ type: "projects" }] })); }, ["/api/projects", "/api/projects/{id}"]],
+  ["a list of permissions", (r) => { get(r, "/api/me", answer({ permissions: ["projects", "users", "settings"] })); for (const p of ["/api/projects/1", "/api/users/2", "/api/settings/3"]) get(r, p); }, ["/api/me", "/api/projects/{id}", "/api/settings/{id}", "/api/users/{id}"]],
+  ["a tab in a query", (r) => { get(r, "/app?tab=projects"); get(r, "/api/projects/1"); }, ["/api/projects/{id}", "/app"]],
+  ["a person's one-word name in an answer: the limit of a one-word slug", (r) => get(r, "/api/users/alice", answer({ username: "alice" })), ["/api/users/alice"]],
+  ["names at the end of a path: no number of them says they are names", (r) => { for (const who of ["alice", "bob", "carol"]) get(r, `/api/users/${who}`); }, ["/api/users/alice", "/api/users/bob", "/api/users/carol"]],
+  ["the words of the form, as a path", (r) => { for (const w of ["created_at", "getUserById", "refresh-token-status", "alice_smith_hiv_positive"]) get(r, `/api/${w}`); }, ["/api/alice_smith_hiv_positive", "/api/created_at", "/api/getUserById", "/api/refresh-token-status"]],
+  ["the attributes of a Set-Cookie are not its value", (r) => { get(r, "/api/a", { allHeaders: () => Promise.resolve<[string, string][]>([["set-cookie", "sess=plainsessionword; Path=/reports; SameSite=Strict"]]) }); get(r, "/api/strict/reports"); }, ["/api/a", "/api/strict/reports"]],
+  ["a word of the vocabulary under a sensitive name", (r) => { post(r, "/api/login", J, '{"password":"string"}'); get(r, "/api/schema/string"); }, ["/api/login", "/api/schema/string"]],
+  ["a word of the vocabulary as a cookie", (r) => get(r, "/api/settings/default/x", { requestHeaders: { cookie: "csrftoken=default" } }), ["/api/settings/default/x"]],
+  ["a secret that is only a piece of a part", (r) => get(r, "/api/administrators"), ["/api/administrators"], ["admin"]],
+];
+
+/** [what, a HAR or a collection, the strings the file must not hold, the run's secrets]. */
+const NEVER_IN_A_DERIVED_FILE: [string, unknown, string[], string[]?][] = [
+  ["a HAR's query token, as a part of a word", har(harGet("/api/login?session_token=correcthorsebattery"), harGet("/api/x/reset-correcthorsebattery")), ["correcthorsebattery"]],
+  ["a HAR's query token, as a key", har(harGet("/api/login?session_token=correcthorsebattery", { correcthorsebattery: 1, id: 2 })), ["correcthorsebattery"]],
+  ["a HAR's query token, as a query name", har(harGet("/api/login?session_token=correcthorsebattery"), harGet("/api/a?correcthorsebattery=1&page=2")), ["correcthorsebattery"]],
+  ["a HAR's password in a body, as a word", har({ ...(harGet("/api/login") as object), request: { method: "POST", url: "https://app.example.test/api/login", headers: [], postData: { mimeType: J, text: '{"password":"opensesame"}' } } }, harGet("/api/vault/opensesame")), ["opensesame"]],
+  ["a HAR's value the secret reader names, as a part of a word", har(harGet("/api/login?pwd=plainpwdword"), harGet("/api/x/reset-plainpwdword")), ["plainpwdword"]],
+  ["a HAR's cookie, as a part of a word", har(harGet("/api/x/reset-plainsessionword", {}, { cookies: [{ name: "sess", value: "plainsessionword" }] })), ["plainsessionword"]],
+  ["a HAR's cookie, as a key", har(harGet("/api/a", { plainsessionword: 1, id: 2 }, { cookies: [{ name: "sess", value: "plainsessionword" }] })), ["plainsessionword"]],
+  ["a HAR's address with a user and a password", har(harGet("https://plainuser:plainpassword@app.example.test/api/reset-plainpassword", { plainuser: 1, id: 2 })), ["plainpassword", "plainuser"]],
+  ["a collection's API key variable, as a part of a word", postman([pmGet("/api/reset-plainkeyword")], { variable: [{ key: "api_key", value: "plainkeyword" }] }), ["plainkeyword"]],
+  ["a collection's API key variable, as a key", postman([pmGet("/api/a", { plainkeyword: 1, id: 2 })], { variable: [{ key: "api_key", value: "plainkeyword" }] }), ["plainkeyword"]],
+  ["a collection's value the secret reader names, as a part of a word", postman([pmGet("/api/reset-plainpwdword")], { variable: [{ key: "pwd", value: "plainpwdword" }] }), ["plainpwdword"]],
+  ["a collection's API key in a query, as a part of a word", postman([pmGet("/api/reset-plainkeyword?api_key=plainkeyword")]), ["plainkeyword"]],
+  ["a collection's address with a user and a password", postman([pmGet("https://plainuser:plainpassword@app.example.test/api/reset-plainpassword", { plainuser: 1, id: 2 })]), ["plainpassword", "plainuser"]],
+  ["a run's secret in a collection's query name", postman([pmGet("/api/a?filter[opensesame]=1&page=2")]), ["opensesame"], ["opensesame"]],
+  ["a run's secret in a collection's bare query", postman([pmGet("/api/a?opensesame&page=2")]), ["opensesame"], ["opensesame"]],
+  ["a run's secret in a parameter a person named", postman([pmGet("/api/:opensesame/x")]), ["opensesame"], ["opensesame"]],
+  ["a run's long secret in a request's name", postman([{ name: `Sign in with FAKE${"long".repeat(100)}`, request: { method: "GET", url: "https://app.example.test/api/a" } }]), ["longlong"], [`FAKE${"long".repeat(100)}`]],
+  ["a run's secret with punctuation in a request's name", postman([{ name: "Sign in with FAKE.pass-word!", request: { method: "GET", url: "https://app.example.test/api/a" } }]), ["FAKE.pass-word!"], ["FAKE.pass-word!"]],
+];
+
+describe("what a HAR or a collection carries stays out of the file (#228, #229)", () => {
+  it.each(NEVER_IN_A_DERIVED_FILE)("%s", async (_what, source, absent, runSecrets) => {
+    const d = await derived(source, runSecrets);
+    for (const a of absent) expect(d.saved, a).not.toContain(a);
+    expect(d.ingested).toBe("ok");
+  });
+});
+
+describe("what a person wrote in a collection stays (#228)", () => {
+  const RESOURCES = ["projects", "users", "teams"];
+
+  it("every path of three resources and of an action they share: no fold by position", async () => {
+    const d = await derived(postman(RESOURCES.flatMap((res) => [pmGet(`/api/${res}`), pmGet(`/api/${res}`, undefined, "POST"), pmGet(`/api/${res}/:id`), pmGet(`/api/${res}/export`)])));
+    const ops = Object.entries(d.doc.paths).flatMap(([p, item]) => Object.keys(item).map((m) => `${m} ${p}`));
+    expect(ops.filter((o) => o.endsWith("/export")).sort()).toEqual(["get /api/projects/export", "get /api/teams/export", "get /api/users/export"]);
+    expect(ops.filter((o) => !o.endsWith("/export")).length).toBe(9);
+    expect(paths(d).filter((p) => p.endsWith("{id}"))).toEqual(["/api/projects/{id}", "/api/teams/{id}", "/api/users/{id}"]);
+  });
+
+  it("a word equal to a value of the collection stays", async () => {
+    const d = await derived(postman([pmGet("/api/jane-roe?who=jane-roe", { slug: "jane-roe" }), pmGet("/api/projects?tab=projects")]));
+    expect(paths(d)).toEqual(["/api/jane-roe", "/api/projects"]);
+  });
+
+  it("words no recorded traffic may keep, when a person wrote them", async () => {
+    const d = await derived(postman([pmGet("/api/my-private-note-about-bob"), pmGet("/api/report.csv"), pmGet("/api/v2.1/me"), pmGet("/api/emp4521")]));
+    expect(paths(d)).toEqual(["/api/emp4521", "/api/my-private-note-about-bob", "/api/report.csv", "/api/v2.1/me"]);
+  });
+
+  it("the names of parameters, and query names of any form: a bare one, brackets, a dollar", async () => {
+    const d = await derived(postman([pmGet("/api/:projectId/{{taskId}}?verbose&page[size]=10&filter[status]=open&$top=5&user.name=x")]));
+    expect(paths(d)).toEqual(["/api/{projectId}/{taskId}"]);
+    const names = d.doc.paths["/api/{projectId}/{taskId}"]!.get!.parameters!.filter((p) => p.in === "query").map((p) => p.name);
+    expect(names).toEqual(["$top", "filter[status]", "page[size]", "user.name", "verbose"]);
+  });
+
+  it("the words around a secret: a word that holds it is a parameter, a request's name that does not hold it stays", async () => {
+    const d = await derived(postman([pmGet("/api/reset-plainkeyword/x"), { name: "Latest projects", request: { method: "GET", url: "https://app.example.test/api/projects" } }], { info: { name: "Latest projects", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" }, variable: [{ key: "api_key", value: "plainkeyword" }, { key: "secret", value: "test" }] }));
+    expect(paths(d)).toEqual(["/api/projects", "/api/{id}/x"]);
+    expect(d.doc.info.title).toBe("Latest projects");
+    expect(d.doc.paths["/api/projects"]!.get!.summary).toBe("Latest projects");
+  });
+
+  it("a HAR is recorded traffic: the same three paths fold, and a value folds its word", async () => {
+    const d = await derived(har(...["projects", "users", "teams"].map((res) => harGet(`/api/${res}/export`)), harGet("/api/u/jane-roe?who=jane-roe")));
+    expect(paths(d)).toEqual(["/api/u/{id}", "/api/{id}/export"]);
+  });
+});
+
 describe("what must stay stays (#229)", () => {
+  it.each(THE_ROUTES_STAY)("%s", async (_what, feed, expected, runSecrets) => {
+    expect(paths(await draft(feed, runSecrets))).toEqual([...expected].sort());
+  });
+
+  it("the prices taken: a cookie's plain value folds its word, and three resources with a shared action become one route", async () => {
+    const cookies = await draft((r) => {
+      get(r, "/api/users/1", { requestHeaders: { cookie: "tab=users" } });
+      get(r, "/api/dark/mode", { requestHeaders: { cookie: "theme=dark" } });
+    });
+    expect(paths(cookies)).toEqual(["/api/{apiId}/{id}", "/api/{id}/mode"]);
+    const shared = await draft((r) => {
+      for (const res of ["projects", "teams", "users"]) get(r, `/api/${res}/export`);
+    });
+    expect(paths(shared)).toEqual(["/api/{id}/export"]);
+  });
+
+  it("a value equal to its field's name is no secret: the key stays", async () => {
+    const d = await draft((r) => get(r, "/api/a", answer({ session_token: "session_token", id: 2 })));
+    expect(Object.keys(responseSchema(d, "/api/a").properties ?? {})).toEqual(["session_token", "id"]);
+  });
+
+  it("four parts stay: the limit of the form", async () => {
+    const d = await draft((r) => get(r, "/api/a", answer({ alice_smith_hiv_positive: 1, id: 2 })));
+    expect(Object.keys(responseSchema(d, "/api/a").properties ?? {})).toEqual(["alice_smith_hiv_positive", "id"]);
+  });
+
+  it("an object of 8 keys of one shape is a map, and of 7 or of other shapes is not", async () => {
+    const of = (n: number, value: (i: number) => unknown): Record<string, unknown> => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${"abcdefghij"[i]}key`, value(i)]));
+    const d = await draft((r) => {
+      get(r, "/api/eight", answer(of(8, () => ({ role: "x" }))));
+      get(r, "/api/nulls", answer(of(8, (i) => (i ? { role: "x", team: i % 2 ? null : "y" } : null))));
+      get(r, "/api/seven", answer(of(7, () => ({ role: "x" }))));
+      get(r, "/api/other", answer(of(8, (i) => ({ [`field${"abcdefghij"[i]}`]: 1 }))));
+      get(r, "/api/plain", answer(of(8, () => "x")));
+    });
+    for (const p of ["/api/eight", "/api/nulls"]) expect(responseSchema(d, p).properties, p).toBeUndefined();
+    for (const p of ["/api/seven", "/api/other", "/api/plain"]) expect(responseSchema(d, p).properties, p).toBeDefined();
+  });
+
   it("the words of an API, and paths that differ only at their end", async () => {
     const d = await draft((r) => {
       for (const p of ["/api/users", "/api/projects", "/api/projects/123", "/api/projects/456", "/api/settings", "/api/v1/me", "/api/oauth2/token", "/api/s3/buckets", "/api/users/me/profile", "/api/users/you/profile"]) get(r, p);
@@ -242,19 +458,19 @@ describe("what must stay stays (#229)", () => {
     expect(Object.keys(d.doc.paths["/api/users/{id}/profile"]!).sort()).toEqual(expect.arrayContaining(["get", "put"]));
   });
 
-  const M6 = ["address1", "addressLine1", "password1", "base64data", "oauth2token", "ipv4address", "sha256sum", "s3bucket", "phoneNumber2", "name", "email", "age"];
-  const m6Body = Object.fromEntries(M6.map((k) => [k, "string"]));
+  const NAMES = ["address1", "addressLine1", "addressLine2", "password1", "base64data", "oauth2token", "ipv4address", "sha256sum", "s3bucket", "phoneNumber2", "name", "email", "age", "created_at", "getUserById", "refresh-token-status"];
+  const namesBody = Object.fromEntries(NAMES.map((k) => [k, "string"]));
 
-  it("M6 ordinary names stay names, in a request and in a response", async () => {
+  it("ordinary names stay names, in a request and in a response", async () => {
     const d = await draft((r) => {
-      post(r, "/api/customers", J, JSON.stringify(m6Body));
-      get(r, "/api/customers", answer(m6Body));
+      post(r, "/api/customers", J, JSON.stringify(namesBody));
+      get(r, "/api/customers", answer(namesBody));
     });
-    expect(Object.keys(requestSchema(d, "/api/customers").properties ?? {})).toEqual(M6);
-    expect(Object.keys(responseSchema(d, "/api/customers").properties ?? {})).toEqual(M6);
+    expect(Object.keys(requestSchema(d, "/api/customers").properties ?? {})).toEqual(NAMES);
+    expect(Object.keys(responseSchema(d, "/api/customers").properties ?? {})).toEqual(NAMES);
   });
 
-  it("M6 one token-like key does not turn the object into a map, and the happy-path body keeps its fields", async () => {
+  it("one token-like key does not turn the object into a map, and the happy-path body keeps its fields", async () => {
     const d = await draft((r) => post(r, "/api/customers", J, JSON.stringify({ name: "string", email: "string", age: 0, addressLine1: "x", FAKEtok3n4b5c6d7: 1 })));
     expect(Object.keys(requestSchema(d, "/api/customers").properties ?? {})).toEqual(["name", "email", "age", "addressLine1"]);
     const dir = await mkdtemp(join(tmpdir(), "cairn-forms-"));
@@ -271,11 +487,11 @@ describe("what must stay stays (#229)", () => {
     const d = await draft((r) => {
       get(r, "/api/projects?page=1&sort=name", answer([{ id: 1, name: "Alpha" }]));
       post(r, "/api/projects", J, JSON.stringify({ name: "Gamma", public: false }));
-      get(r, "/api/columns", answer({ column: "email", email: "x", passwordPolicy: "phone", phone: "y" }));
+      get(r, "/api/columns", answer({ column: "email", email: "x", label: "phone", phone: "y" }));
     });
     expect(Object.keys(requestSchema(d, "/api/projects").properties ?? {})).toEqual(["name", "public"]);
     expect(responseSchema(d, "/api/projects").items!.properties).toHaveProperty("name");
-    expect(Object.keys(responseSchema(d, "/api/columns").properties ?? {})).toEqual(["column", "email", "passwordPolicy", "phone"]);
+    expect(Object.keys(responseSchema(d, "/api/columns").properties ?? {})).toEqual(["column", "email", "label", "phone"]);
   });
 
   it("a part of a word is checked against secrets only, and only whole: `admin` leaves `administrators` alone", async () => {
@@ -363,7 +579,7 @@ describe("the document stays whole (#229): no text pass over it", () => {
   });
 });
 
-describe("a long value does not stop the run (M5)", () => {
+describe("a long value does not stop the run (#229)", () => {
   const blob = "a".repeat(200_000);
   const LIMIT = 2_000;
 
@@ -418,7 +634,7 @@ describe("a long value does not stop the run (M5)", () => {
   });
 });
 
-describe("the same forms for a HAR and a Postman collection (#228, #229)", () => {
+describe("a HAR's forms and a collection's free text (#228, #229)", () => {
   const entry = (method: string, url: string, postData: unknown, res: unknown): unknown => ({
     _resourceType: "xhr",
     request: { method, url: `https://app.example.test${url}`, headers: [], queryString: [], cookies: [], ...(postData ? { postData } : {}) },

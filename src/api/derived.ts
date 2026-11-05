@@ -10,12 +10,17 @@
  * What was inferred rather than described carries `x-cairn-derived: true` (the document, each operation, each body
  * schema), so whoever reads the spec knows to trust it less.
  *
- * Whatever the traffic says, the file holds a string that came from it only when that string has passed a fixed form
- * that a free-text value cannot have: a name ({@link isName}), a word of a path ({@link isPathWord}) or a media type
- * ({@link writtenMedia}). Anything else is dropped or becomes a parameter. A wrong fold costs one route in a draft, a
- * wrong keep costs someone's data, so when unsure it folds. A plain word has that form too, and no form tells a one-off
- * slug from a word of the API: {@link KnownValues} catches the ones the traffic shows to be values, the rest stay, and
- * the docs say so. Bodies, headers, cookies and query values are read for their shape and their values, and not kept.
+ * Whatever the traffic says, the file holds a string that came from it only when that string has passed a fixed form:
+ * a name ({@link isName}), a word of a path ({@link isPathWord}) or a media type ({@link writtenMedia}). The form leaves
+ * out most free text, not all of it. Anything else is dropped or becomes a parameter. A wrong fold costs one route in a
+ * draft, a wrong keep costs someone's data, so when unsure it folds.
+ *
+ * Secrets are held hard: a credential, a cookie, a value under a sensitive name or a secret of the run reaches the file
+ * neither whole, nor as a part of a word, nor as a name ({@link KnownValues.isSecret}). Personal data in a path goes as far
+ * as a form can see: a word of several parts equal to a value, or one of three words in a place before a literal word, is a
+ * parameter; a word of one part no form tells from a word of the API, it stays, and the docs say so. What a person wrote in
+ * a collection stays as written, but for what holds a secret. Bodies, headers, cookies and query values are read for
+ * their shape and their values, and not kept.
  */
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -42,7 +47,10 @@ export interface Exchange {
   status?: number;
   request?: { contentType?: string; body?: unknown };
   response?: { contentType?: string; body?: unknown };
-  /** The path was written by a person (a Postman item): `:id` and `{{id}}` in it are parameters, not traffic. */
+  /**
+   * The path and the query names were written by a person (a Postman item): `:id` and `{{id}}` are parameters, not traffic,
+   * and all of it stays as written but for what holds a secret.
+   */
   authored?: boolean;
   /** A name a person gave the request (a Postman item), and the folders it sits in. */
   summary?: string;
@@ -79,18 +87,35 @@ function randomName(s: string): boolean {
   return (run.match(/\d+/g)?.length ?? 0) >= 3;
 }
 
+/** The most `-`/`_` separated parts of a word: more reads as a sentence. Four can still be one: the docs say so. */
+const MAX_PARTS = 4;
+
+/**
+ * What a name and a word of a path share, and most free text and random text have not: up to {@link MAX_PARTS} parts, up
+ * to 3 digits at the end of a part, at most one part of 4 or more characters that are all hex, and in a word of 8 letters
+ * or more a fifth of them vowels (`y` is one) and at most 3 turns from lower to upper case.
+ */
+function wordLike(s: string): boolean {
+  const parts = s.split(/[-_]/).filter(Boolean);
+  if (parts.length > MAX_PARTS || parts.some((p) => /\d{4,}$/.test(p))) return false;
+  if (parts.filter((p) => p.length >= 4 && /^[0-9a-f]+$/i.test(p)).length >= 2) return false;
+  const letters = s.replace(/[^A-Za-z]/g, "");
+  if (letters.length < 8) return true;
+  return (letters.match(/[aeiouy]/gi)?.length ?? 0) * 5 >= letters.length && (s.match(/[a-z](?=[A-Z])/g)?.length ?? 0) <= 3;
+}
+
 /** A string that may be written as a name. `address1`, `base64data`, `sha256sum` are; `user.name` and `Alice Smith` are not. */
-export const isName = (s: string): boolean => s.length <= 64 && NAME_FORM.test(s) && !randomName(s);
+export const isName = (s: string): boolean => s.length <= 64 && NAME_FORM.test(s) && wordLike(s) && !randomName(s);
 
 const WORD_FORM = /^[A-Za-z]+\d*(?:[-_][A-Za-z]+\d*)*$/;
 
 /**
  * A word that may stay in a path: per `-`/`_` separated part ASCII letters, with digits only at the end (`v1`, `oauth2`,
  * `s3`; not `a1b2c3d`). Not hex-only of 6 or more (`deadbeef`), no part of 5 or more letters without a vowel, not longer
- * than 32, and not credential-shaped ({@link secretShaped}). The length comes first: no regex sees a long value.
+ * than 32, not credential-shaped ({@link secretShaped}), and {@link wordLike}. The length comes first: no regex sees a long value.
  */
 export function isPathWord(s: string): boolean {
-  if (s.length > 32 || !WORD_FORM.test(s) || /^[0-9a-f]{6,}$/i.test(s) || secretShaped(s)) return false;
+  if (s.length > 32 || !WORD_FORM.test(s) || /^[0-9a-f]{6,}$/i.test(s) || secretShaped(s) || !wordLike(s)) return false;
   return s.split(/[-_]/).every((part) => {
     const letters = part.replace(/\d+$/, "");
     return letters.length < 5 || /[aeiouy]/i.test(letters);
@@ -140,6 +165,8 @@ function segmentsOf(path: string, authored: boolean): Seg[] {
         }
       }
       if (/^\d+$/.test(s)) return { integer: true };
+      // A person wrote it: it stays, but for an id or an address that came with an example, and has no form to pass.
+      if (authored) return s.includes("@") || s === "‹v›" || s === "{}" || secretShaped(s) ? { integer: false } : { literal: s };
       return isPathWord(s) ? { literal: s } : { integer: false };
     });
 }
@@ -168,7 +195,7 @@ function written(segs: Seg[]): { path: string; params: PathParam[] } {
 
 /**
  * The templated form of one path, seen alone. `authored`: a segment named as a parameter (`:id`, `{{id}}`, `{id}`) keeps
- * its name; in recorded traffic such a segment is a value like any other.
+ * its name and a word needs no form; in recorded traffic such a segment is a value like any other.
  */
 export function templatePath(path: string, authored = true): { path: string; params: PathParam[] } {
   return written(segmentsOf(path, authored));
@@ -183,6 +210,23 @@ const MAX_ITEMS = 50;
 const MAX_KEYS = 200;
 /** This many keys of one shape (`user_1`, `user_2`) make an object a map whatever their number. */
 const MANY_OF_ONE_SHAPE = 20;
+
+/** From this many keys, values all of one shape that is no scalar make an object a map. */
+const ONE_SHAPE_AT = 8;
+
+/** A schema without its scalars: `{ role: "a", team: null }` and `{ role: "b", team: "c" }` are one shape. */
+function skeleton(s: JsonSchema): string {
+  if (s.type === "array") return `[${s.items ? skeleton(s.items as JsonSchema) : ""}]`;
+  if (s.type !== "object") return "";
+  const fields = Object.entries((s.properties ?? {}) as Record<string, JsonSchema>).map(([k, v]) => `${k}:${skeleton(v)}`);
+  return `{${fields.sort().join()}${s.additionalProperties ? `*${skeleton(s.additionalProperties as JsonSchema)}` : ""}}`;
+}
+
+function oneShape(values: JsonSchema[]): boolean {
+  if (values.length < ONE_SHAPE_AT) return false;
+  const shapes = new Set(values.filter((v) => v.type !== undefined).map(skeleton));
+  return shapes.size === 1 && !shapes.has("");
+}
 
 function manyOfOneShape(keys: string[]): boolean {
   const seen = new Map<string, number>();
@@ -199,8 +243,8 @@ function manyOfOneShape(keys: string[]): boolean {
  * The JSON schema of one example value: types, object keys (all `required`) and array items — never the value. A
  * `null` gives `{ nullable: true }` with no type, so a later example can say what the type is. An empty array has no
  * `items` yet for the same reason. A key that is no {@link isName} is dropped alone. An object most of whose keys are
- * dropped, or with many keys of one shape or too many keys, is a map keyed by people or ids: its schema is
- * `additionalProperties` with the values' merged schema, and no key is kept.
+ * dropped, with many keys of one shape, with many values of one shape or with too many keys, is a map keyed by people or
+ * ids: its schema is `additionalProperties` with the values' merged schema, and no key is kept.
  */
 export function schemaOf(v: unknown, depth = 0): JsonSchema {
   if (v === null) return { nullable: true };
@@ -223,16 +267,12 @@ export function schemaOf(v: unknown, depth = 0): JsonSchema {
     case "object": {
       const all = Object.keys(v as object);
       const keys = all.filter(isName);
-      if (keys.length * 2 < all.length || all.length > MAX_KEYS || manyOfOneShape(keys)) {
-        let values: JsonSchema | undefined;
-        for (const k of all.slice(0, MAX_KEYS)) {
-          const s = schemaOf((v as Record<string, unknown>)[k], depth + 1);
-          values = values ? mergeSchema(values, s) : s;
-        }
-        return { type: "object", additionalProperties: values ?? {} };
+      const schemas = new Map(all.slice(0, MAX_KEYS).map((k): [string, JsonSchema] => [k, schemaOf((v as Record<string, unknown>)[k], depth + 1)]));
+      if (keys.length * 2 < all.length || all.length > MAX_KEYS || manyOfOneShape(keys) || oneShape([...schemas.values()])) {
+        return { type: "object", additionalProperties: [...schemas.values()].reduce((m, x) => mergeSchema(m, x)) };
       }
       const properties: Record<string, JsonSchema> = {};
-      for (const k of keys) properties[k] = schemaOf((v as Record<string, unknown>)[k], depth + 1);
+      for (const k of keys) properties[k] = schemas.get(k)!;
       return keys.length ? { type: "object", properties, required: keys } : { type: "object" };
     }
     default:
@@ -261,7 +301,7 @@ export function mergeSchema(a: JsonSchema, b: JsonSchema): JsonSchema {
     const properties: Record<string, JsonSchema> = { ...pa };
     for (const [k, s] of Object.entries(pb)) properties[k] = pa[k] ? mergeSchema(pa[k], s) : s;
     const names = Object.keys(properties);
-    if (names.length > MAX_KEYS || manyOfOneShape(names)) {
+    if (names.length > MAX_KEYS || manyOfOneShape(names) || oneShape(Object.values(properties))) {
       const map: JsonSchema = { type: "object", additionalProperties: Object.values(properties).reduce((m, x) => mergeSchema(m, x)) };
       return nullable ? { ...map, nullable: true } : map;
     }
@@ -370,15 +410,39 @@ export class TooManyValues extends Error {
   }
 }
 
-const digest = (normal: string): string => createHash("sha256").update(normal).digest("base64url").slice(0, 16);
-const normal = (s: string): string => s.trim().toLowerCase();
+const digest = (value: string): string => createHash("sha256").update(value).digest("base64url").slice(0, 16);
+
+/**
+ * How values and words are compared: no case and no width of the letters, and nothing that only spells a word apart (a
+ * space, `-`, `_`, `+`, a zero-width character, a soft or non-breaking hyphen, which NFKC makes U+2010).
+ */
+const canon = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/[\s\-_+\u00ad\u200b-\u200d\u2010\u2011\u2060]/g, "");
+
+/** Where a text falls apart: at each character that is no letter or digit (kept as a piece), and where camelCase turns. */
+const PART_EDGE = /([^\p{L}\p{N}])|(?<=[\p{Ll}\p{N}])(?=\p{Lu})|(?<=\p{Lu})(?=\p{Lu}\p{Ll})/u;
+
+/**
+ * Whether a run of whole parts of a text, in canon form, passes `is`: `resetOpenSesame` holds `open-sesame` and `sesame`.
+ * Never a piece of a part: `admin` is not in `administrators`. A run is not grown past `longest`, so a long text costs little.
+ */
+function someRun(text: string, is: (run: string) => boolean, longest = MAX_KNOWN_LENGTH): boolean {
+  const parts = text.normalize("NFKC").split(PART_EDGE).filter(Boolean).map(canon).filter(Boolean);
+  for (let from = 0; from < parts.length; from++) {
+    let run = "";
+    for (let to = from; to < parts.length && run.length + parts[to]!.length <= longest; to++) {
+      run += parts[to]!;
+      if (is(run)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Every value the traffic showed, each as a fixed-size digest, so the memory goes with their number and not their size.
- * Filled during the run and read when the document is built, because a value can be seen after its path. A word of a path
- * equal to any of them is a value ({@link isValue}). A word and a name are checked against the run's secrets and the
- * traffic's credentials ({@link isSecret}), also by their parts; `?sort=name` must not take `name` out of every schema, and
- * `active` in an answer must not fold `/set-active`. A name that is a value anywhere else stays; the docs say so.
+ * Filled during the run and read when the document is built, because a value can be seen after its path. A word of several
+ * parts equal to any of them is a value ({@link isValue}); of one part no value tells it from a route, so `{"type":"projects"}`
+ * leaves `/projects` alone. A word and a name are checked against the secrets ({@link isSecret}), also by their parts:
+ * `?sort=name` must not take `name` out of every schema. A name that is a value anywhere else stays; the docs say so.
  */
 export class KnownValues {
   private readonly values = new Set<string>();
@@ -394,9 +458,11 @@ export class KnownValues {
 
   private put(raw: string, secret: boolean): void {
     if (raw.length > MAX_KNOWN_LENGTH) return;
-    const v = normal(raw);
+    if (raw.includes("%") && decoded(raw) !== raw) this.put(decoded(raw), secret);
+    const at = raw.lastIndexOf("@"); // an address: its local part goes alone in a path
+    if (at > 0) this.put(raw.slice(0, at), secret && worthScrubbing(raw.slice(0, at)));
+    const v = canon(raw);
     if (!v) return;
-    if (v.includes("%")) this.put(decoded(v) === v ? "" : decoded(v), secret);
     const d = digest(v);
     if (this.values.has(d)) {
       if (secret) this.secrets.add(d);
@@ -414,9 +480,19 @@ export class KnownValues {
     this.put(value, false);
   }
 
-  /** A credential or a secret of the run. One that is a word of the document's vocabulary is only a value. */
+  /** A value with its name (a query or form field, a key of a body, a variable): under a sensitive name it is a secret. */
+  field(name: string, value: string): void {
+    if (SENSITIVE.test(name) && worthScrubbing(value, name)) this.secret(value);
+    else this.add(value);
+  }
+
+  /**
+   * A credential or a secret of the run, also as a cookie holds it: in quotes, or signed (`s:value.signature`). One that is a
+   * word of the document's vocabulary is only a value.
+   */
   secret(value: string): void {
-    this.put(value, worthScrubbing(value));
+    const plain = decoded(value).trim().replace(/^"(.*)"$/, "$1");
+    for (const v of [value, plain, /^s:(.+)\.[^.]+$/.exec(plain)?.[1] ?? plain]) this.put(v, worthScrubbing(v));
   }
 
   /** One header's value, whole; with a credential header's parts (after `Bearer `, each cookie) as secrets. */
@@ -429,35 +505,25 @@ export class KnownValues {
     }
   }
 
-  /** Every string in a parsed body, at any depth and past any item limit: a loop, so a deep body cannot overflow. */
+  /** Every string in a parsed body with the name it sits under, at any depth and past any item limit: a loop, so a deep body cannot overflow. */
   json(v: unknown): void {
-    const stack: unknown[] = [v];
+    const stack: [string, unknown][] = [["", v]];
     while (stack.length > 0) {
-      const x = stack.pop();
-      if (typeof x === "string") this.add(x);
-      else if (x && typeof x === "object") for (const y of Object.values(x)) stack.push(y);
+      const [name, x] = stack.pop()!;
+      if (typeof x === "string") this.field(name, x);
+      else if (Array.isArray(x)) for (const y of x) stack.push([name, y]);
+      else if (x && typeof x === "object") for (const [k, y] of Object.entries(x)) stack.push([k, y]);
     }
   }
 
+  /** A word of several parts that is a value as a whole: `jane-roe`, also as `jane_roe` and `janeRoe`. */
   isValue(word: string): boolean {
-    return this.values.has(digest(normal(word)));
+    return PART_EDGE.test(word) && this.values.has(digest(canon(word)));
   }
 
-  /**
-   * The word or name is a secret, or holds one as whole `-`/`_` separated parts: `reset-opensesame`, `reset-open-sesame-now`.
-   * Never a piece of a part: a secret `admin` leaves `administrators` alone.
-   */
+  /** The word or name is a secret, or holds one as a run of whole parts ({@link someRun}). */
   isSecret(word: string): boolean {
-    const parts = normal(word).split(/([-_])/); // the separators stay, at the odd places: a secret may hold them too
-    for (let from = 0; from < parts.length; from += 2) {
-      let run = parts[from]!;
-      if (this.secrets.has(digest(run))) return true;
-      for (let to = from + 2; to < parts.length; to += 2) {
-        run += parts[to - 1]! + parts[to]!;
-        if (this.secrets.has(digest(run))) return true;
-      }
-    }
-    return false;
+    return someRun(word, (run) => this.secrets.has(digest(run)));
   }
 }
 
@@ -467,6 +533,7 @@ export class KnownValues {
 interface Op {
   method: string;
   segs: Seg[];
+  authored: boolean;
   query: Set<string>;
   summary?: string;
   tags: Set<string>;
@@ -479,7 +546,7 @@ interface Op {
 const METHODS = new Set(["get", "put", "post", "delete", "options", "head", "patch", "trace"]);
 /** A longer path is no API's: it is dropped, so the folding below stays cheap whatever a page asks for. */
 const MAX_SEGMENTS = 32;
-/** This many distinct words in one place of a path, before the same ending, are values. */
+/** This many distinct words in one place of a path, between the same words and before a literal word, are values. */
 const FOLD_AT = 3;
 
 const merged = (prev: JsonSchema | undefined, next: JsonSchema | undefined, had: boolean): JsonSchema | undefined =>
@@ -513,7 +580,7 @@ export class DerivedSpecBuilder {
     const key = `${method} ${shapeOf(segs)}`;
     let op = this.ops.get(key);
     if (!op) {
-      op = { method, segs, query: new Set(), tags: new Set(), seen: 0, withBody: 0, requestBodies: new Map(), responses: new Map() };
+      op = { method, segs, authored: x.authored === true, query: new Set(), tags: new Set(), seen: 0, withBody: 0, requestBodies: new Map(), responses: new Map() };
       this.ops.set(key, op);
     } else {
       // A path parameter is an integer only while every value seen was one.
@@ -523,7 +590,7 @@ export class DerivedSpecBuilder {
       }
     }
     op.seen += 1;
-    for (const q of x.queryKeys ?? []) if (isName(q)) op.query.add(q);
+    for (const q of x.queryKeys ?? []) if (op.authored || isName(q)) op.query.add(q);
     if (op.summary === undefined && x.summary) op.summary = x.summary;
     for (const tag of x.tags ?? []) op.tags.add(tag);
     const declared = mediaType(x.request?.contentType);
@@ -545,23 +612,29 @@ export class DerivedSpecBuilder {
   }
 
   /**
-   * The operations as the document has them. A word equal to a known value, or holding a secret as a part, is a parameter. Three or more distinct words
-   * in one place of a path, with the same words before them and the same non-empty ending, are parameters too: no form
-   * tells `alice` from `settings`, their number does. With nothing after them they stay: `/api/users` and `/api/settings`.
+   * The operations as the document has them. A word or a name a person gave that holds a secret is a parameter with no
+   * name, and so is a recorded word of several parts equal to a known value. Three or more distinct recorded words in one
+   * place of a path, with the same places before them and the same ending that holds a literal word, are parameters too: no
+   * form tells `alice` from `settings`, their number does. With no word after them they stay: `/api/users` and `/api/users/{id}`.
+   * What a person wrote is not folded by a value or by its position.
    */
   private resolved(): Op[] {
     const all = [...this.ops.values()].map((op) => ({
       op,
-      segs: op.segs.map((s): Seg => (isLiteral(s) && s.literal !== "" && (this.known.isValue(s.literal) || this.known.isSecret(s.literal)) ? { integer: false } : s)),
+      segs: op.segs.map((s): Seg => {
+        const word = isLiteral(s) ? s.literal : s.name;
+        return word && (this.known.isSecret(word) || (!op.authored && this.known.isValue(word))) ? { integer: false } : s;
+      }),
     }));
+    const recorded = all.filter(({ op }) => !op.authored);
     for (;;) {
       const places = new Map<string, Set<string>>();
       const placeOf = (segs: Seg[], i: number): string => `${i} ${shapeOf(segs.slice(0, i))} ${shapeOf(segs.slice(i + 1))}`;
       const each = (visit: (segs: Seg[], i: number, word: string) => void): void => {
-        for (const { segs } of all) {
+        for (const { segs } of recorded) {
           for (let i = 0; i < segs.length - 1; i++) {
             const s = segs[i]!;
-            if (isLiteral(s) && s.literal !== "") visit(segs, i, s.literal);
+            if (isLiteral(s) && s.literal !== "" && segs.slice(i + 1).some(isLiteral)) visit(segs, i, s.literal);
           }
         }
       };
@@ -680,7 +753,7 @@ const VOCABULARY = new Set(
     "nullable", "content", "responses", "requestbody", "summary", "tags", "status", "recorded", "derived",
     "get", "put", "post", "delete", "options", "head", "patch", "trace",
     "application/json", "text/plain", DERIVED_KEY,
-  ].map((w) => w.toLowerCase()),
+  ].map(canon),
 );
 const MIN_SECRET = 4;
 
@@ -688,9 +761,8 @@ const MIN_SECRET = 4;
 function worthScrubbing(value: string, name?: string): boolean {
   const v = value.trim();
   if (v.length < MIN_SECRET) return false;
-  const lower = v.toLowerCase();
-  if (VOCABULARY.has(lower)) return false;
-  if (name !== undefined && name.trim().toLowerCase().split(/\s+/).includes(lower)) return false;
+  if (VOCABULARY.has(canon(v))) return false;
+  if (name !== undefined && name.trim().split(/\s+/).map(canon).includes(canon(v))) return false;
   return true;
 }
 
@@ -738,11 +810,19 @@ export function bodyFields(v: unknown, key = "body", out: [string, string][] = [
 
 /**
  * The one check left at the end, for free text a person wrote in a collection (its name, a request's name, a folder) and
- * a server's address: an element that holds a secret is dropped or, the title being required, replaced. The words and
- * names of the document were checked when it was built; no string in it is edited, so its structure stays as it is.
+ * a server's address: an element that holds a secret as a run of whole parts ({@link someRun}) is dropped or, the title
+ * being required, replaced: a secret `test` leaves `Latest projects` alone. The words and names of the document were checked
+ * when it was built; no string in it is edited, so its structure stays as it is.
  */
 function withoutSecretText(doc: Record<string, unknown>, secrets: readonly string[]): Record<string, unknown> {
-  const holds = (t: unknown): boolean => typeof t === "string" && secrets.some((s) => t.includes(s));
+  const canons = new Set(secrets.map(canon));
+  const list = [...canons];
+  const longest = list.reduce((m, s) => Math.max(m, s.length), 0);
+  const holds = (t: unknown): boolean => {
+    if (typeof t !== "string") return false;
+    const whole = canon(t);
+    return list.some((s) => whole.includes(s)) && someRun(t, (run) => canons.has(run), longest);
+  };
   const out: Record<string, unknown> = { ...doc };
   const info = doc.info as { title?: unknown } | undefined;
   if (info && holds(info.title)) out.info = { ...info, title: "API draft" };

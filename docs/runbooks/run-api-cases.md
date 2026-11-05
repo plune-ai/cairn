@@ -51,11 +51,24 @@
    from the request and response examples, and every operation and inferred schema is marked `x-cairn-derived: true`:
    trust it less than a written spec. From a HAR only the API requests of the origin most of them went to are kept;
    pages, scripts, styles, images and fonts are left out, and the output counts what was. Header, cookie, query and
-   body values are not written as such: a word of a path or a name is written only in a fixed form and not when it equals
-   a value seen (a word) or a secret (a name), or holds a secret as a whole `-`/`_` part, so `user.name` and `filter.status` are left out. A plain word in a path
-   stays as written when it appeared nowhere else, unless three or more such words sit in the same place before the same
-   ending, and a plain word used as a key or a query name stays unless it is or holds a secret, so read the draft before sharing
-   it. The name of a collection, a request or a folder is written as it is, and dropped whole when it holds a secret. A
+   body values are not written as such.
+
+   A HAR follows the rules for recorded traffic (`run-exploration.md`) and keeps its host: a word or a name outside the
+   fixed form is a parameter or left out (`user.name`, `filter.status`), a word of several parts equal to a value seen is a
+   parameter, and three or more words in one place before a literal word fold into one (`/api/{id}/export`). A collection
+   keeps what a person wrote: its paths, `:id`, `{{id}}` and query names in any form (`?verbose`, `page[size]`, `$top`), with no
+   fold by a value or by position; digits, a credential-shaped word and an address in a path are parameters, and the keys of
+   its bodies and examples pass the name form.
+
+   In both, a secret reaches the file neither as a word of a path, nor as a run of whole parts of a word, nor as a name.
+   These count as secrets: the value of a header, query, form or body field or variable whose name has `authorization`,
+   `cookie`, `api key`, `token`, `secret` or `password` in it; every cookie; the user and password of a URL; a value shaped
+   like a credential (a JWT, long hex) or that the run's secret reader takes from a `name: value` pair; and the run's own
+   secrets. The comparison ignores case, letter width, spaces, `-`, `_`, `+`, zero-width characters and soft or non-breaking
+   hyphens, and splits camelCase. Limits: in a HAR a one-word slug and a list of names at the end of a path stay, in both a
+   plain word used as a key or a query name stays unless it is or holds a secret, and a collection's paths stay as written, so
+   read the draft before sharing it. The name of a collection, a request or a folder is written as it is, and dropped whole
+   when it holds a secret as a run of whole parts. A
    Postman v1 collection is refused: export it as v2.1.
 
 ## Save scenario chains as API flows (`--save-flows`, #230)

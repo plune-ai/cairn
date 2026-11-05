@@ -53,20 +53,43 @@ openapi.derived.json # OpenAPI draft from the app's API traffic (#229); lib back
 OpenAPI 3.0: ids in paths become parameters (`/projects/123` → `/projects/{id}`), with methods, response codes and body
 schemas inferred from the examples, all marked `x-cairn-derived: true`. Only `--url`'s origin is kept, plus those given
 with `--api-origin https://api.example.com` (comma-separated, no `*`, no user or password); analytics, CDNs, pages,
-scripts, styles, images, fonts and answers a service worker made itself stay out (the run log counts them and names up
-to three of the origins refused, so a `--url` that redirects to `www.` or `https` shows what to pass). The host and the
-port are not in the file: `cairn api` takes the address from `--base-url`.
+scripts, styles, images and fonts stay out (the run log counts them and names up to three of the origins refused, so a
+`--url` that redirects to `www.` or `https` shows what to pass), and so do answers a service worker made itself, which the
+log does not count. The host and the port are not in the file: `cairn api` takes the address from `--base-url`.
 
-A string from the traffic reaches the file only in a fixed form. A name (a JSON key, a form field, a query name) must
-match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, not be long random text and not be, or hold as a whole `-`/`_` part, a secret of
-the run or a credential of the traffic; one that fails is left out alone, so `user.name` and `filter.status` are left out too. An object most of whose
-keys fail, or with many keys of one shape, is a map (`additionalProperties`). A word of a path stays only as ASCII letters
-with digits at the end of a `-`/`_` part, up to 32 characters, not 6 or more hex characters and not equal to any value the traffic showed or a
-secret of the run, with no whole `-`/`_` part equal to a secret or a credential; anything else is a parameter. Bodies, headers, cookies and query values are not written as such, but no
-form tells a value from a word of the API:
-a plain word in a path stays as written when it appeared nowhere else in the traffic, unless three or more such
-words sit in the same place before the same ending, and a plain word used as a key, a form field or a query name
-stays unless it is or holds a secret of the run or a credential of the traffic, so read the draft before sharing it.
+A string from the traffic reaches the file only after passing a fixed form, which leaves out most free text and
+random-looking text but not all of it. A name (a JSON key, a form field, a query name) must match
+`^[A-Za-z_][A-Za-z0-9_-]{0,63}$` and not read as random (long hex, letters that flip case, digits in three places). A word
+of a path must be ASCII letters with digits only at the end of a `-`/`_` part, up to 32 characters, not 6 or more hex
+characters and not shaped like a credential. Both may have at most 4 `-`/`_` parts, at most 3 digits at the end of a part
+and at most one part of 4 or more characters that are all hex; from 8 letters on, at least one letter in five must be a
+vowel (`y` counts) and the case may turn from lower to upper at most 3 times. A name that fails is left out alone, so
+`user.name` and `filter.status` are left out too; a word that fails is a parameter. An object most of whose keys fail, with
+many keys of one shape, or with 8 or more keys whose values all have one non-scalar shape is a map
+(`additionalProperties`). Bodies, headers, cookies and query values are not written as such.
+
+A secret reaches the file neither as a word of a path, nor as a run of whole parts of a word, nor as a name. These count
+as secrets: the value of a header, query, form or body field whose name has `authorization`, `cookie`, `api key`, `token`,
+`secret` or `password` in it; every cookie; and the run's own secrets (knowledge, environment). A value under 4 characters,
+one equal to its field's name and a word of the document's vocabulary (`string`, `true`, `password`) are not. The comparison
+ignores case, letter width, spaces, `-`, `_`, `+`, zero-width characters and soft or non-breaking hyphens, takes a cookie
+without its quotes or its signature, and splits camelCase: `resetOpenSesame` holds `open-sesame`, and a secret `admin` leaves
+`administrators` alone.
+
+A word of a path with several parts (`jane-roe`, also as `jane_roe` or `janeRoe`) that equals a value the run read, compared
+the same way, is a parameter; an address counts by its local part too. The run reads values of up to 256 characters from
+JSON bodies up to 1 MB, query strings, url-encoded forms, text bodies and headers. It does not see values in JSON keys, in CSV
+or other answers that are not JSON, in answers over 1 MB or in multipart bodies. A word of one part (`projects`, `v1`) is
+compared with secrets only, since no value tells it from a route. Three or more distinct words in the same place of a path,
+with the same places before them and the same ending that holds a literal word, are parameters: `/api/alice/profile`,
+`/api/bob/profile` and `/api/carol/profile` become `/api/{id}/profile`, and `/api/projects/export`, `/api/teams/export` and
+`/api/users/export` become the one route `/api/{id}/export`. The end of a path does not fold, and neither does a word with
+only parameters after it: `/api/projects/1`, `/api/users/2` and `/api/teams/3` stay apart.
+
+Limits: a one-word slug stays, even when an answer names it (`/api/users/alice` with `{"username":"alice"}`); a list of names
+at the end of a path stays (`/api/users/alice`, `/api/users/bob`, `/api/users/carol`); a sentence or a person's name of up to
+four parts keeps the form (`alice_smith_hiv_positive`); and a plain word used as a key, a form field or a query name stays
+unless it is or holds a secret. Read the draft before sharing it.
 
 A JSON response is parsed for its schema and its values and not kept: one that says it is over 1 MB is not read, and one
 with no `content-length` is read whole and dropped if it is over 1 MB. A response body still open 3 s after the run ends

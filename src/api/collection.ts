@@ -135,11 +135,12 @@ const decoded = (s: string): string => {
 /**
  * The path of a Postman URL, its host (`{{baseUrl}}`, `https://api.example.test`) taken off: `/projects/:id`. The
  * host is kept without userinfo (`https://admin:pw@api.test` → `https://api.test`); the user and password it carried
- * are returned as `credentials`.
+ * are returned as `credentials`, and the `name=value` parts of the query written in the URL as `queryFields`.
  */
 function postmanPath(url: PmUrl | string | undefined): {
   path: string;
   query: string[];
+  queryFields: [string, string][];
   host?: string;
   credentials: string[];
 } {
@@ -167,11 +168,9 @@ function postmanPath(url: PmUrl | string | undefined): {
     path = beforeQuery.replace(/^[a-z][\w+.-]*:\/\/[^/]*/i, "").replace(/^\{\{[^}]*\}\}/, "");
     if (!path.startsWith("/")) path = `/${path.replace(/^[^/]*\/?/, "")}`; // `api.example.test/x` (no scheme) → `/x`
   }
-  const keys =
-    typeof url === "object" && Array.isArray(url.query)
-      ? kvs(url.query).map(([k]) => k)
-      : formParts(query).fields.map(([k]) => k);
-  return { path, query: keys, credentials, ...(host ? { host } : {}) };
+  const parts = formParts(query); // a person wrote them: `?verbose` is a name too
+  const keys = typeof url === "object" && Array.isArray(url.query) ? kvs(url.query).map(([k]) => k) : [...parts.fields.map(([k]) => k), ...parts.bare];
+  return { path, query: keys, queryFields: parts.fields, credentials, ...(host ? { host } : {}) };
 }
 
 const headerOf = (list: PmKV[] | string | undefined, name: string): string | undefined =>
@@ -229,9 +228,10 @@ function fromPostman(c: Record<string, unknown>, runSecrets: readonly string[]):
         skipped += 1;
         continue;
       }
-      const { path, query, host, credentials } = postmanPath(req.url);
+      const { path, query, queryFields, host, credentials } = postmanPath(req.url);
       if (host) hosts.set(host, (hosts.get(host) ?? 0) + 1);
       userinfo.push(...credentials);
+      fields.push(...queryFields);
       if (Array.isArray(req.header)) headers.push(...kvs(req.header));
       if (typeof req.url === "object") fields.push(...kvs(req.url.query), ...kvs(req.url.variable));
       fields.push(...authOf(req.auth), ...kvs(req.body?.urlencoded), ...kvs(req.body?.formdata));
@@ -260,7 +260,7 @@ function fromPostman(c: Record<string, unknown>, runSecrets: readonly string[]):
   walk(c.item as PmItem[] | undefined, []);
 
   const secrets = exchangeSecrets({ headers, fields, values: userinfo });
-  feedKnown(builder.known, { headers, fields, values: secrets, credentials: [...credentials, ...userinfo] });
+  feedKnown(builder.known, { headers, fields, values: [], credentials: [...credentials, ...secrets] });
   const servers = hosts.size === 1 ? [...hosts.keys()] : [];
   const notes = [`${plural(requests, "request")} from the collection → ${plural(builder.size, "operation")}`];
   if (skipped) notes.push(`${plural(skipped, "item")} without a request left out`);
@@ -395,7 +395,7 @@ function fromHar(h: Record<string, unknown>, runSecrets: readonly string[]): Der
   }
 
   const secrets = exchangeSecrets({ headers, fields, values: userinfo });
-  feedKnown(builder.known, { headers, fields, values: [...secrets, ...bare], credentials: [...credentials, ...userinfo] });
+  feedKnown(builder.known, { headers, fields, values: bare, credentials: [...credentials, ...secrets] });
   const notes = [`${plural(used, "request")} from the HAR → ${plural(builder.size, "operation")}${origin ? ` on ${origin}` : ""}`];
   const statics = entries.length - api.length;
   if (statics) notes.push(`${plural(statics, "page or static file")} (scripts, styles, images, fonts) left out`);

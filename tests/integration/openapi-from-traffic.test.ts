@@ -116,6 +116,10 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
         send(200, [project(123), project(456)]);
       } else if (req.method === "GET" && /^\/api\/projects\/\d+$/.test(path)) {
         send(200, project(Number(path.split("/").pop())));
+      } else if (req.method === "GET" && /^\/api\/(?:users|teams)$/.test(path)) {
+        send(200, [{ id: 2, type: "users", name: "Second" }]);
+      } else if (req.method === "GET" && /^\/api\/(?:users|teams)\/\d+$/.test(path)) {
+        send(200, { id: Number(path.split("/").pop()), type: "users", name: "Second" });
       } else if (req.method === "POST" && path === "/api/projects") {
         send(201, project(789));
       } else if (req.method === "GET" && path === "/api/watch") {
@@ -287,6 +291,32 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
       await b.close();
     }
   }
+
+  it("several resources with ids and their lists stay apart in the file, and `cairn api` passes every case on the same app", { timeout: 90_000 }, async () => {
+    const saved = await throughChromium((page) =>
+      page.evaluate(async () => {
+        for (const p of ["/api/projects", "/api/projects/1", "/api/users", "/api/users/2", "/api/teams", "/api/teams/3"]) await fetch(p);
+      }),
+    );
+    const dir = await mkdtemp(join(base, "resources-"));
+    const file = join(dir, "openapi.derived.json");
+    await writeFile(file, saved);
+    const model = await ingestOpenApi(file);
+    expect(model.endpoints.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
+      "GET /api/me",
+      "GET /api/projects",
+      "GET /api/projects/{id}",
+      "GET /api/teams",
+      "GET /api/teams/{id}",
+      "GET /api/users",
+      "GET /api/users/{id}",
+      "POST /api/session",
+    ]);
+    const { buildProgram } = await import("../../src/cli/index.js");
+    await buildProgram().parseAsync(["node", "cairn", "api", "--spec", file, "--base-url", appUrl, "--out", join(dir, "api-run"), "--rps", "1000"]);
+    expect(out.join("")).toMatch(/7\/7 case\(s\) passed · 1 not sent/);
+    expect(process.exitCode ?? 0).toBe(0);
+  });
 
   it("a cookie's value travelling in a path is not in the file, also an HttpOnly one and one only ever set", { timeout: 90_000 }, async () => {
     const saved = await throughChromium((page) =>
