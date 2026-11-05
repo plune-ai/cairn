@@ -26,6 +26,8 @@ export interface IdorApp {
   projects: Map<number, { owner: string; name: string }>;
   /** Every request, as `METHOD /path user` (user `-` when nobody is signed in). */
   log: string[];
+  /** Every request as it reached the server: method, path with its query, the user, and the headers (names lower-cased). */
+  requests: { method: string; url: string; user: string; headers: Record<string, string | string[] | undefined> }[];
   close: () => Promise<void>;
 }
 
@@ -45,6 +47,7 @@ export async function startIdorApp(opts: IdorAppOptions): Promise<IdorApp> {
     [2, { owner: "carol", name: "carol's second" }],
   ]);
   const log: string[] = [];
+  const requests: IdorApp["requests"] = [];
   const server = createServer((req, res) => {
     let raw = "";
     req.on("data", (c: Buffer) => (raw += c.toString()));
@@ -52,6 +55,7 @@ export async function startIdorApp(opts: IdorAppOptions): Promise<IdorApp> {
       const path = new URL(req.url ?? "/", "http://app").pathname;
       const user = userOf(req);
       log.push(`${req.method} ${path} ${user ?? "-"}`);
+      requests.push({ method: req.method ?? "", url: req.url ?? "", user: user ?? "-", headers: { ...req.headers } });
       if (opts.dropOn === `${req.method} ${user}`) {
         req.socket.destroy();
         return;
@@ -98,6 +102,7 @@ export async function startIdorApp(opts: IdorAppOptions): Promise<IdorApp> {
     url: `http://127.0.0.1:${port}`,
     projects,
     log,
+    requests,
     close: () =>
       new Promise<void>((ok) => {
         server.closeAllConnections();

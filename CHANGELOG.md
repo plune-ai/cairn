@@ -15,9 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WSTG-ATHZ-04` (another user) or `WSTG-ATHZ-03` (a lower role). Same guardrails as the rest of `cairn api`
   (`--allow-mutations`, `--allowed-methods`, `--allowed-paths`, budget, rate); the flow's cleanup runs in a `finally`.
   Only `401`, `403` and `404` count as refused; any other non-2xx answer is inconclusive and fails the run. The other
-  actor gets the flow file's headers without any credential header (they are the owner's), and header names merge
-  case-insensitively. A cleanup step without `expect` is done only on a 2xx; a cleanup that answers otherwise, or that
-  cannot be sent because its value was never captured, is a cleanup error naming the request and the resource.
+  actor's requests carry no identity but its own actor definition. From the flow file it takes only `Accept`,
+  `Accept-Language`, `Content-Type` and `User-Agent`; its own headers and session cookie come from `actors.json`.
+  Header names merge case-insensitively. A cleanup step without `expect` is done only on a 2xx, and a `404` or `410`
+  counts as already gone only when the other actor's `DELETE` of that resource went through; a cleanup that answers
+  otherwise, or that cannot be sent because its value was never captured, is a cleanup error naming the request and
+  the resource. Error text and the report name a path as the flow file wrote it, with `{{env.NAME}}` left as written,
+  so a secret in a query parameter never reaches them.
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else

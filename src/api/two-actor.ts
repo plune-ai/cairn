@@ -19,7 +19,7 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { SessionStore } from "../session/index.js";
 import type { StorageState } from "../browser/types.js";
-import { isCredentialHeader, loadApiFlows, secretHeaderProblems, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
+import { loadApiFlows, secretHeaderProblems, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
 import type { RequestGuard } from "./guard.js";
 
 export type TwoActorProbe = "read" | "change" | "delete" | "neighbours";
@@ -183,11 +183,18 @@ export function mergeHeaders(...maps: (Record<string, string> | undefined)[]): R
 }
 
 /**
+ * The only flow-file headers the other actor takes: they describe the request's format, never who sends it. Any other
+ * name — `Authorization`, but also `X-Session-Id`, `X-User-Id`, `X-Tenant`, `DPoP`, a name nobody can list in advance —
+ * may carry the owner's identity, so it stays with the owner.
+ */
+const FORMAT_HEADERS = new Set(["accept", "accept-language", "content-type", "user-agent"]);
+
+/**
  * One actor's request headers: the flow file's, then the actor's own, then the saved session's cookies (which replace
- * any `Cookie` the actor wrote). The flow file's headers hold the owner's credentials (its token, as the flow docs
- * show), so only the owner — `plan.file.actors.owner` itself — gets them whole. Every other actor gets them without
- * any credential: no header whose name carries one (`Authorization`, `Cookie`, `X-Api-Key`, …) and none filled from
- * the environment. The other actor never sends a credential of the owner.
+ * any `Cookie` the actor wrote). The flow file's headers belong to the owner (its token, as the flow docs show), so
+ * only the owner — `plan.file.actors.owner` itself — gets them whole. Every other actor takes from them only Accept,
+ * Accept-Language, Content-Type and User-Agent, and none filled from the environment: everything else it sends comes
+ * from its own actor definition. The other actor carries no identity but its own, by construction.
  */
 export async function actorHeaders(
   actor: ActorConfig,
@@ -197,7 +204,7 @@ export async function actorHeaders(
 ): Promise<Record<string, string>> {
   const isOwner = actor === plan.file.actors.owner;
   const shared = Object.fromEntries(
-    Object.entries(plan.flows.headers ?? {}).filter(([name, value]) => isOwner || (!isCredentialHeader(name) && !/\{\{\s*env\./.test(value))),
+    Object.entries(plan.flows.headers ?? {}).filter(([name, value]) => isOwner || (FORMAT_HEADERS.has(name.toLowerCase()) && !/\{\{\s*env\./.test(value))),
   );
   const headers = fillHeaders(mergeHeaders(shared, actor.headers), env);
   if (actor.session) {
@@ -282,7 +289,8 @@ const fillValue = (value: unknown, vars: Record<string, string>, env: Record<str
       const v = key.startsWith("env.") ? env[key.slice(4)] : vars[key];
       if (v === undefined) throw new RequestFailed(key.startsWith("env.") ? `the environment variable ${key.slice(4)} is not set` : `no value for {{${key}}}`);
       if (encode && (v === "" || v === "." || v === ".." || v.includes("/"))) {
-        throw new RequestFailed(`{{${key}}} is ${JSON.stringify(v)}, which cannot stand in the path ${value}`);
+        // An environment value may be a secret: name it, never print it.
+        throw new RequestFailed(`{{${key}}} is ${key.startsWith("env.") ? "a value" : JSON.stringify(v)}, which cannot stand in the path ${value}`);
       }
       return encode ? encodeURIComponent(v) : v;
     });
@@ -290,6 +298,17 @@ const fillValue = (value: unknown, vars: Record<string, string>, env: Record<str
   if (Array.isArray(value)) return value.map((v) => fillValue(v, vars, env, encode));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fillValue(v, vars, env, encode)]));
   return value;
+};
+
+/**
+ * A path as error text and the report show it: the captured values filled in (`/api/projects/3`), every
+ * `{{env.NAME}}` left as the flow file wrote it — an environment value may be a secret (`?token={{env.API_TOKEN}}`),
+ * and the report and the terminal must never hold it. The query, if any, is written out unencoded, the same way.
+ */
+export const shownPath = (path: string, vars: Record<string, string>, query?: Record<string, string>): string => {
+  const show = (s: string): string => s.replace(TEMPLATE, (m, key: string) => (!key.startsWith("env.") && vars[key] !== undefined ? vars[key] : m));
+  const q = query ? Object.entries(query).map(([k, v]) => `${k}=${show(v)}`).join("&") : "";
+  return show(path) + (q ? `?${q}` : "");
 };
 
 const pointerAt = (body: unknown, pointer: string): unknown => {
@@ -328,7 +347,14 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
   let sentAny = false;
 
   /** One request through the guard. A transport failure throws: the check stops there. */
-  const send = async (method: string, path: string, headers: Record<string, string>, body?: { text: string; type: string }, mustSend = false): Promise<Response> => {
+  const send = async (
+    method: string,
+    path: string,
+    headers: Record<string, string>,
+    body?: { text: string; type: string },
+    mustSend = false,
+    shown = path,
+  ): Promise<Response> => {
     // The budget was reserved for the whole check before it started; the cleanup goes out even if it ran short.
     if (!(await opts.guard.acquire()) && !mustSend) throw new RequestFailed(`the request budget ran out (--max-requests ${opts.guard.maxRequests})`);
     const init: RequestInit = { method, headers: body ? mergeHeaders({ "content-type": body.type }, headers) : headers, redirect: "manual" };
@@ -339,7 +365,8 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       opts.guard.recordExecuted();
       return res;
     } catch (e) {
-      throw new RequestFailed(`${method} ${path} got no answer: ${(e as Error).message}`);
+      // fetch may quote the URL it was given ("Failed to parse URL from …"): name the shown path there too.
+      throw new RequestFailed(`${method} ${shown} got no answer: ${(e as Error).message.split(path).join(shown)}`);
     }
   };
   const json = (value: unknown): { text: string; type: string } | undefined =>
@@ -353,15 +380,17 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
   const runStep = async (flow: ApiFlow, step: FlowStep, vars: Record<string, string>, cleanup = false, alsoOk: number[] = []): Promise<void> => {
     let path = fillValue(step.path, vars, env, true) as string;
     if (step.query) path += `?${new URLSearchParams(fillValue(step.query, vars, env) as Record<string, string>).toString()}`;
+    // Error text names the path without any environment value: `path` itself goes only on the wire.
+    const shown = shownPath(step.path, vars, step.query);
     const label = cleanup
-      ? `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${path}`
+      ? `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${shown}`
       : `flow "${flow.name}" step "${step.name ?? `${step.method} ${step.path}`}"`;
     const headers = mergeHeaders(opts.owner, fillValue(step.headers ?? {}, vars, env) as Record<string, string>);
     const body = step.form
       ? { text: new URLSearchParams(fillValue(step.form, vars, env) as Record<string, string>).toString(), type: "application/x-www-form-urlencoded" }
       : json(step.body === undefined ? undefined : fillValue(step.body, vars, env));
     sentAny = true;
-    const res = await send(step.method, path, headers, body, cleanup);
+    const res = await send(step.method, path, headers, body, cleanup, shown);
     const want = step.expect === undefined ? undefined : ([] as number[]).concat(step.expect);
     const ok = (want ? want.includes(res.status) : cleanup ? is2xx(res.status) : res.status >= 200 && res.status < 400) || alsoOk.includes(res.status);
     if (!ok) throw new RequestFailed(`${label} answered ${res.status} (want ${want ? want.join(" or ") : cleanup ? "2xx" : "2xx or 3xx"})`);
@@ -384,8 +413,8 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     if (missing.length) throw new RequestFailed(`${label}: the answer has no value at ${missing.join(", ")}`);
   };
 
-  const status = async (method: string, path: string, headers: Record<string, string>, body?: unknown): Promise<number> => {
-    const res = await send(method, path, headers, json(body));
+  const status = async (method: string, path: string, shown: string, headers: Record<string, string>, body?: unknown): Promise<number> => {
+    const res = await send(method, path, headers, json(body), false, shown);
     await res.arrayBuffer().catch(() => undefined);
     return res.status;
   };
@@ -431,6 +460,8 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     try {
       for (const step of flow.steps) await runStep(flow, step, vars);
       const path = fillValue(check.resource, vars, env, true) as string;
+      // What the report and error text name: no environment value in it.
+      const shown = shownPath(check.resource, vars);
       const record = (probe: TwoActorProbe, method: string, at: string, s: number, what: string, wstgId = wstgDirect): void => {
         const outcome = outcomeOf(s);
         const detail =
@@ -442,29 +473,30 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
         result.cases.push({ check: result.check, probe, wstgId, method, path: at, outcome, status: s, detail });
       };
       // Delete last: after it the resource may be gone.
-      if (probes.includes("read")) record("read", "GET", path, await status("GET", path, opts.other), "read");
+      if (probes.includes("read")) record("read", "GET", shown, await status("GET", path, shown, opts.other), "read");
       if (probes.includes("change")) {
         const body = fillValue(check.change.body, vars, env);
-        record("change", check.change.method, path, await status(check.change.method, path, opts.other, body), "changed");
+        record("change", check.change.method, shown, await status(check.change.method, path, shown, opts.other, body), "changed");
       }
       if (probes.includes("neighbours")) {
         const idName = [...check.resource.matchAll(TEMPLATE)].pop()![1]!;
         const id = vars[idName] ?? "";
         if (!/^\d+$/.test(id)) {
-          result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path, outcome: "skipped", detail: `the id ${JSON.stringify(id)} is not a number` });
+          result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: shown, outcome: "skipped", detail: `the id ${JSON.stringify(id)} is not a number` });
         } else {
           for (let d = 1; d <= check.neighbours; d++) {
             for (const n of [Number(id) - d, Number(id) + d]) {
               if (n < 0) continue;
-              const at = fillValue(check.resource, { ...vars, [idName]: String(n) }, env, true) as string;
-              const s = await status("GET", at, opts.other);
+              const wire = fillValue(check.resource, { ...vars, [idName]: String(n) }, env, true) as string;
+              const at = shownPath(check.resource, { ...vars, [idName]: String(n) });
+              const s = await status("GET", wire, at, opts.other);
               if (!is2xx(s)) {
                 const outcome = outcomeOf(s);
                 result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: at, outcome, status: s, detail: outcome === "denied" ? `refused or absent (${s})` : inconclusiveDetail(s) });
                 continue;
               }
               // B can read it: a finding only when A can too — an id B owns refuses A on a fixed server.
-              const o = await status("GET", at, opts.owner);
+              const o = await status("GET", wire, at, opts.owner);
               const ownerOutcome = outcomeOf(o);
               result.cases.push({
                 check: result.check,
@@ -487,9 +519,9 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
         }
       }
       if (probes.includes("delete")) {
-        const s = await status("DELETE", path, opts.other);
+        const s = await status("DELETE", path, shown, opts.other);
         deletedByOther = is2xx(s);
-        record("delete", "DELETE", path, s, "deleted");
+        record("delete", "DELETE", shown, s, "deleted");
       }
     } catch (e) {
       result.error = (e as Error).message;

@@ -72,9 +72,9 @@ other actor is a finding: `WSTG-ATHZ-04` for another user (`"role": "peer"`), `W
 (`"role": "lower"`); a neighbour is a `WSTG-ATHZ-04` finding only when the owner can read it too. Only `401`, `403`
 and `404` mean refused. Any other non-2xx — a `3xx`, `400`, `405`, `410`, `422`, a `5xx` — is inconclusive, not a pass:
 a `PATCH {}` refused by validation, or a redirect to a login page, says nothing about the access check. The same holds
-for the owner's answer on a neighbour the other actor read. The other actor gets the flow file's `headers` without
-any credential header (`Authorization`, `Cookie`, API key, token, anything filled from `{{env.…}}`): those are the
-owner's. Header names merge case-insensitively, so one name carries one value. The flow's cleanup runs as the owner
+for the owner's answer on a neighbour the other actor read. The other actor's requests carry no identity but its
+own actor definition. From the flow file it takes only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`;
+its own headers and session cookie come from `actors.json`. Header names merge case-insensitively, so one name carries one value. The flow's cleanup runs as the owner
 in a `finally`, also when a request fails halfway. A cleanup step without `expect` is done only on a 2xx (a `302` to a
 login page after the owner's session ended is a cleanup error naming the method, path and status); only after the
 other actor's `DELETE` went through does a `404` or `410` from it count as done. A cleanup step whose value was never

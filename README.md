@@ -130,9 +130,10 @@ never returned its id, is reported as a cleanup error: the data may still be the
 
 An actor is a saved session by its name (`.auth/<name>.storageState.json`, from `cairn session capture --name`; set
 `sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The flow file's own `headers` (where
-the owner's token usually sits) go to the owner whole; the other actor gets them without any credential — no
-`Authorization`, `Cookie`, API key or token header, and none filled from `{{env.…}}` — so it never sends the owner's.
-Header names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
+the owner's token usually sits) go to the owner whole. The other actor's requests carry no identity but its own actor
+definition. From the flow file it takes only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`; its own
+headers and session cookie come from `actors.json`. Error text and the report name a path as the flow file wrote it,
+with `{{env.NAME}}` left as written, so a secret in a query parameter never reaches them. Header names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
 `Cookie`), so one name goes out with one value. The check uses the same guardrails as
 every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
 production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or
