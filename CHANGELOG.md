@@ -147,6 +147,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A pull request that mentions `playwright install` no longer reads as a missing browser.** On GitHub Actions the
+  Playwright report holds the pull request's title and diff, and the check for a missing browser read the whole report:
+  a title or a changed line with `playwright install` or `Executable doesn't exist` stopped the run with
+  `BrowsersNotInstalledError`, every browser in place. Now it reads what the run said (stderr, the report's errors, the
+  tests' errors).
+
 - **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
   The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private
   networks and reported it as an unresolved `$ref`. The text is read the way the lookup of #227 reads it: `GET`, no
