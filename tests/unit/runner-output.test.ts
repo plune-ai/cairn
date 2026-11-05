@@ -98,6 +98,32 @@ describe("resultsFromRunnerOutput — every error, once, without its code frame"
       suites: [{ specs: [{ title: "TC-1", tests: [{ results: [{ status, error: { message: error }, errors: errors.map((message) => ({ message })) }] }] }] }],
     });
 
+  describe("a request's call log holds the full URL and every header: it stays out (#250)", () => {
+    const SECRET = "S3CRET-q7";
+    const requestLog =
+      `Call log:\n\u001b[2m  - → POST http://127.0.0.1:1/api/${SECRET}?k=${SECRET}\u001b[22m\n` +
+      `\u001b[2m    - Authorization: Bearer ${SECRET}\u001b[22m\n\u001b[2m    - content-length: 18\u001b[22m\n`;
+
+    it("a request that got no answer keeps its first line", () => {
+      // As Playwright 1.61 writes it.
+      const failed = `Error: apiRequestContext.fetch: connect ECONNREFUSED 127.0.0.1:1\n${requestLog}`;
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", failed, [`${failed}\n   at x.spec.ts:5\n\n  4 | y\n`]), "");
+      expect(r!.error).toBe("Error: apiRequestContext.fetch: connect ECONNREFUSED 127.0.0.1:1");
+    });
+
+    it("expect(response).toBeOK() keeps what it says around the log", () => {
+      const answered = `${requestLog}\u001b[2m  - ← 401 Unauthorized\u001b[22m\n\u001b[2m    - set-cookie: sid=${SECRET}\u001b[22m\n`;
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", `Error: expect(response).toBeOK()\n\n${answered}\nResponse text:\nno access`, []), "");
+      expect(r!.error).toBe("Error: expect(response).toBeOK()\n\n\nResponse text:\nno access");
+    });
+
+    it("a locator's call log stays: it names the locator, and what the failure was", () => {
+      const message = "Error: locator.click: Timeout 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Save' })\u001b[22m\n\u001b[2m  - <div></div> intercepts pointer events\u001b[22m\n";
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", message, []), "");
+      expect(r!.error).toBe(message.trim());
+    });
+  });
+
   it("a test timeout keeps the action's error too — its call log names the locator", () => {
     // A click on a locator that never appears: the test's timeout fires first and becomes `error`; the action's own
     // error, with the call log, is the second entry of `errors`.

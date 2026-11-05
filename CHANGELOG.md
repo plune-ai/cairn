@@ -243,6 +243,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **API-flow fixture errors, repair hints and session file errors no longer repeat a value (#250).** The written
+  fixture named a value that cannot stand in a path by printing it (`{{env.SEG}} is "sec/…"`), and let a failed request
+  throw Playwright's own text, whose call log holds the full URL and every header. It now names the template as written,
+  and says `got no answer:` with a code, `timeout` or `network error`. `cairn automate --flows --validate` masks the value of
+  every `{{env.NAME}}` the flow file names in the failure texts it hands to the repair hint, the triage and the report,
+  and keeps no trace beside a `--screencast` video. Validation drops a request's call log from every failure text; a
+  locator's call log stays, since it names the locator. A session file that cannot be read, is not JSON or has a cookie
+  with no name, value or domain gets one line that names the file and a fixed reason, instead of `Unexpected token 'C',
+  ..."value":COOKIE…` with no file name or `Cannot read properties of undefined`. A flow file or a two-actor file that is
+  not JSON no longer repeats a fragment of its text either.
+
 - **A pull request that mentions `playwright install` no longer reads as a missing browser.** On GitHub Actions the
   Playwright report holds the pull request's title and diff, and the check for a missing browser read the whole report:
   a title or a changed line with `playwright install` or `Executable doesn't exist` stopped the run with

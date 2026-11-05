@@ -275,6 +275,61 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     expect([...app.projects.keys()]).toEqual([]);
   });
 
+  it("#250: a value that cannot stand in a path, and a request with no answer, reach the report without any value", { timeout: 120000 }, async () => {
+    const secret = "S3CRET-q7";
+    process.env.FLOW_SEG = `sec/${secret}`;
+    process.env.FLOW_TOKEN = secret;
+    const secrets = parseApiFlows(
+      JSON.stringify({
+        version: 1,
+        flows: [
+          { name: "badPath", steps: [{ method: "GET", path: "/api/{{env.FLOW_SEG}}" }] },
+          { name: "noAnswer", steps: [{ name: "read", method: "GET", path: "/api/projects", headers: { Authorization: "Bearer {{env.FLOW_TOKEN}}" } }] },
+        ],
+      }),
+    );
+    const run = await new ArtifactStore(ITEST_BASE).openRun("no-values");
+    await run.writeSuite({
+      files: [
+        // Port 1 refuses: nothing is listening, and the fixture's request gets no answer.
+        { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(secrets, { baseUrl: "http://127.0.0.1:1" }) },
+        { path: "bad.spec.ts", content: spec(`test('bad path', async ({ badPath }) => { expect(badPath).toBeTruthy(); });`) },
+        { path: "none.spec.ts", content: spec(`test('no answer', async ({ noAnswer }) => { expect(noAnswer).toBeTruthy(); });`) },
+      ],
+    });
+    try {
+      // No test here takes `page`: the runner opens no browser.
+      const results = await runSpecs(run.dir, { workers: 1 });
+      const byTitle = Object.fromEntries(results.map((r) => [r.title, r]));
+      expect(byTitle["bad path"]?.error).toMatch(/\{\{env\.FLOW_SEG\}\} is a value, which cannot stand in the path \/api\/\{\{env\.FLOW_SEG\}\}/);
+      expect(byTitle["no answer"]?.error).toMatch(/API flow "noAnswer" step "read" got no answer: ECONNREFUSED/);
+      expect(JSON.stringify(results)).not.toContain(secret);
+    } finally {
+      delete process.env.FLOW_SEG;
+      delete process.env.FLOW_TOKEN;
+    }
+  });
+
+  it("#250: a test's own failed request and expect(response).toBeOK() reach the report without their call log", { timeout: 120000 }, async () => {
+    const secret = "S3CRET-q7";
+    const headers = `{ headers: { Authorization: 'Bearer ${secret}' } }`;
+    const run = await new ArtifactStore(ITEST_BASE).openRun("no-request-log");
+    await run.writeSuite({
+      files: [
+        { path: "failed.spec.ts", content: `import { test } from '@playwright/test';\ntest('failed request', async ({ request }) => { await request.get('http://127.0.0.1:1/api/${secret}', ${headers}); });\n` },
+        {
+          path: "ok.spec.ts",
+          content: `import { test, expect } from '@playwright/test';\ntest('not ok', async ({ request }) => { await expect(await request.post('${app.url}/api/broken?k=${secret}', ${headers})).toBeOK(); });\n`,
+        },
+      ],
+    });
+    const results = await runSpecs(run.dir, { workers: 1 });
+    const byTitle = Object.fromEntries(results.map((r) => [r.title, r]));
+    expect(byTitle["failed request"]?.error).toMatch(/apiRequestContext\.get: connect ECONNREFUSED/);
+    expect(byTitle["not ok"]?.error).toMatch(/toBeOK/);
+    expect(JSON.stringify(results)).not.toContain(secret);
+  });
+
   it("a sign-in flow that would send a second request that changes data sends nothing", { timeout: 120000 }, async (ctx) => {
     app.log.length = 0;
     // Built past parseApiFlows (which refuses it) to prove the fixture itself refuses it too.

@@ -53,7 +53,7 @@ import type { PageStudy } from "../observe/index.js";
 import type { PageAnalysis } from "../analyze/index.js";
 import type { TestCase } from "../design/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
-import { FLOW_FIXTURE_FILE, formatFlowsForPrompt, renderFlowFixture, withFlowFixture, type ApiFlowFile } from "../api/flows.js";
+import { FLOW_FIXTURE_FILE, flowEnvSecrets, formatFlowsForPrompt, renderFlowFixture, withFlowFixture, type ApiFlowFile } from "../api/flows.js";
 
 export { runExploreGraph } from "./graph.js";
 export type { ExploreDeps, ExploreOutcome } from "./graph.js";
@@ -1169,6 +1169,9 @@ export async function runAutomate(input: {
       envSecrets = envRun.applied.secrets;
       if (envRun.sessionPath) sessionPath = envRun.sessionPath;
     }
+    // #250: the fixture reads these from the environment while a test runs, so a failure's text can repeat them, and
+    // that text goes into the repair hint, the triage, the report and the progress lines.
+    if (flows) envSecrets = [...envSecrets, ...flowEnvSecrets(flows)];
 
     if (input.validate) {
       // Onboarding guardrail: validation runs the generated suite → fail fast with a copy-paste fix
@@ -1205,7 +1208,8 @@ export async function runAutomate(input: {
                 workers: cfg.playwrightWorkers,
                 screencast: input.screencast,
                 httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
-                secretsInRun: envSecrets.length > 0 || input.mailbox !== undefined,
+                // A flow's requests carry its secrets and whatever it captured: a trace would keep every header.
+                secretsInRun: envSecrets.length > 0 || input.mailbox !== undefined || flows !== undefined,
               }),
               [...envSecrets, ...(input.mailbox?.secrets ?? [])],
             ),

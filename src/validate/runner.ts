@@ -46,7 +46,7 @@ export function configContent(
   // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
   // #210: a trace beside each video - its steps and frames give the chapters their exact offsets (#214).
   // Playwright writes the context options (Basic Auth in the clear), every request's headers and cookies and every
-  // typed value into it, so a run with a session, Basic Auth, environment secrets or a mailbox keeps the video alone.
+  // typed value into it, so a run with a session, Basic Auth, environment secrets, a mailbox or API flows keeps the video alone.
   if (screencastDir) parts.push(`video: 'on'`);
   if (screencastDir && !storageStatePath && !httpCredentialsEnv && !secretsInRun) parts.push(`trace: 'on'`);
   // Basic Auth: the generated config only NAMES the variables; the runner process reads the values from its own
@@ -222,6 +222,20 @@ function withoutFrame(message: string | undefined): string | undefined {
   return message?.split(FRAME)[0]?.trim();
 }
 
+/** A call log: its heading and the lines under it, up to a blank line. */
+const CALL_LOG = /^Call log:\n(?:.+\n?)*/gm;
+/** The lines Playwright logs a request with: `→ POST <url>` and `← 401 Unauthorized`, each followed by its headers. */
+const REQUEST_LINE = /^(?:\u001b\[[0-9;]*m)?\s*(?:- )?[→←] /m;
+
+/**
+ * #250: an error without a request's call log. Playwright writes the full URL and every header into the error of a
+ * failed request, and of `expect(response).toBeOK()`; they hold tokens and cookies, which must not reach an LLM or a
+ * report. A locator's call log stays: it names the locator that failed and what stopped it.
+ */
+function withoutRequestLog(message: string | undefined): string | undefined {
+  return message?.replace(CALL_LOG, (log) => (REQUEST_LINE.test(log) ? "" : log)).trim();
+}
+
 function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
@@ -231,7 +245,7 @@ function extract(json: PwJson): RawTestResult[] {
       // Every error, once each: on a test timeout `error` is the timeout alone, and the action's own error — the call
       // log that names the locator — is a later entry of `errors`. Those entries come formatted (message, code
       // frame, `at <absolute path>`); without the frame, `errors[0]` is `error` again.
-      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map(withoutFrame);
+      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map((m) => withoutRequestLog(withoutFrame(m)));
       const error = [...new Set(messages.filter(Boolean))].join("\n\n");
       out.push({ title: spec.title, status, ...(error ? { error } : {}) });
     }

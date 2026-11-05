@@ -96,8 +96,9 @@ export function parseTwoActorFile(text: string, flows: ApiFlowFile, source = "th
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`${source} is not valid JSON: ${(e as Error).message}`);
+  } catch {
+    // The parser quotes the text around the error, and nothing has checked yet that this text holds no secret.
+    throw new Error(`${source} is not valid JSON.`);
   }
   const parsed = TwoActorFileSchema.safeParse(raw);
   const problems = parsed.success
