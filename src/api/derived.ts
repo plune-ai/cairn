@@ -284,7 +284,7 @@ export function mergeSchema(a: JsonSchema, b: JsonSchema): JsonSchema {
 }
 
 /** Ready for the document: an array with no item seen takes any items, a value only ever `null` is left open (not
- * pinned to `null`), a name equal to one of the run's secrets is dropped, and the top is marked derived. */
+ * pinned to `null`), a name that is or holds a secret is dropped, and the top is marked derived. */
 function finalSchema(s: JsonSchema, known: KnownValues, top = true): JsonSchema {
   let out: JsonSchema = { ...s };
   if (out.type === undefined) out = {};
@@ -376,9 +376,9 @@ const normal = (s: string): string => s.trim().toLowerCase();
 /**
  * Every value the traffic showed, each as a fixed-size digest, so the memory goes with their number and not their size.
  * Filled during the run and read when the document is built, because a value can be seen after its path. A word of a path
- * equal to any of them is a value ({@link isValue}). A name is checked against the run's secrets and the traffic's
- * credentials only ({@link isSecret}): `?sort=name` must not take `name` out of every schema. A name that is a value
- * anywhere else stays; the docs say so.
+ * equal to any of them is a value ({@link isValue}). A word and a name are checked against the run's secrets and the
+ * traffic's credentials ({@link isSecret}), also by their parts; `?sort=name` must not take `name` out of every schema, and
+ * `active` in an answer must not fold `/set-active`. A name that is a value anywhere else stays; the docs say so.
  */
 export class KnownValues {
   private readonly values = new Set<string>();
@@ -443,8 +443,21 @@ export class KnownValues {
     return this.values.has(digest(normal(word)));
   }
 
-  isSecret(name: string): boolean {
-    return this.secrets.has(digest(normal(name)));
+  /**
+   * The word or name is a secret, or holds one as whole `-`/`_` separated parts: `reset-opensesame`, `reset-open-sesame-now`.
+   * Never a piece of a part: a secret `admin` leaves `administrators` alone.
+   */
+  isSecret(word: string): boolean {
+    const parts = normal(word).split(/([-_])/); // the separators stay, at the odd places: a secret may hold them too
+    for (let from = 0; from < parts.length; from += 2) {
+      let run = parts[from]!;
+      if (this.secrets.has(digest(run))) return true;
+      for (let to = from + 2; to < parts.length; to += 2) {
+        run += parts[to - 1]! + parts[to]!;
+        if (this.secrets.has(digest(run))) return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -532,14 +545,14 @@ export class DerivedSpecBuilder {
   }
 
   /**
-   * The operations as the document has them. A word equal to a known value is a parameter. Three or more distinct words
+   * The operations as the document has them. A word equal to a known value, or holding a secret as a part, is a parameter. Three or more distinct words
    * in one place of a path, with the same words before them and the same non-empty ending, are parameters too: no form
    * tells `alice` from `settings`, their number does. With nothing after them they stay: `/api/users` and `/api/settings`.
    */
   private resolved(): Op[] {
     const all = [...this.ops.values()].map((op) => ({
       op,
-      segs: op.segs.map((s): Seg => (isLiteral(s) && s.literal !== "" && this.known.isValue(s.literal) ? { integer: false } : s)),
+      segs: op.segs.map((s): Seg => (isLiteral(s) && s.literal !== "" && (this.known.isValue(s.literal) || this.known.isSecret(s.literal)) ? { integer: false } : s)),
     }));
     for (;;) {
       const places = new Map<string, Set<string>>();

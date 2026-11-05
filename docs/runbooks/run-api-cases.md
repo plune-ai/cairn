@@ -52,9 +52,9 @@
    trust it less than a written spec. From a HAR only the API requests of the origin most of them went to are kept;
    pages, scripts, styles, images and fonts are left out, and the output counts what was. Header, cookie, query and
    body values are not written as such: a word of a path or a name is written only in a fixed form and not when it equals
-   a value seen (a word) or a secret (a name), so `user.name` and `filter.status` are left out. A plain word in a path
+   a value seen (a word) or a secret (a name), or holds a secret as a whole `-`/`_` part, so `user.name` and `filter.status` are left out. A plain word in a path
    stays as written when it appeared nowhere else, unless three or more such words sit in the same place before the same
-   ending, and a plain word used as a key or a query name stays unless it is a secret, so read the draft before sharing
+   ending, and a plain word used as a key or a query name stays unless it is or holds a secret, so read the draft before sharing
    it. The name of a collection, a request or a folder is written as it is, and dropped whole when it holds a secret. A
    Postman v1 collection is refused: export it as v2.1.
 

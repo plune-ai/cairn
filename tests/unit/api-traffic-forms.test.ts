@@ -143,6 +143,12 @@ const NEVER_IN_THE_FILE: [string, Feed, string[], string[]?][] = [
   ["a query value on another origin", (r) => { r.note({ method: "GET", url: "https://tracker.example.test/c?uid=jane-roe", resourceType: "fetch", status: 200 }); get(r, "/api/u/jane-roe"); }, ["jane-roe", "tracker"]],
   ["a run secret in a path", (r) => get(r, "/api/vault/opensesame"), ["opensesame"], ["opensesame"]],
   ["a run secret in another case", (r) => get(r, "/api/Opensesame"), ["pensesame"], ["opensesame"]],
+  ["a word that holds a run secret as a part", (r) => get(r, "/api/x/reset-opensesame"), ["opensesame"], ["opensesame"]],
+  ["a word that holds a dashed run secret as parts", (r) => get(r, "/api/x/reset-open-sesame-now"), ["open-sesame"], ["open-sesame"]],
+  ["a word that holds a credential as a part", (r) => get(r, "/api/x/old_plainsessionword", { requestHeaders: { cookie: "sess=plainsessionword" } }), ["plainsessionword"]],
+  ["a key that holds a run secret as a part", (r) => get(r, "/api/a", answer({ opensesame_id: 1, id: 2 })), ["opensesame"], ["opensesame"]],
+  ["a query name that holds a run secret as a part", (r) => get(r, "/api/a?x-opensesame=1&page=2"), ["opensesame"], ["opensesame"]],
+  ["a form field that holds a run secret as a part", (r) => post(r, "/api/submit", FORM, "opensesame_hint=1&page=2"), ["opensesame"], ["opensesame"]],
   [
     "M3 a value seen after 5050 others",
     (r) => {
@@ -270,6 +276,22 @@ describe("what must stay stays (#229)", () => {
     expect(Object.keys(requestSchema(d, "/api/projects").properties ?? {})).toEqual(["name", "public"]);
     expect(responseSchema(d, "/api/projects").items!.properties).toHaveProperty("name");
     expect(Object.keys(responseSchema(d, "/api/columns").properties ?? {})).toEqual(["column", "email", "passwordPolicy", "phone"]);
+  });
+
+  it("a part of a word is checked against secrets only, and only whole: `admin` leaves `administrators` alone", async () => {
+    const d = await draft((r) => {
+      get(r, "/api/administrators");
+      get(r, "/api/reset-password", answer({ state: "active" }));
+      get(r, "/api/set-active", answer({ word: "password", administrators: 1, admins_total: 2 }));
+    }, ["admin"]);
+    expect(paths(d)).toEqual(["/api/administrators", "/api/reset-password", "/api/set-active"]);
+    expect(Object.keys(responseSchema(d, "/api/set-active").properties ?? {})).toEqual(["word", "administrators", "admins_total"]);
+  });
+
+  it("a key that holds a secret as a part is dropped alone", async () => {
+    const d = await draft((r) => get(r, "/api/a", answer({ opensesame_id: 1, id: 2, title: "x" })), ["opensesame"]);
+    expect(responseSchema(d, "/api/a").properties).toEqual({ id: { type: "integer" }, title: { type: "string" } });
+    expect(responseSchema(d, "/api/a").required).toEqual(["id", "title"]);
   });
 
   it("a one-off word in a path stays: no form tells it from a word of the API", async () => {

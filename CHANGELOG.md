@@ -20,16 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not in the file: its title is generic and it has no `servers`, since `cairn api` takes the address from `--base-url`.
 
   A string from the traffic reaches the file only in a fixed form that free text cannot have. A name (a JSON key, a form
-  field, a query name) must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, not be long random text and not be a secret of the
-  run or a credential of the traffic; one that fails is left out alone, so `user.name` and `filter.status` are left out
+  field, a query name) must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, not be long random text and not be, or hold as a whole
+  `-`/`_` part, a secret of the run or a credential of the traffic; one that fails is left out alone, so `user.name` and `filter.status` are left out
   too, and an object most of whose keys fail, or with many keys of one shape, is a map (`additionalProperties`). A word of
   a path stays only as ASCII letters with digits at the end of a `-`/`_` part, up to 32 characters, not 6 or more hex characters and not equal
-  to any value the traffic showed or a secret of the run; anything else is a parameter, and so are three or more distinct
+  to any value the traffic showed, with no whole `-`/`_` part equal to a secret or a credential; anything else is a parameter, and so are three or more distinct
   words in the same place before the same ending. A media type is written from a fixed set. Bodies, headers, cookies and
   query values are not written as such, but no form tells a value from a word of the API:
   a plain word in a path stays as written when it appeared nowhere else in the traffic, unless three or more such
   words sit in the same place before the same ending, and a plain word used as a key, a form field or a query name
-  stays unless it is a secret of the run or a credential of the traffic, so read the draft before sharing it.
+  stays unless it is or holds a secret of the run or a credential of the traffic, so read the draft before sharing it.
 
   A JSON response is parsed for its schema and its values and not kept: one that says it is over 1 MB is not read, and one
   with no `content-length` is read whole and dropped if it is over 1 MB. A JSON answer that never ends (a long poll, a
