@@ -1,4 +1,5 @@
-import { chromium, type Browser, type BrowserContext, type BrowserServer, type Download, type Locator, type Page, type Request } from "playwright";
+import { chromium, type Browser, type BrowserContext, type BrowserServer, type Download, type Locator, type Page, type Request, type Response } from "playwright";
+import type { ApiTrafficRecorder } from "../api-traffic.js";
 import type { BrowserBackend } from "../gateway.js";
 import {
   CLICK_EFFECT_WINDOW_MS,
@@ -105,6 +106,8 @@ export interface PlaywrightLibOptions {
   channel?: string;
   /** HTTP Basic Auth for the context (environment-description feature). */
   httpCredentials?: HttpCredentials;
+  /** #229: every response of the context — page loads and the requests clicks start — for the OpenAPI draft. */
+  apiTraffic?: ApiTrafficRecorder;
 }
 
 /**
@@ -204,6 +207,34 @@ function requestKey(r: Request): string {
   }
 }
 
+/**
+ * #229: one response, handed to the recorder; its body and its full headers are read only when the recorder asks (a JSON
+ * answer, the API's own traffic). `allHeaders` because `headers()` leaves the cookies out. An answer a service worker
+ * gave is the worker's, not the API's.
+ */
+function noteResponse(traffic: ApiTrafficRecorder, res: Response): void {
+  try {
+    if (res.fromServiceWorker()) return;
+    const req = res.request();
+    const headers = res.headers();
+    const size = Number(headers["content-length"]);
+    traffic.note({
+      method: req.method(),
+      url: res.url(),
+      resourceType: req.resourceType(),
+      status: res.status(),
+      requestHeaders: req.headers(),
+      allHeaders: async () => [...Object.entries(await req.allHeaders()), ...Object.entries(await res.allHeaders())],
+      postData: req.postData(),
+      responseContentType: headers["content-type"],
+      ...(Number.isFinite(size) ? { responseSize: size } : {}),
+      body: () => res.text(),
+    });
+  } catch {
+    // a response of a page already gone: nothing to record
+  }
+}
+
 export class PlaywrightLibBackend implements BrowserBackend {
   private browser?: Browser;
   private context?: BrowserContext;
@@ -258,7 +289,12 @@ export class PlaywrightLibBackend implements BrowserBackend {
 
   private async ensurePage(): Promise<Page> {
     this.browser ??= await this.launch();
-    this.context ??= await this.newContext(this.opts.storageState as unknown as PwStorageState | undefined);
+    if (!this.context) {
+      this.context = await this.newContext(this.opts.storageState as unknown as PwStorageState | undefined);
+      // Only here: the browser the write guard presses in sets its context itself, so what it reads stays out of the draft.
+      const traffic = this.opts.apiTraffic;
+      if (traffic) this.context.on("response", (res) => noteResponse(traffic, res));
+    }
     if (!this.page) {
       this.page = await this.context.newPage();
       this.page.on("console", (m) => {

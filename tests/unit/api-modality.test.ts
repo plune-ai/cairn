@@ -117,7 +117,7 @@ describe("cairn api --spec with a Postman collection or a HAR (#228)", () => {
       const { buildProgram } = await import("../../src/cli/index.js");
       await buildProgram().parseAsync(["node", "cairn", "api", "--spec", file, "--out", join(out, "run")]);
       const text = outChunks.join("") + errChunks.join("");
-      expect(text).toContain("API spec: Projects");
+      expect(text).toContain("API spec: API draft"); // the name holds the secret: dropped whole, no string is edited
       expect(text).not.toContain("FAKE-modality-key-77qq");
       expect(await readFile(join(out, "run", "openapi.derived.json"), "utf8")).not.toContain("FAKE-modality-key-77qq");
     } finally {

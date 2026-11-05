@@ -5,23 +5,25 @@
  * document by `derived.ts` (operations and schemas marked `x-cairn-derived: true`) and goes on from there exactly as a
  * written spec does; an OpenAPI spec is not touched here at all.
  *
- * A HAR holds tokens and cookies in clear text. Header values, query values and bodies never enter the document (only
- * names, types and status codes), and the values that look secret are collected so the writer scrubs them too.
+ * A HAR holds tokens and cookies in clear text. Header values, query values and bodies are read for their shape and
+ * their values: a word of a path or a name is checked against them when the document is built (`derived.ts`).
  */
 import {
   DerivedSpecBuilder,
   DERIVED_KEY,
   bodyFields,
   exchangeSecrets,
+  formParts,
   isApiTraffic,
   isJsonMedia,
   mediaType,
   type Exchange,
+  type KnownValues,
 } from "./derived.js";
 
 export type SpecFormat = "openapi" | "postman" | "har";
 
-/** What a collection or a HAR became: the document, the secrets to scrub from it, and what was left out. */
+/** What a collection or a HAR became: the document, the secrets it carried, and what was left out. */
 export interface DerivedSpec {
   format: Exclude<SpecFormat, "openapi">;
   doc: Record<string, unknown>;
@@ -54,12 +56,23 @@ export function detectSpecFormat(text: string): SpecFormat {
   return "openapi";
 }
 
-/** The derived spec for a Postman collection or a HAR; `undefined` for anything else (an OpenAPI spec goes on as is). */
-export function deriveSpec(text: string): DerivedSpec | undefined {
+/**
+ * The derived spec for a Postman collection or a HAR; `undefined` for anything else (an OpenAPI spec goes on as is).
+ * `runSecrets`: the run's own secrets, which the document's words and names are checked against as well.
+ */
+export function deriveSpec(text: string, runSecrets: readonly string[] = []): DerivedSpec | undefined {
   const format = detectSpecFormat(text);
   if (format === "openapi") return undefined;
   const v = parse(text) as Record<string, unknown>;
-  return format === "har" ? fromHar(v) : fromPostman(v);
+  return format === "har" ? fromHar(v, runSecrets) : fromPostman(v, runSecrets);
+}
+
+/** What a source carried, for the checks made when its document is built. */
+function feedKnown(known: KnownValues, o: { headers: [string, string][]; fields: [string, string][]; values: string[]; credentials: readonly string[] }): void {
+  for (const [name, value] of o.headers) known.header(name, value);
+  for (const [, value] of o.fields) known.add(value);
+  for (const value of o.values) known.add(value);
+  for (const value of o.credentials) known.secret(value);
 }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
@@ -122,11 +135,12 @@ const decoded = (s: string): string => {
 /**
  * The path of a Postman URL, its host (`{{baseUrl}}`, `https://api.example.test`) taken off: `/projects/:id`. The
  * host is kept without userinfo (`https://admin:pw@api.test` → `https://api.test`); the user and password it carried
- * are returned as `credentials`, to be scrubbed.
+ * are returned as `credentials`, and the `name=value` parts of the query written in the URL as `queryFields`.
  */
 function postmanPath(url: PmUrl | string | undefined): {
   path: string;
   query: string[];
+  queryFields: [string, string][];
   host?: string;
   credentials: string[];
 } {
@@ -154,14 +168,9 @@ function postmanPath(url: PmUrl | string | undefined): {
     path = beforeQuery.replace(/^[a-z][\w+.-]*:\/\/[^/]*/i, "").replace(/^\{\{[^}]*\}\}/, "");
     if (!path.startsWith("/")) path = `/${path.replace(/^[^/]*\/?/, "")}`; // `api.example.test/x` (no scheme) → `/x`
   }
-  const keys =
-    typeof url === "object" && Array.isArray(url.query)
-      ? kvs(url.query).map(([k]) => k)
-      : query
-          .split("&")
-          .map((p) => decodeURIComponent(p.split("=")[0] ?? ""))
-          .filter(Boolean);
-  return { path, query: keys, credentials, ...(host ? { host } : {}) };
+  const parts = formParts(query); // a person wrote them: `?verbose` is a name too
+  const keys = typeof url === "object" && Array.isArray(url.query) ? kvs(url.query).map(([k]) => k) : [...parts.fields.map(([k]) => k), ...parts.bare];
+  return { path, query: keys, queryFields: parts.fields, credentials, ...(host ? { host } : {}) };
 }
 
 const headerOf = (list: PmKV[] | string | undefined, name: string): string | undefined =>
@@ -187,14 +196,20 @@ function postmanBody(body: PmRequest["body"], header: PmKV[] | string | undefine
   return undefined;
 }
 
-function fromPostman(c: Record<string, unknown>): DerivedSpec {
+function fromPostman(c: Record<string, unknown>, runSecrets: readonly string[]): DerivedSpec {
   if (Array.isArray(c.requests)) {
     throw new Error("Postman collection v1 is not supported: export the collection as v2.1 (Collection → Export → v2.1).");
   }
   const info = (c.info ?? {}) as Record<string, unknown>;
   const builder = new DerivedSpecBuilder();
   const headers: [string, string][] = [];
-  const fields: [string, string][] = [...kvs(c.variable), ...authFields(c.auth)];
+  const credentials: string[] = [...runSecrets];
+  const authOf = (auth: unknown): [string, string][] => {
+    const found = authFields(auth);
+    credentials.push(...found.map(([, v]) => v));
+    return found;
+  };
+  const fields: [string, string][] = [...kvs(c.variable), ...authOf(c.auth)];
   const userinfo: string[] = [];
   const hosts = new Map<string, number>();
   let requests = 0;
@@ -204,7 +219,7 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
     for (const it of items ?? []) {
       if (!it || typeof it !== "object") continue;
       if (Array.isArray(it.item)) {
-        fields.push(...authFields(it.auth));
+        fields.push(...authOf(it.auth));
         walk(it.item, it.name ? [...tags, it.name] : tags);
         continue;
       }
@@ -213,17 +228,18 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
         skipped += 1;
         continue;
       }
-      const { path, query, host, credentials } = postmanPath(req.url);
+      const { path, query, queryFields, host, credentials } = postmanPath(req.url);
       if (host) hosts.set(host, (hosts.get(host) ?? 0) + 1);
       userinfo.push(...credentials);
+      fields.push(...queryFields);
       if (Array.isArray(req.header)) headers.push(...kvs(req.header));
       if (typeof req.url === "object") fields.push(...kvs(req.url.query), ...kvs(req.url.variable));
-      fields.push(...authFields(req.auth), ...kvs(req.body?.urlencoded), ...kvs(req.body?.formdata));
+      fields.push(...authOf(req.auth), ...kvs(req.body?.urlencoded), ...kvs(req.body?.formdata));
       const request = postmanBody(req.body, req.header);
       if (request?.body !== undefined) fields.push(...bodyFields(request.body));
       if (req.body?.mode === "raw" && request?.body === undefined && req.body.raw) fields.push(["body", req.body.raw]);
       const method = (req.method ?? "GET").toUpperCase();
-      const base = { method, path, queryKeys: query, ...(it.name ? { summary: it.name } : {}), tags, ...(request ? { request } : {}) };
+      const base = { method, path, authored: true, queryKeys: query, ...(it.name ? { summary: it.name } : {}), tags, ...(request ? { request } : {}) };
       const examples = (Array.isArray(it.response) ? it.response : []).filter((r) => !!r && typeof r.code === "number");
       requests += 1;
       if (examples.length === 0) builder.add(base);
@@ -243,6 +259,8 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
   };
   walk(c.item as PmItem[] | undefined, []);
 
+  const secrets = exchangeSecrets({ headers, fields, values: userinfo });
+  feedKnown(builder.known, { headers, fields, values: [], credentials: [...credentials, ...secrets] });
   const servers = hosts.size === 1 ? [...hosts.keys()] : [];
   const notes = [`${plural(requests, "request")} from the collection → ${plural(builder.size, "operation")}`];
   if (skipped) notes.push(`${plural(skipped, "item")} without a request left out`);
@@ -255,7 +273,7 @@ function fromPostman(c: Record<string, unknown>): DerivedSpec {
       },
       servers,
     ),
-    secrets: exchangeSecrets({ headers, fields, values: userinfo }),
+    secrets,
     notes,
     requests,
   };
@@ -293,7 +311,7 @@ function responseText(c: NonNullable<HarEntry["response"]>["content"]): string |
  * The API requests of a HAR: pages, scripts, styles, images and fonts are left out, and so is every origin but the
  * one most of the API requests went to (analytics, a CDN, a sign-in provider are not this API).
  */
-function fromHar(h: Record<string, unknown>): DerivedSpec {
+function fromHar(h: Record<string, unknown>, runSecrets: readonly string[]): DerivedSpec {
   type Entry = HarEntry & { request: NonNullable<HarEntry["request"]> & { url: string } };
   const entries = ((h.log as Record<string, unknown>).entries as HarEntry[]).filter(
     (e): e is Entry => !!e && typeof e === "object" && typeof e.request?.url === "string",
@@ -321,13 +339,20 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
   const headers: [string, string][] = [];
   const fields: [string, string][] = [];
   const userinfo: string[] = [];
+  const credentials: string[] = [...runSecrets];
+  const bare: string[] = [];
   let used = 0;
   for (const e of entries) {
-    // Every entry's credentials are scrubbed, also those of the requests left out of the document.
+    // Every entry's values count, also those of the requests left out of the document.
     headers.push(...nvs(e.request.headers), ...nvs(e.response?.headers));
     fields.push(...nvs(e.request.cookies), ...nvs(e.response?.cookies), ...nvs(e.request.queryString), ...nvs(e.request.postData?.params));
+    credentials.push(...[...nvs(e.request.cookies), ...nvs(e.response?.cookies)].map(([, v]) => v));
     const u = urlOf(e);
-    if (u) for (const [k, v] of u.searchParams) fields.push([k, v]);
+    if (u) {
+      const query = formParts(u.search.slice(1));
+      fields.push(...query.fields);
+      bare.push(...query.bare);
+    }
     if (u?.username) userinfo.push(decoded(u.username));
     if (u?.password) userinfo.push(decoded(u.password));
   }
@@ -342,9 +367,10 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
       if (reqType === "application/x-www-form-urlencoded" || reqType === "multipart/form-data" || (!post.text && post.params)) {
         request = { contentType: reqType ?? "application/x-www-form-urlencoded", body: Object.fromEntries(nvs(post.params).map(([k]) => [k, ""])) };
         if (post.text && reqType === "application/x-www-form-urlencoded") {
-          const form = new URLSearchParams(post.text);
-          for (const [k, v] of form) fields.push([k, v]);
-          request.body = Object.fromEntries([...form.keys()].map((k) => [k, ""]));
+          const form = formParts(post.text);
+          fields.push(...form.fields);
+          bare.push(...form.bare);
+          request.body = Object.fromEntries(form.fields.map(([k]) => [k, ""]));
         }
       } else {
         const parsed = post.text ? parse(post.text) : undefined;
@@ -361,13 +387,15 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
     builder.add({
       method: (e.request.method ?? "GET").toUpperCase(),
       path: u.pathname,
-      queryKeys: [...new Set([...u.searchParams.keys()])],
+      queryKeys: [...new Set(formParts(u.search.slice(1)).fields.map(([k]) => k))],
       ...(status ? { status } : {}),
       ...(request ? { request } : {}),
       ...(parsed !== undefined ? { response: { contentType: resType, body: parsed } } : {}),
     });
   }
 
+  const secrets = exchangeSecrets({ headers, fields, values: userinfo });
+  feedKnown(builder.known, { headers, fields, values: bare, credentials: [...credentials, ...secrets] });
   const notes = [`${plural(used, "request")} from the HAR → ${plural(builder.size, "operation")}${origin ? ` on ${origin}` : ""}`];
   const statics = entries.length - api.length;
   if (statics) notes.push(`${plural(statics, "page or static file")} (scripts, styles, images, fonts) left out`);
@@ -382,7 +410,7 @@ function fromHar(h: Record<string, unknown>): DerivedSpec {
       },
       origin ? [origin] : [],
     ),
-    secrets: exchangeSecrets({ headers, fields, values: userinfo }),
+    secrets,
     notes,
     requests: used,
   };

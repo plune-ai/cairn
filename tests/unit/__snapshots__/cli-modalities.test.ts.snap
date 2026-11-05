@@ -93,6 +93,9 @@ Options:
                          testDir/naming) instead of runs/<id>/tests
   --screencast           record a .webm per scenario (with step chapters) during
                          validation → runs/<id>/screencasts/ for the review gate
+  --api-origin <list>    #229: origins besides --url's whose API requests go
+                         into openapi.derived.json (comma-separated, e.g.
+                         https://api.example.com); lib backend
   --decider <provider>   opt-in decision layer: off | jev | laya | compat (sets
                          DECIDER; see docs/decider.md)
   --decider-shadow       with a decider: record its answers next to the current

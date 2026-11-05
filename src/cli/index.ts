@@ -131,6 +131,7 @@ export function buildProgram(): Command {
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .option("--screencast", "record a .webm per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
+    .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(async (opts: Record<string, unknown>) => {
@@ -290,6 +291,7 @@ export function buildProgram(): Command {
     .option("--gaps", "suggest cases for the top untested surface (the coverage view is always emitted)")
     .option("--flows <file>", "#230: saved API flows (JSON) — write data and sign-in preconditions as those flows, not as UI steps")
     .option("--headed", "visible browser (debug)")
+    .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(
@@ -310,6 +312,7 @@ export function buildProgram(): Command {
         setup?: boolean;
         gaps?: boolean;
         flows?: string;
+        apiOrigin?: string;
         decider?: string;
         deciderShadow?: boolean;
       }) => {
@@ -339,6 +342,7 @@ export function buildProgram(): Command {
           critique: opts.critique,
           flow: opts.flow,
           maxPages: opts.flow ? Number(opts.maxPages) || 3 : undefined,
+          apiOrigins: opts.apiOrigin,
           setup: opts.setup,
           gaps: opts.gaps,
           apiFlows: opts.flows ? await loadApiFlows(resolve(opts.flows)) : undefined,

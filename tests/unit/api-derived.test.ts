@@ -203,7 +203,7 @@ describe("the shared pieces (#228, reused by #229)", () => {
     }
   });
 
-  it("writeDerivedSpec scrubs a secret that rode in a name, raw or JSON-escaped", async () => {
+  it("writeDerivedSpec drops free text that holds a secret, raw or JSON-escaped, and edits no string", async () => {
     const dir = await mkdtemp(join(tmpdir(), "cairn-derived-"));
     try {
       const doc = { openapi: "3.0.3", info: { title: 'Login with FAKE-tok-9z8y7x and "q"FAKE"q', version: "1" }, paths: {} };
@@ -211,7 +211,8 @@ describe("the shared pieces (#228, reused by #229)", () => {
       const saved = await readFile(file, "utf8");
       expect(saved).not.toContain("FAKE-tok-9z8y7x");
       expect(saved).not.toContain('\\"q\\"FAKE');
-      expect(saved).toContain("‹redacted›");
+      expect(saved).not.toContain("‹redacted›");
+      expect((JSON.parse(saved) as { info: { title: string } }).info.title).toBe("API draft");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -227,6 +228,50 @@ describe("the shared pieces (#228, reused by #229)", () => {
     const op = doc.paths["/projects/{id}"]!.get;
     expect(op[DERIVED_KEY]).toBe(true);
     expect(Object.keys(op.responses as object)).toEqual(["200", "404"]);
+  });
+  it("an e-mail address in a path segment becomes a parameter; plain words stay, ids still fold", () => {
+    expect(templatePath("/api/users/alice.smith@example.com/avatar")).toEqual({ path: "/api/users/{id}/avatar", params: [{ name: "id" }] });
+    expect(templatePath("/api/users/alice.smith%40example.com").path).toBe("/api/users/{id}");
+    expect(templatePath("/api/users/me").path).toBe("/api/users/me");
+    const b = new DerivedSpecBuilder();
+    b.add({ method: "GET", path: "/users/42", status: 200 });
+    b.add({ method: "GET", path: "/users/43", status: 200 });
+    b.add({ method: "GET", path: "/users/carol@example.com", status: 200 });
+    b.add({ method: "GET", path: "/users/me", status: 200 });
+    const doc = b.toOpenApi({ title: "T" }) as { paths: Record<string, unknown> };
+    expect(Object.keys(doc.paths).sort()).toEqual(["/users/me", "/users/{id}"]);
+    expect(JSON.stringify(doc)).not.toContain("carol@example.com");
+  });
+
+  it("an object keyed by e-mail addresses or credential-shaped keys is a map, never named properties", () => {
+    const byMail = schemaOf({ "bob.jones@example.com": { role: "admin" }, "carol@example.com": { role: "viewer", since: 2020 } });
+    expect(byMail).toEqual({ type: "object", additionalProperties: { type: "object", properties: { role: { type: "string" }, since: { type: "integer" } }, required: ["role"] } });
+    expect(schemaOf({ FAKEtok3n4b5c6d7: 1, FAKEtok3n4b5c6d8: 2 })).toEqual({ type: "object", additionalProperties: { type: "integer" } });
+    // A map merged with another example stays a map; ordinary keys stay properties.
+    expect(mergeSchema(byMail, schemaOf({ "dave@example.com": { role: "x" } }))).toMatchObject({ type: "object", additionalProperties: { type: "object" } });
+    expect(schemaOf({ id: 1, email: "x@y.test" })).toEqual({ type: "object", properties: { id: { type: "integer" }, email: { type: "string" } }, required: ["id", "email"] });
+  });
+
+  it("e-mail addresses in a Postman collection's or a HAR's paths and bodies never reach the file", async () => {
+    const pm = {
+      info: { name: "People", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+      item: [{ name: "Avatar", request: { method: "GET", url: "https://app.example.test/api/users/alice.smith@example.com/avatar" }, response: [{ code: 200, header: [{ key: "Content-Type", value: "application/json" }], body: JSON.stringify({ "bob.jones@example.com": { role: "admin" } }) }] }],
+    };
+    const har = {
+      log: {
+        entries: [
+          {
+            request: { method: "GET", url: "https://app.example.test/api/users/carol@example.com", headers: [] },
+            response: { status: 200, headers: [], content: { mimeType: "application/json", text: JSON.stringify({ "dave@example.com": { role: "viewer" } }) } },
+          },
+        ],
+      },
+    };
+    for (const [text, path] of [[JSON.stringify(pm), "/api/users/{id}/avatar"], [JSON.stringify(har), "/api/users/{id}"]] as const) {
+      const { saved, model } = await writeAndIngest(text);
+      for (const mail of ["alice.smith@example.com", "bob.jones@example.com", "carol@example.com", "dave@example.com"]) expect(saved, mail).not.toContain(mail);
+      expect(model.endpoints.map((e) => e.path)).toContain(path);
+    }
   });
 });
 
@@ -314,11 +359,11 @@ describe("scrubbing keeps the document whole and drops credentials (#228 review)
     expect(saved).not.toContain("‹redacted›");
   });
 
-  it("a sensitive-named field's plain-looking value is scrubbed where it rode into the document", async () => {
+  it("a sensitive-named field's plain-looking value becomes a parameter where it rode in a path", async () => {
     // Not credential-shaped and not under a header: only the sensitive field name (`session_token`) marks it secret.
     const text = har([{ method: "GET", url: "https://app.example.test/api/lookup/correcthorsebattery?session_token=correcthorsebattery" }]);
     const derived = deriveSpec(text)!;
-    expect(JSON.stringify(derived.doc)).toContain("correcthorsebattery"); // it is in the path as seen
+    expect(Object.keys((derived.doc as { paths: object }).paths)).toEqual(["/api/lookup/{id}"]);
     const { saved } = await writeAndIngest(text);
     expect(saved).not.toContain("correcthorsebattery");
   });

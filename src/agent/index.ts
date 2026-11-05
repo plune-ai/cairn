@@ -3,6 +3,7 @@ import { resolve, dirname, basename, join, relative, sep } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
+import { ApiTrafficRecorder, parseApiOrigins, writeTrafficSpec } from "../browser/api-traffic.js";
 import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
 import type { AppliedEnvironment, Environment } from "../environment/index.js";
 import type { MailboxSession } from "../mailbox/index.js";
@@ -89,6 +90,8 @@ export interface ExploreInput {
   fresh?: boolean;
   /** #82: run the design-time self-critique pass (prune + technique top-up) on the worker tier. Default off. */
   critique?: boolean;
+  /** #229: origins besides the run URL's whose API requests go into openapi.derived.json (comma-separated). */
+  apiOrigins?: string;
   /** #59: follow in-app navigation and design multi-page journey cases. Default off (single page). */
   flow?: boolean;
   /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). */
@@ -253,6 +256,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
       onProgress(`⚠ approaching the LLM-call budget (${used}/${max} calls — cost guardrail)`);
     }
   };
+  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
+  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const telemetry = await initTelemetry(cfg);
   const router = new RoleRouter(
     cfg,
@@ -289,6 +294,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     channel: cfg.browser.channel,
     headless: !input.headed,
     httpCredentials: envRun?.applied.httpCredentials,
+    apiTraffic,
   });
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
@@ -570,6 +576,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const watchesClicks = cfg.browser.backend === "lib";
         const deadClicks = watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined;
         if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        await writeTrafficSpec(apiTraffic, runWriter.dir, input.url, [...secretValues(knowledgeText, process.env), ...envSecrets], onProgress);
         if (out.overlays) {
           // #225 review 3: beside the states, whether the write guard was on and what it stopped
           await runWriter.writeOverlays({ overlays: out.overlays, skipped: out.overlaySkipped ?? [], toasts: out.overlayToasts ?? [], ...(out.overlayGuard ?? {}) });
@@ -724,6 +731,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     persistLog();
   };
 
+  // #229: the lib backend records the app's API requests (the run's origin, plus --api-origin) for openapi.derived.json.
+  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
   const telemetry = await initTelemetry(cfg);
   const router = new RoleRouter(
     cfg,
@@ -752,6 +761,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     channel: cfg.browser.channel,
     headless: !input.headed,
     httpCredentials: envRun?.applied.httpCredentials,
+    apiTraffic,
   });
   const prompts = new PromptRegistry();
   const artifacts = new ArtifactStore(resolve(input.runsBaseDir ?? defaultRunsBaseDir()));
@@ -935,6 +945,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         const watchesClicks = cfg.browser.backend === "lib"; // #224: the cli backend watches no click
         if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        await writeTrafficSpec(apiTraffic, runWriter.dir, input.url, [...secretValues(knowledgeText, process.env), ...envSecrets], onProgress);
         if (out.overlays) {
           // #225 review 3: beside the states, whether the write guard was on and what it stopped
           await runWriter.writeOverlays({ overlays: out.overlays, skipped: out.overlaySkipped ?? [], toasts: out.overlayToasts ?? [], ...(out.overlayGuard ?? {}) });

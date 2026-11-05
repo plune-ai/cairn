@@ -1,6 +1,7 @@
 import { PlaywrightLibBackend } from "./backends/playwright-lib.js";
 import { PlaywrightCliBackend } from "./backends/playwright-cli.js";
 import type { BrowserBackend, BrowserGateway } from "./gateway.js";
+import type { ApiTrafficRecorder } from "./api-traffic.js";
 import type {
   ActResult,
   Action,
@@ -30,6 +31,8 @@ export interface GatewayConfig {
   channel?: string;
   /** HTTP Basic Auth applied to the browser context (lib backend). */
   httpCredentials?: HttpCredentials;
+  /** #229: gets every response of the lib backend's context, for the OpenAPI draft from the UI traffic. */
+  apiTraffic?: ApiTrafficRecorder;
 }
 
 /**
@@ -80,6 +83,7 @@ export function makeGateway(cfg: GatewayConfig): BrowserGateway {
     storageState: cfg.storageState,
     channel: cfg.channel,
     httpCredentials: cfg.httpCredentials,
+    apiTraffic: cfg.apiTraffic,
   });
   if (cfg.backend === "cli") {
     // observe/act → cli (token-efficient); session/runTests → lib (ADR-0003).
