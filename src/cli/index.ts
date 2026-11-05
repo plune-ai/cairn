@@ -171,6 +171,7 @@ export function buildProgram(): Command {
     .option("--max-requests <n>", "#196: request budget for the run, retries included (default 300); exit code 4 when it runs out")
     .option("--rps <n>", "#196: requests per second for the whole run (default 5)")
     .option("--save-flows <file>", "#230: with --scenarios, save each chain that deletes what it creates as an API flow in <file> (JSON; flows already there are kept)")
+    .option("--actors <file>", "#233: with --base-url --allow-mutations, run the two-actor IDOR / privilege-escalation check in <file>: the owner creates a resource through a saved API flow, the other actor tries to read, change and delete it and reads the ids next to it; the flow's cleanup always runs")
     .option("--flows <file>", "#230: write a Playwright fixture (api-flows.fixture.ts, into --out) from the API flows in <file>; sends no request. With --base-url --allow-mutations, flows that change data may run against that address")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
