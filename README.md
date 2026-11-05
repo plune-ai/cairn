@@ -101,6 +101,68 @@ current step is marked while it plays. It works offline and nothing leaves your 
 only the video and a note; a run with no video exits with an error naming the run directory. Add `--open` to open
 the page in your default browser.
 
+### API security: IDOR and privilege escalation across two actors
+
+`cairn api --base-url https://staging.example.com --actors actors.json --allow-mutations` runs a check the
+single-request `hacker` style cannot: it needs two identities and state. The owner (actor A) creates a resource
+through a saved [API flow](docs/api-flows.md); the other actor (B) then tries to read it, change it and delete it, and
+reads the ids next to it. Each 2xx answer to B is a finding with its OWASP WSTG id: `WSTG-ATHZ-04` (IDOR) when B is
+another user, `WSTG-ATHZ-03` (privilege escalation) when B is a lower role. Only `401`, `403` and `404` count as
+refused; any other answer (a redirect, `400`, `405`, `422`, a `5xx`) is inconclusive — a `PATCH {}` stopped by
+validation never reached the access check — and fails the run like a finding. When every answer B got within a check
+is a `401`, those cases are inconclusive too: B's credentials may not be valid, so access was not checked. A `401` next
+to any other answer stays refused. A neighbouring id counts only when both actors can read it. The flow's own cleanup
+deletes what was created, also when the check stops halfway; a check refused before its first request has no cleanup.
+A cleanup step without `expect` is done only on a 2xx, and a cleanup that answers otherwise, or cannot be sent because
+the create never returned its id, is reported as a cleanup error: the data may still be there. A captured JSON whole number past 2^53 stops the check, naming the capture: it may have been rounded, and a read or a cleanup must
+not reach another record. A string id above 2^53 is used as written, and its neighbours are skipped.
+
+```json
+{
+  "version": 1,
+  "flows": "flows.json",
+  "actors": {
+    "owner": { "session": "alice" },
+    "other": { "headers": { "Authorization": "Bearer {{env.BOB_TOKEN}}" }, "role": "peer" }
+  },
+  "checks": [
+    { "flow": "project", "resource": "/api/projects/{{projectId}}", "change": { "method": "PATCH", "body": { "name": "x" } }, "neighbours": 2 }
+  ]
+}
+```
+
+An actor is a saved session by its name (`.auth/<name>.storageState.json`, from `cairn session capture --name`; set
+`sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The flow file's own `headers` (where
+the owner's token usually sits) go to the owner whole. The other actor's requests carry no identity but its own actor
+definition. From the flow file it takes only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`; its own
+headers and session cookie come from `actors.json`. An error about a request says its method, its path and a category
+(such as `network: ECONNREFUSED`), never the text of the underlying error. In the report and the terminal a captured
+value is shown only as a whole number in the path, and not when it equals the value of an `{{env.NAME}}` that the flow
+file or `actors.json` names; everything else stays as written, `{{name}}` and `{{env.NAME}}` alike, and so does the
+whole query. The real values go only on the wire. What is known in advance is refused before the first request: a bad
+header name, a header value whose characters cannot be sent because of an actor's header or an `{{env.NAME}}`, and,
+anywhere in the flow's steps and cleanup, an `{{env.NAME}}` that is not set or that cannot stand in a path. A refused
+header names itself and the templates it was built from. What a captured value holds is known only when it is sent: a
+header with characters from one is refused then, naming the header. A URL that cannot be parsed is refused instead of
+sent. So a secret from the environment never reaches the report or the terminal, with two known limits: a whole number
+the server answered is shown unless it equals a value a file names, so a number that is a secret or part of one can be
+shown when neither file names that exact value (`007` echoed as `7`); and a neighbour hidden because it equals a named
+value, next to an id that is shown, tells what that value is. Header
+names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
+`Cookie`), so one name goes out with one value. The check uses the same guardrails as
+every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
+production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or
+cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`.
+
+Exit codes, the first that applies wins: `1` for a two-actor file or saved session that cannot be used, a finding, an
+inconclusive case, a check that stopped, a cleanup that failed, or a check `not tested` (it ran with no probe answered,
+or `--allowed-methods`/`--allowed-paths` refused its flow or cleanup) while another check got an answer; `4` for a check
+not started because the budget could not cover it; `5` when no probe in the run got an answer, because nothing was
+tested (the owner's own requests do not count); otherwise `0`. A probe skipped next to answered ones stays a pass,
+counted in the summary line.
+
+More: [the runbook](docs/runbooks/run-api-cases.md#two-actor-check-idor-and-privilege-escalation---actors-233).
+
 ## Interactive TUI
 
 Run `cairn` with **no arguments** in a terminal for a guided UI (launcher → form → live dashboard →
@@ -119,6 +181,7 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 | `cairn explore --url <u> --session <s> [--checklist <f>] [--fresh] [--critique] [--screencast]` | Full pipeline (cases → code → validate → repair → Pilot) |
 | `cairn api [--spec <path\|url>] [--base-url <u>] [--negative] [--scenarios] [--adversarial [styles]] [--min-coverage <percent> [--count-partial]] [--allow-mutations] [--allowed-methods <list>] [--allowed-paths <list>] [--max-requests <n>] [--rps <n>]` | Generate (and, with `--base-url`, run + assert status/contract) happy-path, negative-schema, multi-endpoint-scenario, and adversarial (`normal`/`curious`/`psycho`/`hacker`) cases from an OpenAPI 3.x spec. **With `--base-url` only GET/HEAD/OPTIONS are sent unless you pass `--allow-mutations`** (300 requests max, 5 req/s, host pinned, no redirects). Without `--spec`, the `--base-url` server is searched for a spec it serves (`/openapi.json`, `/v3/api-docs`, …). `--spec` also takes a Postman collection (v2.1) or a HAR file: it is converted to OpenAPI and saved as `openapi.derived.json` in the run directory |
 | `cairn api --spec <s> --scenarios --save-flows <f>` · `cairn api --flows <f> [--out <dir>] [--base-url <u> --allow-mutations]` | Save scenario chains as [API flows](docs/api-flows.md) (create → return its id → delete), and write their Playwright fixture (`api-flows.fixture.ts`) for UI test setup and cleanup; sends no request. A flow that changes data runs only against an address allowed with `--allow-mutations` |
+| `cairn api --base-url <u> --actors <f> --allow-mutations` | Two-actor API security check: IDOR (`WSTG-ATHZ-04`) and privilege escalation (`WSTG-ATHZ-03`) — the owner creates a resource through a saved API flow, the other actor tries to read, change and delete it and reads the ids next to it; the flow's cleanup always runs. See [below](#api-security-idor-and-privilege-escalation-across-two-actors) |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).
