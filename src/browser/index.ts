@@ -15,6 +15,7 @@ import type {
   StorageState,
   TestRunReport,
   VerifiedElement,
+  WriteGuard,
 } from "./types.js";
 
 export * from "./gateway.js";
@@ -38,10 +39,15 @@ export interface GatewayConfig {
  * Composite gateway (ADR-0003): observe/act → backend per config; session/runTests → ALWAYS lib.
  */
 class GatewayImpl implements BrowserGateway {
+  /** #225 review 3: only the backend that observes and acts can guard what its own clicks send: absent on any other. */
+  readonly guardWrites?: () => Promise<WriteGuard>;
+
   constructor(
     private readonly observeBackend: BrowserBackend,
     private readonly libBackend: BrowserBackend,
-  ) {}
+  ) {
+    if (observeBackend.guardWrites) this.guardWrites = () => observeBackend.guardWrites!();
+  }
 
   observe(opts: ObserveOptions): Promise<Observation> {
     return this.observeBackend.observe(opts);

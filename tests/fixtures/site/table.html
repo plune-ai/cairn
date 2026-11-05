@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Table — Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>People</h1>
+      <p>Last delete: <span id="last">none</span></p>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>John Doe</td><td><button type="button" data-who="John Doe">Delete</button></td></tr>
+          <tr><td>Jane Roe</td><td><button type="button" data-who="Jane Roe">Delete</button></td></tr>
+          <tr><td>Max Poe</td><td><button type="button" data-who="Max Poe">Delete</button></td></tr>
+        </tbody>
+      </table>
+    </main>
+    <script>
+      for (const b of document.querySelectorAll("button[data-who]")) {
+        b.addEventListener("click", () => { document.getElementById("last").textContent = b.dataset.who; });
+      }
+    </script>
+  </body>
+</html>

@@ -53,6 +53,8 @@ export interface RunWriter {
   writeUnderstanding(map: unknown): Promise<void>;
   /** #224: the requests exploration's clicks started (method, redacted path, status) → requests.json. */
   writeRequests(requests: RecordedRequest[]): Promise<void>;
+  /** #225: the overlays exploration found as states (triggers, exits, wizard steps) → overlays.json. */
+  writeOverlays(overlays: unknown): Promise<void>;
 }
 
 /** Local trail of each run: runs/<id>/ (study, tests, snapshots, report). */
@@ -149,6 +151,9 @@ export class ArtifactStore {
       },
       writeRequests: async (requests) => {
         await writeFile(join(dir, "requests.json"), JSON.stringify(requests, null, 2), "utf8");
+      },
+      writeOverlays: async (overlays) => {
+        await writeFile(join(dir, "overlays.json"), JSON.stringify(overlays, null, 2), "utf8");
       },
     };
   }

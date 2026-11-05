@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ambiguous — Fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>Files</h1>
+      <p>Clicked: <span id="clicked">nothing</span></p>
+      <div><button type="button" data-n="first">Delete</button></div>
+      <div><button type="button" data-n="second">Delete</button></div>
+      <a href="/list.html">More</a>
+      <a href="/list.html">More</a>
+    </main>
+    <script>
+      for (const b of document.querySelectorAll("button[data-n]")) {
+        b.addEventListener("click", () => { document.getElementById("clicked").textContent = b.dataset.n; });
+      }
+    </script>
+  </body>
+</html>

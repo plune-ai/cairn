@@ -77,6 +77,100 @@ effect whose request got no answer within 2 s or went to another origin, a later
 or drawn on a canvas, a change of style alone. On the cli backend `deadClicks` is absent and the section says the
 clicks are not recorded there.
 
+### Overlays are states (#225)
+
+An element inside a `dialog` or `alertdialog` carries its `scope`, and every lib-backend call finds it through the
+dialog: `getByRole('dialog', { name }).getByRole(role, { name })`, so the Save of a dialog and the Save of the page
+under it are two elements. `observe()` also returns `nonModal`: the dialogs the DOM says do not block the page
+(no `aria-modal`, not a native `showModal()` dialog; an `alertdialog` is always modal), such as a cookie banner.
+While a modal overlay is open, `act()` does not touch an element that lies under its top one: it answers
+`ok: false, outcome: "under-overlay"` at once, where the click would have waited out a 30 s timeout. `act()` also
+takes `{ kind: "press", key }` and `{ kind: "click-outside", scope }` (lib backend only; the cli backend answers
+`ok: false`). A click outside is made only at a point checked first with `elementFromPoint`: the element there is
+outside the overlay `scope` and is nothing a click acts on (no link, button, field, label, click role, tabindex,
+inline handler or pointer cursor); corners first, then the edges, then a grid. When no point passes, nothing is
+clicked and the answer is `ok: false`. `getState()` also returns `popup`: the element's `aria-haspopup`,
+`aria-expanded` and `aria-controls`, which the ARIA snapshot does not show, and `submitsForm` when pressing the element
+submits a form (a `type=submit` button, or a `<button>` with no type, inside a form); such a button is never pressed
+while looking for an overlay.
+
+Detection and the explorer sit above the gateway: `src/observe/overlays.ts` reads a snapshot (pure, no LLM: `dialog` and
+`alertdialog` are overlays; a `menu`, `listbox` or `complementary` is one when it was not on the baseline page;
+`status` / `alert` texts are recorded as toasts, never as states), `src/agent/overlays.ts` presses what could open one,
+records the trigger, the elements, the exits (Escape and a click outside probed, the buttons read), the nested
+overlays and the steps of a wizard. To look for an overlay it presses only a button whose `popup` says it opens
+something (an allow-list); every other one is recorded as skipped with the reason. A wizard is a dialog with a Next
+and a Back or a step indicator, never an `alertdialog`. The result goes to `overlays.json`, `report.json`
+(`overlays`) and `report.md` (*Overlays*).
+
+#### The invariant: exploring overlays changes nothing on the server
+
+Exploring overlays changes nothing on the server, whatever the button is called: not while it runs, and not after it
+ends. No write sent because of a press may ever arrive. This rests on the network, not on names:
+
+- **What may be pressed is read first, on the crawler's own page.** Reading presses nothing, and it is the page the study
+  describes. With nothing to press, no second browser is started (`guard: "none"`, `note`).
+- **Presses happen in a throwaway browser** (`guardWrites()`, lib backend). A browser process of its own, with a
+  context made from the crawler's `storageState()`, with the same context options, and with the sessionStorage of the
+  crawler's tab carried in for the origin it is on. Until the guard is released, every `observe`, `act`, `verify` and
+  `getState` goes there. The crawler's own context and page never see a press and come back as they were, refs included.
+- **IndexedDB goes in only as far as Playwright restores it.** A falsy value (`""`, `null`, `false`, `0`) comes back as
+  `undefined`, and a CryptoKey, a Blob or a Map does not come back at all; the cause is in Playwright. So the buttons of a
+  session kept that way may not appear in the throwaway browser. Such a button is not pressed, and is reported as not
+  there. A record under the key `0` stops the guard from starting at all (below).
+- **The write guard is on the browser, not on a page.** A Fetch interception on that browser, on before its first
+  context exists and never taken off, aborts each request whose method is not GET, HEAD or OPTIONS: a form post, a fetch
+  or XHR write, a beacon, a keepalive request, a form sent from script, from a page, its frames, the tabs it opens or
+  any worker. Each one stopped is recorded (method, path written like a recorded request, the element pressed last
+  before it, how often) and reported: `overlays.json` (`guard`, `blocked`) and a table in `report.md`. It goes by the
+  method alone, so a stopped request is not necessarily a write: an app may also read through POST (GraphQL), and a
+  trigger that shows only once that answer is in is then reported as not there. Background Fetch, which sends where this
+  interception does not look, is switched off in that browser.
+- **There is no release moment.** The release — in `finally`, so also on an error — kills that process with the guard
+  on. What a page was sending, and what it left for later (an outbox in localStorage), ends with it. Nothing flows
+  back: no cookie, no storage. So nothing it did can reach the server later. A route on a context would not hold this:
+  its interception belongs to each page, frame and worker, and what it holds is let go when they go. Probes saw POSTs
+  arrive with the route on from a popup closing itself, from a cross-origin frame removed, and from a context closing;
+  a SharedWorker and `fetchLater` passed it altogether.
+- **One exception to "nothing but GET, HEAD and OPTIONS".** On a configured `--channel` (full Chromium) over HTTPS, a
+  page with `Reporting-Endpoints` and a CSP `report-to` gets the browser's own Reporting API report: a POST
+  (`application/reports+json`) that passes this interception, reaches the server and is not listed in `blocked`. It is
+  not the app's doing. It is not switched off, because `--disable-features` would replace the list Playwright passes
+  there itself, and that list is no public API. Network Error Logging was not checked.
+- **What it does not see.** A WebSocket message, and a GET that changes the server against HTTP's rule. A cookie set
+  while pressing stays there too: on a site that rotates its session on every GET, the crawler is signed out afterwards.
+- **No guard, no press.** A backend that cannot guard the network (the cli backend: the gateway has no `guardWrites()`)
+  presses no trigger and no wizard step while exploring overlays. It reads the overlays already open and says so
+  (`guard: "none"`, `note`). A guard that did not start does the same, and says that instead: `the write guard did not
+  start (<category>)`, in `note` and `skipped`. The category is one of `SESSION_READ_FAILED` (the crawler's session could
+  not be read within 10 s, as on a page with a blocked IndexedDB upgrade), `BROWSER_START_FAILED` and
+  `SESSION_RESTORE_FAILED` (a record under the key `0`, a database of 200 MB), or else an error's name. Never its message:
+  that can quote what the session holds.
+- **An empty result says why.** A button that could not be read, a trigger that was not there where the presses happen,
+  and a press that failed (the browser died, say) each get their own reason in `skipped`, and are counted in `note`. A
+  button only counts as announcing nothing when it was read and has none of the three attributes.
+- **Checks that do not depend on a name**, for every press — triggers, nested probes, a wizard's Next and Back alike:
+  an element whose `getState()` says `submitsForm` is not pressed (a `type=submit` button or a `<button>` with no type
+  inside a form, or joined to one by the `form` attribute), nor a disabled one; a trigger must announce a popup.
+- **Names**, kept only in forms the guard cannot see: a deletion or a sign-out (`DESTRUCTIVE` in
+  `src/flow/crawl.ts`, `isDeletionIntent` in `src/safety/guardrails.ts`), which is often a plain GET link; and a
+  completion (Save, Submit, OK…), which is never a trigger. There is no list of payment or order names: every such
+  button writes, and the guard stops every write; a list both missed names («Complete payment», «Book now») and
+  refused safe ones («Sort order», «Purchase history»).
+
+### Visible and unique in its scope (#226)
+
+`act()`, `verify()` and `getState()` never take «the first of several». They look among the visible elements of the
+element's scope (its dialog, or the page). One match is the element. Several are narrowed by the accessible name of the
+container the element sits in (`ElementRef.context`: named `row`, `listitem`, `article`, `group`, `region`, `form`,
+`treeitem`, nearest first): the first container after which exactly one match is left wins (`narrowedBy` in
+`verify()`), and the locator is `getByRole('row', { name }).getByRole(role, { name })`. Links that share one `href` are
+one destination. Otherwise the element is `ambiguous`: no click (`outcome: "ambiguous"`, `ambiguous: { role, name,
+count }`), no state read, and the run lists it (`report.json` → `ambiguous`, *Ambiguous elements* in `report.md`). The
+generated code is held to the same rule before it is run: `lintErrors` (`src/codegen/lint.ts`) rejects
+`page.mouse.click`, `force: true` and an uncommented `.first()` / `.nth(`, and `runRepairLoop({ errors })` turns each
+into a failed result for the repair loop.
+
 ## Routing contract (IMPORTANT)
 
 ```

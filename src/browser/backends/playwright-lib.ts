@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Download, type Locator, type Page, type Request, type Response } from "playwright";
+import { chromium, type Browser, type BrowserContext, type BrowserServer, type Download, type Locator, type Page, type Request, type Response } from "playwright";
 import type { ApiTrafficRecorder } from "../api-traffic.js";
 import type { BrowserBackend } from "../gateway.js";
 import {
@@ -23,6 +23,7 @@ import type {
   ElementRef,
   ElementState,
   HttpCredentials,
+  OverlayScope,
   Observation,
   ObserveOptions,
   RecordedRequest,
@@ -30,12 +31,73 @@ import type {
   StorageState,
   TestRunReport,
   VerifiedElement,
+  BlockedRequest,
+  WriteGuard,
 } from "../types.js";
-import { parseAriaSnapshot } from "../../observe/parse-aria.js";
+import { overlayKey, parseAriaSnapshot } from "../../observe/parse-aria.js";
 
 /** Canonical Playwright storageState type (bridge between our StorageState and the runtime). */
 type PwStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
 type PwRole = Parameters<Page["getByRole"]>[0];
+
+/** #225: what act() needs of an observed element. */
+interface Target {
+  role: string;
+  name?: string;
+  scope?: OverlayScope;
+  underOverlay?: true;
+  context?: OverlayScope[];
+}
+
+/** #226: where an element was found: the locator to use, how many visible ones shared its role and name, and what narrowed them. */
+interface Found {
+  locator: Locator;
+  /** Visible elements of this role and name in the scope. */
+  count: number;
+  narrowedBy?: OverlayScope;
+  /** Several, and nothing tells them apart (and they do not all lead to one place). */
+  ambiguous?: boolean;
+}
+
+/**
+ * #226: the one visible element in the element's scope — never the first of several. One visible match is it. Several
+ * are narrowed by the accessible name of the row, card or section they sit in (nearest first), taking the first
+ * container after which exactly one is left. Links that all lead to the same address are one destination. Otherwise
+ * `ambiguous`: the caller does not click. With no visible match, the locator is of all of them and picks none: a hidden
+ * or removed element still fails with Playwright's own reason, and several that come back while it waits are refused by
+ * its strict mode rather than clicked blindly.
+ */
+async function findOne(page: Page, t: Target): Promise<Found> {
+  const visible = locate(page, t).filter({ visible: true });
+  const count = await visible.count().catch(() => 0);
+  if (count === 0) return { locator: locate(page, t), count: 0 };
+  if (count === 1) return { locator: visible, count };
+  const root = t.scope ? page.getByRole(t.scope.role as PwRole, t.scope.name ? { name: t.scope.name, exact: true } : {}) : page;
+  for (const ctx of t.context ?? []) {
+    const inner = root
+      .getByRole(ctx.role as PwRole, ctx.name ? { name: ctx.name, exact: true } : {})
+      .getByRole(t.role as PwRole, t.name ? { name: t.name, exact: true } : {})
+      .filter({ visible: true });
+    if ((await inner.count().catch(() => 0)) === 1) return { locator: inner, count, narrowedBy: ctx };
+  }
+  if (t.role === "link") {
+    const hrefs = await visible.evaluateAll((els) => els.map((e) => (e as unknown as { getAttribute(a: string): string | null }).getAttribute("href"))).catch(() => []);
+    if (hrefs.length > 0 && hrefs[0] && hrefs.every((h) => h === hrefs[0])) return { locator: visible.first(), count };
+  }
+  return { locator: visible.first(), count, ambiguous: true };
+}
+
+/**
+ * #225: the locator of an element — inside its dialog when it has one, so a same-named element on the page is not it.
+ * `includeHidden` looks for what is not shown (to tell a hidden element from a gone one).
+ */
+function locate(page: Page, t: { role: string; name?: string; scope?: OverlayScope }, includeHidden = false): Locator {
+  const own = { ...(t.name ? { name: t.name, exact: true } : {}), ...(includeHidden ? { includeHidden: true } : {}) };
+  const root = t.scope
+    ? page.getByRole(t.scope.role as PwRole, t.scope.name ? { name: t.scope.name, exact: true } : {})
+    : page;
+  return root.getByRole(t.role as PwRole, own);
+}
 
 export interface PlaywrightLibOptions {
   headless?: boolean;
@@ -70,6 +132,32 @@ const WAITED_REQUESTS = new Set(["document", "fetch", "xhr", "script"]);
 /** …of which the page's own navigations and API calls are recorded — not scripts, images, fonts or beacons. */
 const RECORDED_REQUESTS = new Set(["document", "fetch", "xhr"]);
 
+/** #225 review 3: the methods the write guard lets through: by HTTP's own rule they read and change nothing. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/** The Blink features every browser of this backend runs without. */
+const BLINK_OFF = "AutomationControlled";
+/**
+ * #225 review 4: the one API seen sending where the browser's own Fetch interception does not look (full Chromium and
+ * Chrome; the headless shell has none): it does not exist in the browser that presses.
+ */
+const SENDS_PAST_FETCH = "BackgroundFetch";
+
+/**
+ * #225 review 5: how long reading the crawler's session for the write guard may take. `storageState()` with IndexedDB has
+ * no limit of its own, and a page with a blocked IndexedDB upgrade held it past 240 s. Measured on a laptop: 300 MB read in
+ * 2.4 s, and 200 MB is already more than the browser that presses can be given. Ten seconds leave a machine four times
+ * slower room for more than could ever be used.
+ */
+const SESSION_READ_TIMEOUT_MS = 10_000;
+
+/**
+ * #225 review 5: why the write guard did not start, in fixed words. What the failing call said stays behind on purpose: it
+ * can quote what the session holds (`Unable to restore IndexedDB…`), and this reason goes into the report.
+ */
+type GuardFailure = "SESSION_READ_FAILED" | "BROWSER_START_FAILED" | "SESSION_RESTORE_FAILED";
+const guardFailure = (code: GuardFailure): Error => Object.assign(new Error(`The write guard did not start: ${code}`), { code });
+
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** `p`, or `fallback` when it fails or takes longer than `ms`. */
 const within = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
@@ -78,6 +166,23 @@ const within = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
 /** The page's ARIA snapshot, or undefined when it cannot be read (mid-navigation, page gone). */
 const ariaOf = (page: Page): Promise<string | undefined> =>
   page.locator("body").ariaSnapshot({ timeout: STATE_READ_TIMEOUT_MS }).catch(() => undefined);
+
+/** #225 review 4: runs in the crawler's page: its tab's sessionStorage, which no storageState holds. */
+const readTabStorage = (): { origin: string; items: [string, string][] } => {
+  const g = globalThis as unknown as { location: { origin: string }; sessionStorage: Record<string, string> };
+  return { origin: g.location.origin, items: Object.entries(g.sessionStorage) };
+};
+
+/** #225 review 4: runs before a page's scripts in the pressing context: the session is there when the app looks for it. */
+const seedTabStorage = (tab: { origin: string; items: [string, string][] }): void => {
+  const g = globalThis as unknown as { location: { origin: string }; sessionStorage: { getItem(k: string): string | null; setItem(k: string, v: string): void } };
+  if (g.location.origin !== tab.origin) return;
+  try {
+    for (const [k, v] of tab.items) if (g.sessionStorage.getItem(k) === null) g.sessionStorage.setItem(k, v);
+  } catch {
+    // a sandboxed frame has no storage to fill
+  }
+};
 
 /**
  * Only the app's own origin is recorded: an analytics call on another host answering 204 to every click would make
@@ -134,7 +239,9 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private browser?: Browser;
   private context?: BrowserContext;
   private page?: Page;
-  private readonly refMap = new Map<string, { role: string; name?: string }>();
+  private readonly refMap = new Map<string, Target>();
+  /** #225: the dialogs of the last snapshot that the DOM says are not modal (`role|name`). */
+  private nonModal = new Set<string>();
   private currentUrl = "";
   private lastStatus: number | undefined;
   private readonly consoleErrors: string[] = [];
@@ -144,16 +251,25 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private acting = false;
   /** #224: when each endpoint was requested outside any action, to tell a poll from a click's request. */
   private readonly background = new Map<string, number[]>();
+  /**
+   * #225 review 4: while the write guard is on, a second backend in a browser process of its own, which takes every
+   * observe, act, verify and getState. This one's context, page and fields are not touched until it is gone.
+   */
+  private pressing?: PlaywrightLibBackend;
+  /** #225 review 4: on a pressing backend, the process of its browser, to kill. */
+  private server?: BrowserServer;
+  /** #225 review 3: the element (or key) pressed last, named beside each request the guard stops. */
+  private lastPressed?: { role: string; name?: string };
 
   constructor(private readonly opts: PlaywrightLibOptions = {}) {}
 
+  private launchOptions(blinkOff: string) {
+    return { headless: this.opts.headless ?? true, channel: this.opts.channel, args: [`--disable-blink-features=${blinkOff}`] };
+  }
+
   private async launch(): Promise<Browser> {
     try {
-      return await chromium.launch({
-        headless: this.opts.headless ?? true,
-        channel: this.opts.channel,
-        args: ["--disable-blink-features=AutomationControlled"],
-      });
+      return await chromium.launch(this.launchOptions(BLINK_OFF));
     } catch (e) {
       // Backstop for observe/design: translate Playwright's raw "Executable doesn't exist …" into
       // the one actionable message. Covers the case the up-front preflight can't (e.g. the
@@ -163,13 +279,19 @@ export class PlaywrightLibBackend implements BrowserBackend {
     }
   }
 
+  /** A context with this backend's options: the crawler's, and the one the write guard presses in. */
+  private newContext(storageState?: PwStorageState): Promise<BrowserContext> {
+    return this.browser!.newContext({
+      ...(storageState ? { storageState } : {}),
+      ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
+    });
+  }
+
   private async ensurePage(): Promise<Page> {
     this.browser ??= await this.launch();
     if (!this.context) {
-      this.context = await this.browser.newContext({
-        ...(this.opts.storageState ? { storageState: this.opts.storageState as unknown as PwStorageState } : {}),
-        ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
-      });
+      this.context = await this.newContext(this.opts.storageState as unknown as PwStorageState | undefined);
+      // Only here: the browser the write guard presses in sets its context itself, so what it reads stays out of the draft.
       const traffic = this.opts.apiTraffic;
       if (traffic) this.context.on("response", (res) => noteResponse(traffic, res));
     }
@@ -220,6 +342,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async observe(opts: ObserveOptions): Promise<Observation> {
+    if (this.pressing) return this.pressing.observe(opts);
     let status: number | undefined;
     if (opts.url) {
       this.lastStatus = undefined;
@@ -248,9 +371,10 @@ export class PlaywrightLibBackend implements BrowserBackend {
     this.lastAria = ariaSnapshot;
     const buf = await page.screenshot({ fullPage: opts.fullPage ?? false });
 
+    this.nonModal = await this.nonModalDialogs(page, ariaSnapshot);
     this.refMap.clear();
-    for (const el of parseAriaSnapshot(ariaSnapshot)) {
-      this.refMap.set(el.ref, { role: el.role, name: el.name });
+    for (const el of parseAriaSnapshot(ariaSnapshot, { nonModal: this.nonModal })) {
+      this.refMap.set(el.ref, { role: el.role, name: el.name, ...(el.scope ? { scope: el.scope } : {}), ...(el.underOverlay ? { underOverlay: true as const } : {}), ...(el.context ? { context: el.context } : {}) });
     }
 
     return {
@@ -259,11 +383,37 @@ export class PlaywrightLibBackend implements BrowserBackend {
       ariaSnapshot,
       capturedBy: "lib",
       consoleErrors: [...this.consoleErrors],
+      nonModal: [...this.nonModal],
       ...(status !== undefined ? { status } : {}),
     };
   }
 
+  /**
+   * #225: which dialogs of the snapshot are not modal. The ARIA snapshot does not say: the DOM does (`aria-modal`, or
+   * a native `<dialog>` opened with showModal()). A page whose DOM cannot be read keeps every dialog modal.
+   */
+  private async nonModalDialogs(page: Page, aria: string): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const el of parseAriaSnapshot(aria)) {
+      if (el.role !== "dialog" && el.role !== "alertdialog") continue;
+      const loc = locate(page, { role: el.role, name: el.name }).first();
+      const modal = await loc
+        .evaluate(
+          (node: unknown) => {
+            const n = node as { matches(s: string): boolean; getAttribute(a: string): string | null };
+            return n.getAttribute("aria-modal") === "true" || n.matches(":modal") || n.getAttribute("role") === "alertdialog";
+          },
+          undefined,
+          { timeout: 1_000 },
+        )
+        .catch(() => true);
+      if (!modal) out.add(overlayKey(el.role, el.name));
+    }
+    return out;
+  }
+
   async act(action: Action): Promise<ActResult> {
+    if (this.pressing) return this.pressing.act(action);
     this.acting = true;
     try {
       const page = await this.ensurePage();
@@ -272,17 +422,48 @@ export class PlaywrightLibBackend implements BrowserBackend {
         this.currentUrl = action.url;
         return { ok: true };
       }
+      if (action.kind === "press") {
+        this.lastPressed = { role: "key", name: action.key };
+        await page.keyboard.press(action.key);
+        return { ok: true };
+      }
+      if (action.kind === "click-outside") {
+        const point = await this.safePointOutside(page, action.scope);
+        if (!point) return { ok: false, error: "no point outside the overlay that is safe to click; click outside not tried" };
+        this.lastPressed = { role: "click-outside", ...(action.scope.name !== undefined ? { name: action.scope.name } : {}) };
+        await page.mouse.click(point.x, point.y);
+        return { ok: true };
+      }
       const target = this.refMap.get(action.ref);
       if (!target) {
         return { ok: false, ref: action.ref, error: `Unknown ref '${action.ref}' — call observe() first.` };
       }
-      const locator = page
-        .getByRole(target.role as PwRole, target.name ? { name: target.name, exact: true } : {})
-        .first();
+      if (target.underOverlay) {
+        // #225: a modal overlay is open and this element lies under it: never touched, the click would only time out.
+        return {
+          ok: false,
+          ref: action.ref,
+          error: `${target.role}${target.name ? ` "${target.name}"` : ""} lies under an open modal overlay; close it first.`,
+          outcome: "under-overlay",
+        };
+      }
+      const found = await findOne(page, target);
+      if (found.ambiguous) {
+        // #226: several visible elements and nothing tells them apart: no click at all rather than a blind first one.
+        return {
+          ok: false,
+          ref: action.ref,
+          error: `${found.count} visible ${target.role}${target.name ? ` "${target.name}"` : ""} elements and nothing tells them apart (no named row, card or section); not clicked.`,
+          outcome: "ambiguous",
+          ambiguous: { role: target.role, ...(target.name !== undefined ? { name: target.name } : {}), count: found.count, ...(target.scope ? { scope: target.scope } : {}) },
+        };
+      }
+      const locator = found.locator;
       if (action.kind === "fill") {
         await locator.fill(action.value);
         return { ok: true, ref: action.ref };
       }
+      this.lastPressed = { role: target.role, ...(target.name !== undefined ? { name: target.name } : {}) };
       if (action.watch === false) {
         await locator.click(action.timeoutMs === undefined ? undefined : { timeout: action.timeoutMs });
         return { ok: true, ref: action.ref };
@@ -300,12 +481,58 @@ export class PlaywrightLibBackend implements BrowserBackend {
     }
   }
 
+  /**
+   * #225 review: a point to click "outside" the overlay `scope`. A blind corner click pressed a fixed «Sign out» link,
+   * so each candidate point is checked first: what `elementFromPoint` finds there must lie outside the overlay and be
+   * nothing a click acts on — no link, button, field, label, summary, element with a click role, a tabindex, an inline
+   * handler, or a pointer cursor. Corners first, then the edges, then a grid; undefined when none is safe.
+   */
+  private async safePointOutside(page: Page, scope: OverlayScope): Promise<{ x: number; y: number } | undefined> {
+    const overlay = locate(page, scope).first();
+    const point = await overlay
+      .evaluate(
+        (node: unknown) => {
+          type El = { contains(o: unknown): boolean; closest(s: string): unknown; parentElement: El | null };
+          const doc = (globalThis as unknown as { document: { elementFromPoint(x: number, y: number): El | null } }).document;
+          const win = globalThis as unknown as { innerWidth: number; innerHeight: number; getComputedStyle(e: unknown): { cursor: string } };
+          const overlayEl = node as El;
+          const ACTS =
+            "a[href],button,input,select,textarea,label,summary,option,[contenteditable=''],[contenteditable='true'],[onclick],[tabindex]:not([tabindex='-1'])," +
+            ["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio", "option", "treeitem", "gridcell", "combobox", "textbox", "slider", "spinbutton", "searchbox"]
+              .map((r) => `[role='${r}']`)
+              .join(",");
+          const w = win.innerWidth;
+          const h = win.innerHeight;
+          const xs = [2, w - 3, Math.round(w / 2)];
+          const ys = [2, h - 3, Math.round(h / 2)];
+          const points: [number, number][] = [];
+          for (const y of [ys[0]!, ys[1]!]) for (const x of [xs[0]!, xs[1]!]) points.push([x, y]);
+          for (const [x, y] of [[xs[2]!, ys[0]!], [xs[2]!, ys[1]!], [xs[0]!, ys[2]!], [xs[1]!, ys[2]!]] as [number, number][]) points.push([x, y]);
+          for (let gy = 1; gy < 8; gy++) for (let gx = 1; gx < 8; gx++) points.push([Math.round((w * gx) / 8), Math.round((h * gy) / 8)]);
+          for (const [x, y] of points) {
+            const el = doc.elementFromPoint(x, y);
+            if (!el || overlayEl.contains(el) || el.closest(ACTS)) continue;
+            let pointer = false;
+            for (let e: El | null = el; e && !pointer; e = e.parentElement) {
+              if (e === overlayEl) break;
+              pointer = win.getComputedStyle(e).cursor === "pointer";
+            }
+            if (!pointer) return { x, y };
+          }
+          return null;
+        },
+        undefined,
+        { timeout: STATE_READ_TIMEOUT_MS },
+      )
+      .catch(() => null);
+    return point ?? undefined;
+  }
+
   /** #224: nothing matched the element — it is still there, hidden (not-visible), or it is gone (not-found). */
   private async hiddenOrGone(ref: string): Promise<ClickFailure> {
     const target = this.refMap.get(ref);
     if (!target || !this.page) return "not-found";
-    const hidden = await this.page
-      .getByRole(target.role as PwRole, { ...(target.name ? { name: target.name, exact: true } : {}), includeHidden: true })
+    const hidden = await locate(this.page, target, true)
       .count()
       .catch(() => 0);
     return hidden > 0 ? "not-visible" : "not-found";
@@ -334,7 +561,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
    * ARIA snapshot again only when the DOM changed. A click that looks dead is read again until DEAD_CLICK_RECHECK_MS.
    * Only the click itself can throw: once it is made, a read that fails makes the outcome unknown, not a failure.
    */
-  private async clickAndWatch(page: Page, locator: Locator, target: { role: string; name?: string }, timeoutMs?: number): Promise<ClickEffect> {
+  private async clickAndWatch(page: Page, locator: Locator, target: Target, timeoutMs?: number): Promise<ClickEffect> {
     const from = page.url();
     const before = this.lastAria;
     const watched = await this.installWatch(page, locator);
@@ -452,27 +679,35 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async verify(elements: ElementRef[]): Promise<VerifiedElement[]> {
+    if (this.pressing) return this.pressing.verify(elements);
     const page = await this.ensurePage();
     const out: VerifiedElement[] = [];
     for (const el of elements) {
       let count = -1;
       try {
-        count = await page
-          .getByRole(el.role as PwRole, el.name ? { name: el.name, exact: true } : {})
-          .count();
+        const found = await findOne(page, el);
+        out.push({
+          ...el,
+          count: found.count,
+          verified: found.count === 1 || found.narrowedBy !== undefined,
+          ...(found.narrowedBy ? { narrowedBy: found.narrowedBy } : {}),
+          ...(found.ambiguous ? { ambiguous: true as const } : {}),
+        });
+        continue;
       } catch {
         count = -1;
       }
-      out.push({ ...el, count, verified: count === 1 });
+      out.push({ ...el, count, verified: false });
     }
     return out;
   }
 
   async getState(el: ElementRef): Promise<ElementState> {
+    if (this.pressing) return this.pressing.getState(el);
     const page = await this.ensurePage();
-    const loc = page
-      .getByRole(el.role as PwRole, el.name ? { name: el.name, exact: true } : {})
-      .first();
+    const found = await findOne(page, el);
+    if (found.ambiguous) return { visible: false, enabled: false }; // not told apart: nothing is read from a blind first one
+    const loc = found.locator;
     const visible = await loc.isVisible().catch(() => false);
     // #213: an element of another view (exploreStates) is not on the page, and isEnabled/isChecked wait for it
     // with Playwright's 30 s default - per element, minutes for a page of views. A hidden element is not read.
@@ -485,7 +720,122 @@ export class PlaywrightLibBackend implements BrowserBackend {
         checked = undefined; // not checkable, or gone since isVisible
       }
     }
-    return { visible, enabled, checked };
+    // #225 review: what the element says it opens; only such an element is pressed to look for an overlay.
+    // #225 review 2: and whether pressing it submits a form (a submit button inside a form), which is never pressed.
+    const read = visible
+      ? await loc
+          .evaluate(
+            (node: unknown) => {
+              const n = node as { getAttribute(a: string): string | null; tagName: string; type?: string; form?: unknown };
+              const hasPopup = n.getAttribute("aria-haspopup");
+              const expanded = n.getAttribute("aria-expanded");
+              const controls = n.getAttribute("aria-controls");
+              const tag = n.tagName.toLowerCase();
+              // `type` is the property: a <button> with no (or an unknown) type attribute reads "submit".
+              const submitter = (tag === "button" && n.type === "submit") || (tag === "input" && (n.type === "submit" || n.type === "image"));
+              return {
+                popup: {
+                  ...(hasPopup !== null && hasPopup !== "false" ? { hasPopup: hasPopup || "true" } : {}),
+                  ...(expanded === "true" || expanded === "false" ? { expanded: expanded === "true" } : {}),
+                  ...(controls ? { controls } : {}),
+                },
+                submitsForm: submitter && !!n.form,
+              };
+            },
+            undefined,
+            { timeout: STATE_READ_TIMEOUT_MS },
+          )
+          .catch(() => undefined)
+      : undefined;
+    const popup = read?.popup;
+    return {
+      visible,
+      enabled,
+      checked,
+      ...(popup && Object.keys(popup).length > 0 ? { popup } : {}),
+      ...(read?.submitsForm ? { submitsForm: true as const } : {}),
+    };
+  }
+
+  /**
+   * #225 review 4: the write guard has no release moment. Pressing happens in a throwaway browser process, in a context
+   * made from the crawler's storage with the same options. Before that context exists, a Fetch interception on the
+   * browser itself is on, and it is never taken off: every request whose method is not GET, HEAD or OPTIONS — from a
+   * page, a tab it opens, a frame, any worker — is aborted (a form post, a fetch or XHR write, a beacon, whatever the
+   * button that sent it was called) and recorded with the element pressed last before it. `release` kills the process.
+   * Nothing flows back: the crawler's own context and page never saw a press.
+   *
+   * Why not a route on a context, closed at the end: a route's interception belongs to each page, frame and worker, and
+   * goes when they go. What it holds is then let go: POSTs reached a probe server with the route on from a popup closing
+   * itself, a cross-origin frame removed, a context closing (in full Chromium and Chrome), and also from a SharedWorker
+   * and fetchLater, which it never saw. The browser's own interception saw them all, and a killed process runs no teardown.
+   * Not covered: WebSocket messages, a GET that changes the server against HTTP's rule, and one POST the app has no hand in:
+   * on a configured channel (full Chromium) over HTTPS, the browser's own Reporting API report (`Reporting-Endpoints` and
+   * a CSP `report-to`) reaches the server and is not in `blocked`. It stays on: `--disable-features` would replace the list
+   * Playwright passes there itself, and that list is no public API. Network Error Logging was not checked.
+   */
+  async guardWrites(): Promise<WriteGuard> {
+    if (this.pressing) throw new Error("The write guard is already on.");
+    const page = await this.ensurePage();
+    // A plain storageState leaves out IndexedDB and the tab's sessionStorage, where an app may keep its session.
+    // ponytail: IndexedDB is copied whole, however large; sessionStorage only of the origin the crawler's page is on.
+    const state = await within<PwStorageState | undefined>(this.context!.storageState({ indexedDB: true }), SESSION_READ_TIMEOUT_MS, undefined);
+    if (!state) throw guardFailure("SESSION_READ_FAILED");
+    const tab = await within<{ origin: string; items: [string, string][] } | undefined>(page.evaluate(readTabStorage), STATE_READ_TIMEOUT_MS, undefined);
+    const server = await chromium.launchServer(this.launchOptions(`${BLINK_OFF},${SENDS_PAST_FETCH}`)).catch(() => {
+      throw guardFailure("BROWSER_START_FAILED");
+    });
+    const pressing = new PlaywrightLibBackend(this.opts);
+    pressing.server = server;
+    const blocked: BlockedRequest[] = [];
+    let step: GuardFailure = "BROWSER_START_FAILED";
+    try {
+      pressing.browser = await chromium.connect(server.wsEndpoint());
+      const cdp = await pressing.browser.newBrowserCDPSession();
+      cdp.on("Fetch.requestPaused", ({ requestId, request }) => {
+        const method = request.method.toUpperCase();
+        if (SAFE_METHODS.has(method)) {
+          void cdp.send("Fetch.continueRequest", { requestId }).catch(() => undefined);
+          return;
+        }
+        const path = pressing.blockedPath(request.url);
+        const pressed = pressing.lastPressed;
+        const same = blocked.find((b) => b.method === method && b.path === path && b.pressed?.role === pressed?.role && b.pressed?.name === pressed?.name);
+        if (same) same.count++;
+        else blocked.push({ method, path, ...(pressed ? { pressed: { ...pressed } } : {}), count: 1 });
+        // "Aborted" (net::ERR_ABORTED): a stopped form post leaves the page where it was, with no error page over it
+        void cdp.send("Fetch.failRequest", { requestId, errorReason: "Aborted" }).catch(() => undefined);
+      });
+      await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+      step = "SESSION_RESTORE_FAILED";
+      pressing.context = await pressing.newContext(state);
+      if (tab) await pressing.context.addInitScript(seedTabStorage, tab);
+    } catch {
+      await server.kill().catch(() => undefined);
+      throw guardFailure(step);
+    }
+    this.pressing = pressing;
+    return {
+      release: async () => {
+        if (this.pressing === pressing) await this.discardPressing();
+        return blocked.map((b) => ({ ...b }));
+      },
+    };
+  }
+
+  private async discardPressing(): Promise<void> {
+    await this.pressing?.server?.kill().catch(() => undefined);
+    this.pressing = undefined;
+  }
+
+  /** A stopped request's path, written like a recorded one; with its origin when that is not the page's. */
+  private blockedPath(url: string): string {
+    try {
+      const own = this.page ? new URL(this.page.url()).origin : undefined;
+      return new URL(url).origin === own ? recordedPath(url) : recordedUrl(url);
+    } catch {
+      return recordedUrl(url);
+    }
   }
 
   session(): SessionApi {
@@ -495,10 +845,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
         await this.context?.close().catch(() => undefined);
         this.page = undefined;
         this.browser ??= await this.launch();
-        this.context = await this.browser.newContext({
-          storageState: state as unknown as PwStorageState,
-          ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
-        });
+        this.context = await this.newContext(state as unknown as PwStorageState);
         this.page = await this.context.newPage();
       },
       save: async (): Promise<StorageState> => {
@@ -515,6 +862,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async close(): Promise<void> {
+    await this.discardPressing();
     await this.page?.close().catch(() => undefined);
     await this.context?.close().catch(() => undefined);
     await this.browser?.close().catch(() => undefined);

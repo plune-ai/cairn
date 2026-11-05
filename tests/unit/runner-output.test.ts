@@ -32,6 +32,25 @@ describe("resultsFromRunnerOutput — surfaces a missing browser instead of a fa
     expect(() => resultsFromRunnerOutput(MISSING_BROWSER_STDERR, "")).toThrow(/cairn install-browsers/);
   });
 
+  it("on CI the report's metadata holds the pull request's title and diff: their words are no missing browser", () => {
+    const report = JSON.stringify({
+      config: { metadata: { ci: { prTitle: "chore: npx playwright install in the workflow" }, gitDiff: MISSING_BROWSER_STDERR } },
+      ...JSON.parse(REPORTER_JSON),
+      errors: [],
+    });
+    expect(resultsFromRunnerOutput(report, "")).toEqual([
+      { title: "loads", status: "passed" },
+      { title: "submits", status: "failed" },
+    ]);
+  });
+
+  it("a browser really missing still throws, said by a test's error, the report's own errors or text before the report", () => {
+    const failed = { suites: [{ specs: [{ title: "t", tests: [{ results: [{ status: "failed", error: { message: MISSING_BROWSER_STDERR } }] }] }] }] };
+    expect(() => resultsFromRunnerOutput(JSON.stringify(failed), "")).toThrow(/cairn install-browsers/);
+    expect(() => resultsFromRunnerOutput(JSON.stringify({ errors: [{ message: MISSING_BROWSER_STDERR }], suites: [] }), "")).toThrow(/cairn install-browsers/);
+    expect(() => resultsFromRunnerOutput(`${MISSING_BROWSER_STDERR}\n${REPORTER_JSON}`, "")).toThrow(/cairn install-browsers/);
+  });
+
   it("parses real pass/fail results when the run actually executed (non-zero exit is normal)", () => {
     const out = resultsFromRunnerOutput(REPORTER_JSON, "");
     expect(out).toEqual([
