@@ -31,6 +31,10 @@ const file = (patch: Record<string, unknown> = {}, check: Record<string, unknown
   });
 
 describe("parseTwoActorFile (#233)", () => {
+  it("names a file that is not JSON and repeats none of its text (#250)", () => {
+    expect(() => parseTwoActorFile('{"actors":{"owner":{"headers":{"X-Api-Key":S3CRET-q7}}}}', flows, "actors.json")).toThrow(/^actors\.json is not valid JSON\.$/);
+  });
+
   it("fills the defaults: a peer, every probe, two neighbours, PATCH {}", () => {
     const f = parseTwoActorFile(file(), flows);
     expect(f.actors.other.role).toBe("peer");

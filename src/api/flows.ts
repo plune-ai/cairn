@@ -11,7 +11,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
-import { READ_ONLY_METHODS, SENSITIVE } from "./guard.js";
+import { collectSecrets, READ_ONLY_METHODS, SENSITIVE } from "./guard.js";
 import type { ApiCase } from "./cases.js";
 import type { GeneratedSuite } from "../codegen/schema.js";
 import type { ApiScenario } from "./scenarios.js";
@@ -114,6 +114,17 @@ export function templateNames(value: unknown): string[] {
   return [];
 }
 
+/**
+ * #250: what a run's output must not repeat: the value of every `{{env.NAME}}` the file names, as written and as it goes
+ * on the wire (encoded in a path, a query or a form, escaped in a JSON body). What is worth masking is decided as for a
+ * credential header's value: too short or too common a value would mangle the text, and is left alone.
+ */
+export function flowEnvSecrets(file: ApiFlowFile, env: Record<string, string | undefined> = process.env): string[] {
+  const values = templateNames(file).flatMap((n) => (n.startsWith("env.") ? (env[n.slice(4)] ?? []) : []));
+  const forms = (s: string): string[] => [s, new URLSearchParams({ s }).toString().slice(2), JSON.stringify(s).slice(1, -1)];
+  return [...new Set(values.flatMap((v) => collectSecrets({ Authorization: v }).flatMap(forms)))];
+}
+
 /** Body / form / query fields that hold a literal secret, as `key` paths. */
 function literalSecrets(value: unknown, at = ""): string[] {
   if (Array.isArray(value)) return value.flatMap((v, i) => literalSecrets(v, `${at}[${i}]`));
@@ -213,8 +224,9 @@ export function parseApiFlows(text: string, source = "the API flow file"): ApiFl
   let raw: unknown;
   try {
     raw = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`${source} is not valid JSON: ${(e as Error).message}`);
+  } catch {
+    // The parser quotes the text around the error, and nothing has checked yet that this text holds no secret.
+    throw new Error(`${source} is not valid JSON.`);
   }
   const parsed = FlowFileSchema.safeParse(raw);
   const problems = parsed.success
@@ -405,8 +417,9 @@ function fill(value: unknown, vars: Vars, encode = false): unknown {
       if (v === undefined) {
         throw new Error(key.startsWith('env.') ? 'API flow: the environment variable ' + key.slice(4) + ' is not set' : 'API flow: no value for {{' + key + '}}');
       }
-      // In a path a value is one segment: never an empty one, never '.' or '..', never two.
-      if (encode && badSegment(v)) throw new Error('API flow: {{' + key + '}} is ' + JSON.stringify(v) + ', which cannot stand in the path ' + value);
+      // In a path a value is one segment: never an empty one, never '.' or '..', never two. The value may be a secret,
+      // or anything the server answered: name it, never print it.
+      if (encode && badSegment(v)) throw new Error('API flow: {{' + key + '}} is a value, which cannot stand in the path ' + value);
       return encode ? encodeURIComponent(v) : v;
     });
   }
@@ -435,6 +448,16 @@ function at(body: unknown, pointer: string): unknown {
 
 const pick = (vars: Vars, names: string[]): Vars => Object.fromEntries(names.map((n) => [n, vars[n]!]));
 
+/**
+ * Why a request got no answer: a fixed word, or a system code read from the first line of Playwright's error. Its text
+ * is never repeated: the call log in it holds the full URL and every header, with the values read from the environment.
+ */
+function whyNoAnswer(e: unknown): string {
+  const first = String((e as Error | null)?.message).split('\n')[0]!;
+  if (/\bTimeout \d+ms exceeded/.test(first)) return 'timeout';
+  return /\bE[A-Z0-9_]{2,40}\b/.exec(first)?.[0] ?? 'network error';
+}
+
 async function runStep(ctx: APIRequestContext, base: string, flow: string, step: Step, vars: Vars): Promise<void> {
   const label = 'API flow "' + flow + '" step "' + (step.name ?? step.method + ' ' + step.path) + '"';
   const options: NonNullable<Parameters<APIRequestContext['fetch']>[1]> = {
@@ -445,7 +468,9 @@ async function runStep(ctx: APIRequestContext, base: string, flow: string, step:
   if (step.query) options.params = fill(step.query, vars) as Record<string, string>;
   if (step.body !== undefined) options.data = fill(step.body, vars);
   if (step.form) options.form = fill(step.form, vars) as Record<string, string>;
-  const res = await ctx.fetch(base + (fill(step.path, vars, true) as string), options);
+  const res = await ctx.fetch(base + (fill(step.path, vars, true) as string), options).catch((e: unknown): never => {
+    throw new Error(label + ' got no answer: ' + whyNoAnswer(e));
+  });
   const want = step.expect === undefined ? undefined : ([] as number[]).concat(step.expect);
   const ok = want ? want.includes(res.status()) : res.status() >= 200 && res.status() < 400;
   if (!ok) throw new Error(label + ' answered ' + res.status() + ' (want ' + (want ? want.join(' or ') : '2xx or 3xx') + ')');

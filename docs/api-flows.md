@@ -117,6 +117,17 @@ session from the sign-in flow or from `use.storageState` in the config reaches t
 The API address, in this order: `API_BASE_URL` in the environment, `--base-url` (written into the module), the
 file's `baseUrl`, then `use.baseURL` from the Playwright config.
 
+The fixture's errors hold no value from the environment or from an answer: they name the step and the template as the
+file wrote it (`{{env.SEG}} is a value, which cannot stand in the path /api/{{env.SEG}}`), and a request that got no
+answer says only why (`got no answer: ECONNREFUSED`, a timeout, or a network error). That also leaves out Playwright's
+call log, which holds the full URL and every header; to see it, run the tests with `DEBUG=pw:api`. A trace, if your
+Playwright config records one, does keep every request's headers.
+
+That covers the fixture's own requests. A request the test sends itself still fails with Playwright's call log, and
+Playwright writes that log to disk whole, `Authorization` and `set-cookie` included:
+`test-results/<test>/error-context.md`, beside the nearest `package.json` (with `--screencast`, under
+`runs/<id>/screencasts/`, beside the video). Keep that folder out of anything you publish, such as a CI artifact.
+
 ## Flows that change data need an explicit flag
 
 The same read-only default as `cairn api --base-url` (#196): a data flow with a `POST`, `PUT`, `PATCH` or `DELETE`
@@ -145,6 +156,9 @@ cairn automate --run runs/<id> --flows flows.json [--allow-mutations] [--validat
   `api-flows.fixture.ts` beside the specs (`runs/<id>/tests/`, or the project's `testDir` with `--into-project`),
   replacing any file of that name the model wrote. The API address written into it is the file's `baseUrl`, else the
   origin of the run's URL; `--allow-mutations` allows that address for flows that change data. Without it, the specs
-  that use such a flow are skipped during `--validate`. `--flows` does nothing on an API run.
+  that use such a flow are skipped during `--validate`. `--flows` does nothing on an API run. During `--validate`, the
+  value of every `{{env.NAME}}` the file names is masked in the failure texts (the repair hint, the triage, the report)
+  and the progress lines, raw and URL-encoded, if it has four characters or more and is not a word as common as `true`;
+  and a run with flows keeps no trace beside its `--screencast` video.
 
 Without `--flows`, `design` and `automate` send the same prompts as before.

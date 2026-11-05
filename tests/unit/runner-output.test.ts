@@ -98,6 +98,97 @@ describe("resultsFromRunnerOutput — every error, once, without its code frame"
       suites: [{ specs: [{ title: "TC-1", tests: [{ results: [{ status, error: { message: error }, errors: errors.map((message) => ({ message })) }] }] }] }],
     });
 
+  describe("a request's call log holds the full URL and every header: it stays out (#250)", () => {
+    const SECRET = "S3CRET-q7";
+    const requestLog =
+      `Call log:\n\u001b[2m  - → POST http://127.0.0.1:1/api/${SECRET}?k=${SECRET}\u001b[22m\n` +
+      `\u001b[2m    - Authorization: Bearer ${SECRET}\u001b[22m\n\u001b[2m    - content-length: 18\u001b[22m\n`;
+
+    it("a request that got no answer keeps its first line", () => {
+      // As Playwright 1.61 writes it.
+      const failed = `Error: apiRequestContext.fetch: connect ECONNREFUSED 127.0.0.1:1\n${requestLog}`;
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", failed, [`${failed}\n   at x.spec.ts:5\n\n  4 | y\n`]), "");
+      expect(r!.error).toBe("Error: apiRequestContext.fetch: connect ECONNREFUSED 127.0.0.1:1");
+    });
+
+    const dim = (line: string): string => `\u001b[2m${line}\u001b[22m\n`;
+    /** expect(response).toBeOK(), as Playwright 1.61 writes it: no `- ` before the log's lines. */
+    const notOk = (status: string, more = ""): string =>
+      "Error: \u001b[2mexpect(\u001b[22m\u001b[31mresponse\u001b[39m\u001b[2m).\u001b[22mtoBeOK\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\n\nCall log:\n" +
+      dim(`→ GET http://127.0.0.1:57622/denied/${SECRET}`) +
+      dim(`  Authorization: Bearer ${SECRET}`) +
+      more +
+      dim(status) +
+      dim("  content-type: text/plain") +
+      dim(`  set-cookie: sid=${SECRET}`) +
+      "\nResponse text:\n\u001b[2mno access\u001b[22m";
+    const opening = "Error: \u001b[2mexpect(\u001b[22m\u001b[31mresponse\u001b[39m\u001b[2m).\u001b[22mtoBeOK\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\n\n";
+    const closing = "\n\nResponse text:\n\u001b[2mno access\u001b[22m";
+
+    it("expect(response).toBeOK() keeps the status and what it says around the log, not the URL or a header", () => {
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", notOk("← 401 Unauthorized"), []), "");
+      expect(r!.error).toBe(`${opening}← 401 Unauthorized${closing}`);
+    });
+
+    it("a redirect it followed keeps each status, and no Location", () => {
+      const hop = dim("← 302 Found") + dim(`  location: /denied?k=${SECRET}`) + dim(`→ GET http://127.0.0.1:57622/denied?k=${SECRET}`) + dim(`  cookie: sid=${SECRET}`);
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", notOk("← 401 Unauthorized", hop), []), "");
+      expect(r!.error).toBe(`${opening}← 302 Found\n← 401 Unauthorized${closing}`);
+    });
+
+    it.each([
+      ["with a reason that is not plain words", `← 401 sid=${SECRET}`],
+      ["with no reason", "← 401"],
+    ])("a status %s keeps the code alone: the server wrote the reason", (_label, status) => {
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", notOk(status), []), "");
+      expect(r!.error).toBe(`${opening}← 401${closing}`);
+    });
+
+    /** A test that catches a failed request and repeats its text, as the runner reported each one. */
+    const carried: [string, string, string][] = [
+      [
+        "expect(e.message).toBe('x'): a diff, with colour codes as text",
+        "Error: expect(received).toBe(expected)\n\n\u001b[32m- x\u001b[39m\n\u001b[31m+ apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:1\u001b[39m\n\u001b[31m+ Call log:\u001b[39m\n" +
+          `\u001b[31m+ \\x1b[2m  - → GET http://127.0.0.1:1/api/${SECRET}\\x1b[22m\u001b[39m\n` +
+          `\u001b[31m+ \\x1b[2m    - Authorization: Bearer ${SECRET}\\x1b[22m\u001b[39m\n\u001b[31m+\u001b[39m`,
+        "Error: expect(received).toBe(expected)\n\n\u001b[32m- x\u001b[39m\n\u001b[31m+ apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:1\u001b[39m\n\u001b[31m+\u001b[39m",
+      ],
+      [
+        "expect(e.message).toContain('nope'): two colour codes before each line",
+        'Error: expect(received).toContain(expected)\n\nReceived string:    \u001b[31m"apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:1\u001b[39m\n\u001b[31mCall log:\u001b[39m\n' +
+          `\u001b[31m\u001b[2m  - → GET http://127.0.0.1:1/api/${SECRET}\u001b[22m\u001b[39m\n` +
+          `\u001b[31m\u001b[2m    - Authorization: Bearer ${SECRET}\u001b[22m\u001b[39m\n\u001b[31m"\u001b[39m`,
+        'Error: expect(received).toContain(expected)\n\nReceived string:    \u001b[31m"apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:1\u001b[39m\n\u001b[31m"\u001b[39m',
+      ],
+      [
+        "the text indented",
+        `Error: Failed:\n    apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:1\n    Call log:\n    \u001b[2m  - → GET http://127.0.0.1:1/api/${SECRET}\u001b[22m\n    \u001b[2m    - Authorization: Bearer ${SECRET}\u001b[22m\n    `,
+        "Error: Failed:\n    apiRequestContext.get: connect ECONNREFUSED 127.0.0.1:1",
+      ],
+      [
+        "the log with its heading cut off",
+        `Error: Failed:\n\n\u001b[2m  - → GET http://127.0.0.1:1/api/${SECRET}\u001b[22m\n\u001b[2m    - Authorization: Bearer ${SECRET}\u001b[22m\n`,
+        "Error: Failed:",
+      ],
+    ];
+    it.each(carried)("a test's own text keeps no request log: %s", (_label, message, kept) => {
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", message, []), "");
+      expect(r!.error).toBe(kept);
+    });
+
+    it("an arrow that is no request log stays: in a locator's name, or in a test's own words", () => {
+      const message = "Error: locator.click: Timeout 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: '→ GET it' })\u001b[22m\n\nExpected: → Next step\n← Back";
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", message, []), "");
+      expect(r!.error).toBe(message);
+    });
+
+    it("a locator's call log stays: it names the locator, and what the failure was", () => {
+      const message = "Error: locator.click: Timeout 2000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('button', { name: 'Save' })\u001b[22m\n\u001b[2m  - <div></div> intercepts pointer events\u001b[22m\n";
+      const [r] = resultsFromRunnerOutput(reporterJson("failed", message, []), "");
+      expect(r!.error).toBe(message.trim());
+    });
+  });
+
   it("a test timeout keeps the action's error too — its call log names the locator", () => {
     // A click on a locator that never appears: the test's timeout fires first and becomes `error`; the action's own
     // error, with the call log, is the second entry of `errors`.
@@ -136,7 +227,7 @@ describe("resultsFromRunnerOutput — every error, once, without its code frame"
   });
 
   it("a hostile error text costs linear time — no backtracking on a run of newlines or spaces", () => {
-    const hostile = ["x\n" + " ".repeat(80_000) + "x", "x\n  at " + "a:".repeat(40_000)];
+    const hostile = ["x\n" + " ".repeat(80_000) + "x", "x\n  at " + "a:".repeat(40_000), "→ GET x\n" + "-".repeat(80_000) + "x", "→ GET x\n" + "a".repeat(80_000), "→ GET x\n" + " ".repeat(80_000) + "→"];
     // The newlines escalate. A cubic pattern fails on 5 000 within seconds, before 50 000 could run for hours. A
     // quadratic one (a single `\s*`) passes 5 000 in 10 ms and fails on 50 000 at about a second.
     for (const newlines of [5_000, 50_000]) {

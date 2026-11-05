@@ -53,7 +53,7 @@ import type { PageStudy } from "../observe/index.js";
 import type { PageAnalysis } from "../analyze/index.js";
 import type { TestCase } from "../design/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
-import { FLOW_FIXTURE_FILE, formatFlowsForPrompt, renderFlowFixture, withFlowFixture, type ApiFlowFile } from "../api/flows.js";
+import { FLOW_FIXTURE_FILE, flowEnvSecrets, formatFlowsForPrompt, renderFlowFixture, withFlowFixture, type ApiFlowFile } from "../api/flows.js";
 
 export { runExploreGraph } from "./graph.js";
 export type { ExploreDeps, ExploreOutcome } from "./graph.js";
@@ -1158,10 +1158,13 @@ export async function runAutomate(input: {
     };
 
     let sessionPath: string | undefined;
+    const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
     if (input.sessionFile) sessionPath = resolve(input.sessionFile);
-    else if (input.sessionName) {
-      sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
-    }
+    else if (input.sessionName) sessionPath = sessionStore.pathFor(input.sessionName);
+    // #250: the run only passes this path on. Playwright reads the file in every test and its parse error quotes it, so
+    // an unread bad file would become every test's failure text, and the repair hint. It stops here, in one fixed line.
+    if (input.validate && input.sessionFile) await sessionStore.loadFile(resolve(input.sessionFile));
+    else if (input.validate && input.sessionName) await sessionStore.load(input.sessionName);
 
     // Environment for the validation run: Basic Auth for the context, the post-login session for use.storageState.
     const envRun = input.validate ? await startEnvironment(input, cfg, onProgress) : undefined;
@@ -1169,6 +1172,9 @@ export async function runAutomate(input: {
       envSecrets = envRun.applied.secrets;
       if (envRun.sessionPath) sessionPath = envRun.sessionPath;
     }
+    // #250: the fixture reads these from the environment while a test runs, so a failure's text can repeat them, and
+    // that text goes into the repair hint, the triage, the report and the progress lines.
+    if (flows) envSecrets = [...envSecrets, ...flowEnvSecrets(flows)];
 
     if (input.validate) {
       // Onboarding guardrail: validation runs the generated suite → fail fast with a copy-paste fix
@@ -1181,7 +1187,7 @@ export async function runAutomate(input: {
         ? lazyGateway(async () =>
             makeGateway({
               backend: "lib",
-              storageState: sessionPath ? await new SessionStore(resolve(input.sessionsDir ?? ".auth")).loadFile(sessionPath) : undefined,
+              storageState: sessionPath ? await sessionStore.loadFile(sessionPath) : undefined,
               channel: cfg.browser.channel,
               httpCredentials: envRun?.applied.httpCredentials,
             }),
@@ -1205,7 +1211,8 @@ export async function runAutomate(input: {
                 workers: cfg.playwrightWorkers,
                 screencast: input.screencast,
                 httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
-                secretsInRun: envSecrets.length > 0 || input.mailbox !== undefined,
+                // A flow's requests carry its secrets and whatever it captured: a trace would keep every header.
+                secretsInRun: envSecrets.length > 0 || input.mailbox !== undefined || flows !== undefined,
               }),
               [...envSecrets, ...(input.mailbox?.secrets ?? [])],
             ),

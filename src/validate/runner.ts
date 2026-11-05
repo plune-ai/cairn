@@ -46,7 +46,7 @@ export function configContent(
   // landing under <screencastDir> (the JSON reporter then carries the path + steps → chapter sidecar).
   // #210: a trace beside each video - its steps and frames give the chapters their exact offsets (#214).
   // Playwright writes the context options (Basic Auth in the clear), every request's headers and cookies and every
-  // typed value into it, so a run with a session, Basic Auth, environment secrets or a mailbox keeps the video alone.
+  // typed value into it, so a run with a session, Basic Auth, environment secrets, a mailbox or API flows keeps the video alone.
   if (screencastDir) parts.push(`video: 'on'`);
   if (screencastDir && !storageStatePath && !httpCredentialsEnv && !secretsInRun) parts.push(`trace: 'on'`);
   // Basic Auth: the generated config only NAMES the variables; the runner process reads the values from its own
@@ -222,6 +222,47 @@ function withoutFrame(message: string | undefined): string | undefined {
   return message?.split(FRAME)[0]?.trim();
 }
 
+/** A colour code, real or as a test's own text printed it (`\x1b[2m` inside a diff). */
+const COLOUR = /(?:\u001b|\\x1b|\\u001b)\[[0-9;]*m/g;
+/** What may stand before a line of a call log: Playwright's `- `, a diff's `+ `, an indent, a test's own quote. */
+const LINE_PREFIX = /^[\s+\-|>"]*/;
+/** A line as written, without colour codes and that prefix. */
+const lineText = (line: string): string => line.replace(COLOUR, "").replace(LINE_PREFIX, "").trimEnd();
+
+const REQUEST_SENT = /^→ [A-Z]+ /;
+const REQUEST_ANSWERED = /^← (\d{3})(?: (.*))?$/;
+/** A header in a request's log. Only right after `→` or `←`: elsewhere `name: value` is just text. */
+const LOGGED_HEADER = /^:?[!#$%&'*+.^_`|~0-9A-Za-z-]+:(?: |$)/;
+/** A status's reason as a server may write it: the server chooses this text, so anything else is left out. */
+const PLAIN_REASON = /^[A-Za-z][A-Za-z '-]{0,60}$/;
+
+/**
+ * #250: an error without a request's log. Playwright writes `→ POST <url>` and `← 401 Unauthorized`, each with its
+ * headers, into the error of a failed request and of `expect(response).toBeOK()`; they hold tokens and cookies, which
+ * must not reach an LLM or a report. Of the log only each status stays, which is what repair needs to know. The lines
+ * are found by what they are, wherever they stand: a test may carry the text on in a diff, indented, or cut from its
+ * heading. On a single line (`JSON.stringify(e.message)`) they are not found. A locator's call log stays whole: it
+ * names the locator that failed and what stopped it.
+ */
+function withoutRequestLog(message: string | undefined): string | undefined {
+  if (!message?.includes("→") && !message?.includes("←")) return message;
+  const kept: string[] = [];
+  let inRequestLog = false;
+  for (const line of message.split("\n")) {
+    const text = lineText(line);
+    const answered = REQUEST_ANSWERED.exec(text);
+    if (answered || REQUEST_SENT.test(text)) {
+      if (lineText(kept.at(-1) ?? "") === "Call log:") kept.pop();
+      if (answered) kept.push(`← ${answered[1]}${PLAIN_REASON.test(answered[2] ?? "") ? ` ${answered[2]}` : ""}`);
+      inRequestLog = true;
+    } else if (!inRequestLog || !LOGGED_HEADER.test(text)) {
+      inRequestLog = false;
+      kept.push(line);
+    }
+  }
+  return kept.join("\n").trim();
+}
+
 function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
@@ -231,7 +272,7 @@ function extract(json: PwJson): RawTestResult[] {
       // Every error, once each: on a test timeout `error` is the timeout alone, and the action's own error — the call
       // log that names the locator — is a later entry of `errors`. Those entries come formatted (message, code
       // frame, `at <absolute path>`); without the frame, `errors[0]` is `error` again.
-      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map(withoutFrame);
+      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map((m) => withoutRequestLog(withoutFrame(m)));
       const error = [...new Set(messages.filter(Boolean))].join("\n\n");
       out.push({ title: spec.title, status, ...(error ? { error } : {}) });
     }

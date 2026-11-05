@@ -1,16 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import ts from "typescript";
 import { ingestOpenApi } from "../../src/api/openapi.js";
 import { generateApiScenarios } from "../../src/api/scenarios.js";
 import {
   parseApiFlows,
   flowChangesData,
+  flowEnvSecrets,
   flowsFromScenarios,
   mergeApiFlows,
   renderFlowFixture,
   formatFlowsForPrompt,
   FLOW_FIXTURE_FILE,
+  type ApiFlowFile,
 } from "../../src/api/flows.js";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "api");
@@ -224,6 +227,112 @@ describe("renderFlowFixture — the Playwright fixture (#230)", () => {
     expect(renderFlowFixture(noBase, { baseUrl: "http://localhost:9000" })).toContain(
       'const DEFAULT_BASE_URL: string | undefined = "http://localhost:9000";',
     );
+  });
+});
+
+/**
+ * The written fixture module as it runs: transpiled, with a stand-in for `@playwright/test` and for the request
+ * context, so its error text is read from what it really throws. Resolves to the message it fails with.
+ */
+function failureOf(file: ApiFlowFile, fetch: (url: string) => Promise<unknown> = async () => ({ status: () => 200 })): (flow: string) => Promise<string> {
+  const js = ts.transpileModule(renderFlowFixture(file, { baseUrl: "http://api.test", allowMutationsFor: "http://api.test" }), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const mod: { test?: Record<string, (args: unknown, use: () => Promise<void>, info: unknown) => Promise<void>> } = {};
+  new Function("require", "exports", js)(() => ({ test: { extend: (fixtures: unknown) => fixtures } }), mod);
+  const args = { playwright: { request: { newContext: async () => ({ fetch, dispose: async () => undefined }) } } };
+  return (flow) =>
+    mod.test![flow]!(args, async () => undefined, {}).then(
+      () => "(it did not fail)",
+      (e: Error) => e.message,
+    );
+}
+
+describe("the fixture's error text holds no value (#250)", () => {
+  const SECRET = "S3CRET-q7";
+  /** What Playwright 1.61 throws for a request that gets no answer: the call log has the URL and every header. */
+  const noAnswer = (first: string): Error =>
+    new Error(
+      `apiRequestContext.fetch: ${first}\nCall log:\n\u001b[2m  - → GET http://api.test/api/${SECRET}\u001b[22m\n\u001b[2m    - Authorization: Bearer ${SECRET}\u001b[22m\n`,
+    );
+  const flowOf = (flow: Record<string, unknown>): ApiFlowFile => parseApiFlows(JSON.stringify({ version: 1, flows: [{ name: "thing", ...flow }] }));
+  const read = (path: string): Record<string, unknown> => ({ method: "GET", path });
+  afterEach(() => void vi.unstubAllEnvs());
+
+  it("names an environment value that cannot stand in the path, never prints it", async () => {
+    vi.stubEnv("SEG", `sec/${SECRET}`);
+    const message = await failureOf(flowOf({ steps: [read("/api/{{env.SEG}}/items")] }))("thing");
+    expect(message).toBe("API flow: {{env.SEG}} is a value, which cannot stand in the path /api/{{env.SEG}}/items");
+  });
+
+  it("names a captured value that cannot stand in the path, never prints it", async () => {
+    const answer = { status: () => 200, json: async () => ({ link: `x/${SECRET}` }) };
+    const file = flowOf({ steps: [{ ...read("/api/links"), capture: { link: "/link" } }, read("/api/{{link}}")] });
+    const message = await failureOf(file, async () => answer)("thing");
+    expect(message).toBe("API flow: {{link}} is a value, which cannot stand in the path /api/{{link}}");
+  });
+
+  it.each([
+    ["connect ECONNREFUSED 127.0.0.1:1", "ECONNREFUSED"],
+    ["getaddrinfo ENOTFOUND api.test", "ENOTFOUND"],
+    ["Timeout 30000ms exceeded.", "timeout"],
+    [`self-signed certificate ${SECRET}`, "network error"],
+  ])("a request that fails with %s says only why, without Playwright's text", async (first, why) => {
+    const file = flowOf({ steps: [{ ...read("/api/{{env.SEG}}"), name: "read it" }] });
+    vi.stubEnv("SEG", SECRET);
+    const message = await failureOf(file, async () => Promise.reject(noAnswer(first)))("thing");
+    expect(message).toBe(`API flow "thing" step "read it" got no answer: ${why}`);
+  });
+
+  it("a cleanup request that fails says the same, and that the data may still be there", async () => {
+    const file = flowOf({ steps: [{ method: "POST", path: "/api/things" }], cleanup: [{ method: "DELETE", path: "/api/things/1", name: "delete it" }] });
+    const fetch = vi.fn<(url: string) => Promise<unknown>>().mockResolvedValueOnce({ status: () => 201 }).mockRejectedValueOnce(noAnswer("connect ECONNREFUSED 127.0.0.1:1"));
+    const message = await failureOf(file, fetch)("thing");
+    expect(message).toBe('API flow "thing": the cleanup failed, the data may still be there\nAPI flow "thing" step "delete it" got no answer: ECONNREFUSED');
+  });
+});
+
+describe("flowEnvSecrets — what a run must not repeat (#250)", () => {
+  afterEach(() => void vi.unstubAllEnvs());
+
+  it("each {{env.NAME}} anywhere in the file, as written and as it goes on the wire; nothing else of the environment", () => {
+    const file = parseApiFlows(
+      JSON.stringify({
+        version: 1,
+        headers: { Authorization: "Bearer {{env.TOKEN}}" },
+        flows: [
+          {
+            name: "thing",
+            steps: [{ method: "POST", path: "/{{env.SEG}}", form: { pin: "{{env.PIN}}" }, capture: { id: "/id" } }],
+            cleanup: [{ method: "DELETE", path: "/x/{{id}}", query: { key: "{{env.KEY}}" } }],
+          },
+        ],
+      }),
+    );
+    const env = { TOKEN: "tok-en-1", SEG: 'a b/c"d!', PIN: "pin-99", KEY: "cleanup-key", OTHER: "not-named-here" };
+    const secrets = flowEnvSecrets(file, env);
+    expect(secrets).toEqual(expect.arrayContaining(["tok-en-1", "pin-99", "cleanup-key", 'a b/c"d!']));
+    expect(secrets).toContain("a%20b%2Fc%22d!"); // a path
+    expect(secrets).toContain("a+b%2Fc%22d%21"); // a query or a form
+    expect(secrets).toContain('a b/c\\"d!'); // a JSON body
+    expect(secrets).not.toContain("not-named-here");
+  });
+
+  it("leaves out what is not set, and what is too short or too common to mask without mangling the text", () => {
+    const file = parseApiFlows(
+      JSON.stringify({
+        version: 1,
+        flows: [{ name: "thing", steps: [{ method: "GET", path: "/{{env.A}}/{{env.B}}/{{env.C}}/{{env.D}}" }] }],
+      }),
+    );
+    expect(flowEnvSecrets(file, { A: "ab", B: "true", C: "" })).toEqual([]);
+  });
+});
+
+describe("a flow file that is not JSON (#250)", () => {
+  it("names the file and repeats none of its text: nothing has checked yet that it holds no secret", () => {
+    const text = '{"version":1,"headers":{"X-Api-Key":S3CRET-q7},"flows":[]}';
+    expect(() => parseApiFlows(text, "flows.json")).toThrow(/^flows\.json is not valid JSON\.$/);
   });
 });
 

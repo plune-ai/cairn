@@ -11,6 +11,14 @@ export type { CaptureSessionOptions, CaptureSessionResult } from "./capture.js";
 /** File suffix for a saved session (one storageState per name). */
 const SESSION_SUFFIX = ".storageState.json";
 
+const CAPTURE_AGAIN = "Capture the session again: cairn session capture --url <loginUrl> --name <name>";
+
+/** The fields of a cookie this package and Playwright read as text. */
+const isCookie = (c: unknown): boolean => {
+  const cookie = c as { name?: unknown; value?: unknown; domain?: unknown } | null;
+  return typeof cookie?.name === "string" && typeof cookie.value === "string" && typeof cookie.domain === "string";
+};
+
 /**
  * Actionable message for a missing named session — NEVER a raw ENOENT.
  * Names the exact fix so a design partner can self-serve (L1-05).
@@ -61,8 +69,19 @@ export class SessionStore {
    * If there are neither cookies nor origins (bare tokens) — throws a clear error.
    */
   async loadFile(filePath: string): Promise<StorageState> {
-    const raw = await readFile(filePath, "utf8");
-    const parsed: unknown = JSON.parse(raw);
+    let raw: string;
+    try {
+      raw = await readFile(filePath, "utf8");
+    } catch (e) {
+      throw new Error(`Cannot read the session file '${filePath}' (${(e as NodeJS.ErrnoException).code ?? "read error"}).`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // The parser quotes the text around the error, and this text holds cookies: its message is never repeated.
+      throw new Error(`File '${filePath}' is not valid JSON, so it is not a usable storageState. ${CAPTURE_AGAIN}`);
+    }
     if (typeof parsed !== "object" || parsed === null) {
       throw new Error(`File '${filePath}' is not a storageState JSON object.`);
     }
@@ -74,6 +93,9 @@ export class SessionStore {
         `File '${filePath}' does not look like a Playwright storageState (no cookies/origins arrays). ` +
           `Capture the session via 'npm run session:save' or convert it into the {cookies, origins} form.`,
       );
+    }
+    if (hasCookies && !(obj.cookies as unknown[]).every(isCookie)) {
+      throw new Error(`File '${filePath}' is not a usable storageState: a cookie has no name, value or domain. ${CAPTURE_AGAIN}`);
     }
     return {
       cookies: hasCookies ? (obj.cookies as StorageState["cookies"]) : [],
