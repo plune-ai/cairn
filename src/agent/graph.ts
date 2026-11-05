@@ -26,7 +26,7 @@ import { makeHeal, type HealRecord } from "../decider/uses/locator-heal.js";
 import type { Decider } from "../decider/types.js";
 import type { ValidationReport } from "../validate/index.js";
 import type { RunWriter } from "../artifacts/index.js";
-import type { BrowserGateway, ClickEffect, VerifiedElement } from "../browser/index.js";
+import type { BlockedRequest, BrowserGateway, ClickEffect, VerifiedElement } from "../browser/index.js";
 import { exploreOverlays, nameOverlays } from "./overlays.js";
 import { formatOverlays, type OverlayState } from "../observe/overlays.js";
 import type { PromptRegistry } from "../prompts/index.js";
@@ -141,6 +141,11 @@ export interface ExploreOutcome {
   /** #225: controls exploration left alone (destructive, completing a form, over the limit), and toast texts seen. */
   overlaySkipped?: { role: string; name?: string; reason: string }[];
   overlayToasts?: string[];
+  /**
+   * #225 review 3: whether the write guard was on while overlays were explored (`none`: nothing was pressed, and
+   * `note` says why), and the writes it stopped, each with the element pressed before it.
+   */
+  overlayGuard?: { guard: "network" | "none"; blocked: BlockedRequest[]; note?: string };
 }
 
 /** #224: the same gateway, keeping the effect of every click made through it. */
@@ -154,6 +159,8 @@ function recordingClicks(gateway: BrowserGateway, clicks: ClickEffect[]): Browse
     },
     verify: (elements) => gateway.verify(elements),
     getState: (element) => gateway.getState(element),
+    // #225 review 3: the network guard passes through, or exploreOverlays would think the backend has none
+    ...(gateway.guardWrites ? { guardWrites: () => gateway.guardWrites!() } : {}),
     session: () => gateway.session(),
     runTests: (globs) => gateway.runTests(globs),
     close: () => gateway.close(),
@@ -296,6 +303,7 @@ export async function runExploreGraph(
   let overlays: OverlayState[] | undefined;
   let overlaySkipped: ExploreOutcome["overlaySkipped"];
   let overlayToasts: string[] | undefined;
+  let overlayGuard: ExploreOutcome["overlayGuard"];
   if (deps.overlays !== false) {
     deps.onProgress?.("exploreOverlays — opening dialogs, drawers and menus…");
     try {
@@ -307,6 +315,7 @@ export async function runExploreGraph(
       );
       overlaySkipped = found.skipped;
       overlayToasts = found.toasts;
+      overlayGuard = { guard: found.guard, blocked: found.blocked, ...(found.note ? { note: found.note } : {}) };
     } catch (e) {
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       deps.onProgress?.(`exploreOverlays — skipped (${msg})`);
@@ -438,10 +447,11 @@ export async function runExploreGraph(
     }
   }
 
-  const overlayKeys = (): Pick<ExploreOutcome, "overlays" | "overlaySkipped" | "overlayToasts"> => ({
+  const overlayKeys = (): Pick<ExploreOutcome, "overlays" | "overlaySkipped" | "overlayToasts" | "overlayGuard"> => ({
     ...(overlays ? { overlays } : {}),
     ...(overlaySkipped ? { overlaySkipped } : {}),
     ...(overlayToasts ? { overlayToasts } : {}),
+    ...(overlayGuard ? { overlayGuard } : {}),
   });
 
   // ── codeless short-circuit ────────────────────────────────────────────────

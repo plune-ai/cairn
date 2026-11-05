@@ -447,6 +447,8 @@ describe("runExploreGraph — overlays as states (#225)", () => {
       acts,
       gateway: {
         ...gateway,
+        // #225 review 3: overlays are pressed only under a write guard; this one stops nothing
+        guardWrites: async () => ({ release: async () => [] }),
         getState: async (el) => ({ visible: true, enabled: true, ...(el.name === "Open settings" ? { popup: { hasPopup: "dialog" } } : {}) }),
         observe: async (opts) => {
           if (opts.url) open = false;
@@ -490,6 +492,8 @@ describe("runExploreGraph — overlays as states (#225)", () => {
     expect(out.overlays![0]!.exits.find((x) => x.kind === "escape")).toMatchObject({ verified: true });
     expect(out.overlays![0]!.exits.find((x) => x.kind === "click-outside")).toMatchObject({ verified: false });
     expect(out.overlaySkipped).toEqual([{ role: "button", name: "Save", reason: "completes the form; not pressed" }]);
+    // #225 review 3: the guard passes through the click-recording gateway and is reported
+    expect(out.overlayGuard).toEqual({ guard: "network", blocked: [] });
     // the design prompt carries the overlay and asks for the state-transition set
     const design = prompts.find((p) => p.includes("Overlays found on the page") && p.includes("state-transition"));
     expect(design).toBeTruthy();

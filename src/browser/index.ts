@@ -14,6 +14,7 @@ import type {
   StorageState,
   TestRunReport,
   VerifiedElement,
+  WriteGuard,
 } from "./types.js";
 
 export * from "./gateway.js";
@@ -53,6 +54,10 @@ class GatewayImpl implements BrowserGateway {
   async getState(element: ElementRef): Promise<ElementState> {
     if (this.observeBackend.getState) return this.observeBackend.getState(element);
     return { visible: false, enabled: false };
+  }
+  async guardWrites(): Promise<WriteGuard | undefined> {
+    // #225 review 3: only the backend that observes and acts can guard what its own clicks send.
+    return this.observeBackend.guardWrites ? this.observeBackend.guardWrites() : undefined;
   }
   session(): SessionApi {
     if (!this.libBackend.session) throw new Error("The lib backend does not provide session().");
