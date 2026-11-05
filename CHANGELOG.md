@@ -20,8 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Header names merge case-insensitively. A cleanup step without `expect` is done only on a 2xx, and a `404` or `410`
   counts as already gone only when the other actor's `DELETE` of that resource went through; a cleanup that answers
   otherwise, or that cannot be sent because its value was never captured, is a cleanup error naming the request and
-  the resource. Error text and the report name a path as the flow file wrote it, with `{{env.NAME}}` left as written,
-  so a secret in a query parameter never reaches them.
+  the resource. An error about a request says its method, its path as written (`{{env.NAME}}` left as written) and a
+  category, never the text of the underlying error; a header or URL that cannot be sent is refused before sending,
+  naming the header and the variable, so a secret from the environment never reaches the report or the terminal.
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else

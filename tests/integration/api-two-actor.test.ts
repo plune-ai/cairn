@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startIdorApp, type IdorApp } from "../fixtures/idor-app.js";
@@ -7,6 +9,7 @@ import { RequestGuard } from "../../src/api/guard.js";
 import {
   actorHeaders,
   loadTwoActorPlan,
+  renderTwoActorReport,
   runTwoActorChecks,
   twoActorFailed,
   WSTG_IDOR,
@@ -19,11 +22,11 @@ let app: IdorApp | undefined;
 let dir: string;
 
 /** `cleanupExpect: null` writes the cleanup step without `expect`. */
-const projectFlow = (cleanupExpect: number | number[] | null = 204, extraStep = false, cleanupQuery?: Record<string, string>) => ({
+const projectFlow = (cleanupExpect: number | number[] | null = 204, extraStep = false, cleanupQuery?: Record<string, string>, createStep: Record<string, unknown> = {}) => ({
   name: "project",
   description: "a project of the owner",
   steps: [
-    { name: "create", method: "POST", path: "/api/projects", body: { name: "idor-{{uid}}" }, expect: 201, capture: { projectId: "/id" } },
+    { name: "create", method: "POST", path: "/api/projects", body: { name: "idor-{{uid}}" }, expect: 201, capture: { projectId: "/id" }, ...createStep },
     ...(extraStep ? [{ name: "broken", method: "POST", path: "/api/nowhere", expect: 201 }] : []),
   ],
   returns: ["projectId"],
@@ -49,6 +52,8 @@ async function writePlan(
     owner?: Record<string, unknown>;
     /** Query parameters of the cleanup step. */
     cleanupQuery?: Record<string, string>;
+    /** More fields of the flow's create step (a query, headers). */
+    createStep?: Record<string, unknown>;
     /** More flows and checks after the project ones. */
     extraFlows?: unknown[];
     extraChecks?: unknown[];
@@ -62,7 +67,7 @@ async function writePlan(
   );
   await writeFile(
     join(dir, "flows.json"),
-    JSON.stringify({ version: 1, ...(opts.flowHeaders ? { headers: opts.flowHeaders } : {}), flows: [projectFlow(opts.cleanupExpect === undefined ? 204 : opts.cleanupExpect, opts.extraStep, opts.cleanupQuery), ...(opts.extraFlows ?? [])] }),
+    JSON.stringify({ version: 1, ...(opts.flowHeaders ? { headers: opts.flowHeaders } : {}), flows: [projectFlow(opts.cleanupExpect === undefined ? 204 : opts.cleanupExpect, opts.extraStep, opts.cleanupQuery, opts.createStep), ...(opts.extraFlows ?? [])] }),
   );
   const file = join(dir, "actors.json");
   await writeFile(
@@ -410,7 +415,229 @@ describe("cairn api --actors (#233)", () => {
     }
   });
 
+  /** Everything the run wrote: its report file, stdout and stderr. */
+  const everything = async (out: string): Promise<string> =>
+    (await readFile(join(out, "two-actor.json"), "utf8").catch(() => "")) + outChunks.join("") + errChunks.join("");
+
+  it.each([
+    ["a newline in the value", "alice\nS3CRET-q7"],
+    // (A NUL cannot be in a process.env value; it is covered where the environment is a map.)
+    ["a carriage return in the value", "alice\rS3CRET-q7"],
+    ["a character fetch cannot carry", "aliceЖS3CRET-q7"],
+  ])("refuses a header value fetch would not send (%s): names the header and the variable, sends nothing", async (_label, token) => {
+    app = await startIdorApp({ idor: false });
+    process.env.ALICE_TOKEN = token;
+    const out = join(dir, "run");
+    await cairn("--base-url", app.url, "--actors", await writePlan(), "--allow-mutations", "--rps", "1000", "--out", out);
+    const text = await everything(out);
+    expect(text).toContain('header "Authorization" is not valid (invalid header value, built from {{env.ALICE_TOKEN}}); nothing was sent');
+    expect(text).not.toContain("S3CRET-q7");
+    expect(app.log).toEqual([]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("refuses a header name fetch would not send: names the header and the variable, never the value", async () => {
+    app = await startIdorApp({ idor: false });
+    process.env.ALICE_TOKEN = "S3CRET-q7";
+    const out = join(dir, "run");
+    const file = await writePlan({ owner: { headers: { "X-Api Key": "{{env.ALICE_TOKEN}}" } } });
+    await cairn("--base-url", app.url, "--actors", file, "--allow-mutations", "--rps", "1000", "--out", out);
+    const text = await everything(out);
+    expect(text).toContain('header "X-Api Key" is not valid (invalid header name, built from {{env.ALICE_TOKEN}}); nothing was sent');
+    expect(text).not.toContain("S3CRET-q7");
+    expect(app.log).toEqual([]);
+  });
+
+  it("a refused connection with the secret in the query: the line has the method, the path as written and the code, nothing else", async () => {
+    process.env.CAIRN_TEST_API_TOKEN = "S3CRET-q7";
+    try {
+      const out = join(dir, "run");
+      const file = await writePlan({ createStep: { query: { token: "{{env.CAIRN_TEST_API_TOKEN}}" } } });
+      // A port nobody listens on refuses the connection.
+      const closed = await new Promise<number>((done) => {
+        const s = createServer();
+        s.listen(0, "127.0.0.1", () => {
+          const port = (s.address() as AddressInfo).port;
+          s.close(() => done(port));
+        });
+      });
+      await cairn("--base-url", `http://127.0.0.1:${closed}`, "--actors", file, "--allow-mutations", "--rps", "1000", "--out", out);
+      const text = await everything(out);
+      expect(text).toContain("POST /api/projects?token={{env.CAIRN_TEST_API_TOKEN}} got no answer: network: ECONNREFUSED");
+      expect(text).not.toContain("S3CRET-q7");
+      expect(process.exitCode).toBe(1);
+    } finally {
+      delete process.env.CAIRN_TEST_API_TOKEN;
+    }
+  });
+
   it("needs --base-url", async () => {
     await expect(cairn("--actors", await writePlan())).rejects.toThrow(/--actors needs --base-url/);
+  });
+});
+
+/**
+ * No text of a caught error reaches the report: a request's error line has its method, its path as the flow file wrote it
+ * (`{{env.NAME}}` as written), the status if there was one, and a fixed category. The value of `SECRET` stands in for
+ * a secret from the environment; a fake fetch lets each test fail one request in a chosen way.
+ */
+describe("two-actor check: errors about a request never hold a secret (#233)", () => {
+  const SECRET = "S3CRET-q7";
+  type Call = { method: string; url: string; who: "owner" | "other" };
+  /** A server that is down for whatever `decide` answers; otherwise: create 201 {id: 3}, the owner's delete 204, all else 404. */
+  const fakeFetch = (decide: (c: Call) => Response | Error | undefined = () => undefined, createdId: unknown = 3) => {
+    const calls: Call[] = [];
+    const fetch = async (url: string, init: RequestInit): Promise<Response> => {
+      const call: Call = { method: init.method ?? "GET", url, who: new Headers(init.headers).has("authorization") ? "owner" : "other" };
+      calls.push(call);
+      const d = decide(call);
+      if (d instanceof Error) throw d;
+      if (d) return d;
+      if (call.method === "POST" && !call.url.includes("/projects/")) return new Response(JSON.stringify({ id: createdId }), { status: 201 });
+      if (call.who === "owner" && call.method === "DELETE") return new Response(null, { status: 204 });
+      return new Response(null, { status: 404 });
+    };
+    return { fetch, calls };
+  };
+  /** What fetch says when it cannot parse: the text holds the URL, query and all. */
+  const quoting = (url: string): Error => new TypeError(`Failed to parse URL from ${url}`);
+  const status = (s: number): Response => new Response(null, { status: s });
+
+  async function runFake(
+    file: string,
+    fetch: (url: string, init: RequestInit) => Promise<Response>,
+    more: { baseUrl?: string; env?: Record<string, string>; owner?: Record<string, string>; guard?: RequestGuard } = {},
+  ) {
+    const plan = await loadTwoActorPlan(file);
+    const env = { ALICE_TOKEN: "alice-token", SEG: SECRET, TOK: SECRET, ...more.env };
+    const owner = more.owner ?? (await actorHeaders(plan.file.actors.owner, plan, "http://127.0.0.1", env));
+    const other = await actorHeaders(plan.file.actors.other, plan, "http://127.0.0.1", env);
+    const guard = more.guard ?? new RequestGuard({ allowMutations: true, rps: 1000 });
+    const report = await runTwoActorChecks(plan, { baseUrl: more.baseUrl ?? "http://127.0.0.1:9", guard, owner, other, role: plan.file.actors.other.role, env, fetch });
+    return { report, all: JSON.stringify(report) + renderTwoActorReport(report).join("\n"), result: report.checks[0]! };
+  }
+
+  const ENV_RESOURCE = "/api/{{env.SEG}}/projects/{{projectId}}";
+  const envResource = (check: Record<string, unknown> = {}) => writePlan({ check: { resource: ENV_RESOURCE, ...check } });
+
+  it.each([
+    ["read", { probes: ["read"] }, (c: Call) => (c.who === "other" && c.method === "GET" ? quoting(c.url) : undefined), "GET /api/{{env.SEG}}/projects/3"],
+    ["change", { probes: ["change"] }, (c: Call) => (c.method === "PATCH" ? quoting(c.url) : undefined), "PATCH /api/{{env.SEG}}/projects/3"],
+    ["delete", { probes: ["delete"] }, (c: Call) => (c.who === "other" && c.method === "DELETE" ? quoting(c.url) : undefined), "DELETE /api/{{env.SEG}}/projects/3"],
+    ["a neighbour as the other actor", { probes: ["neighbours"], neighbours: 1 }, (c: Call) => (c.who === "other" && c.method === "GET" ? quoting(c.url) : undefined), "GET /api/{{env.SEG}}/projects/2"],
+    [
+      "a neighbour as the owner",
+      { probes: ["neighbours"], neighbours: 1 },
+      (c: Call) => (c.method === "GET" ? (c.who === "other" ? status(200) : quoting(c.url)) : undefined),
+      "GET /api/{{env.SEG}}/projects/2",
+    ],
+  ])("a failed %s probe names its path with {{env.}} as written", async (_probe, check, decide, line) => {
+    const { fetch, calls } = fakeFetch(decide);
+    const { result, all } = await runFake(await envResource(check), fetch);
+    // The secret did go on the wire, where it belongs.
+    expect(calls.some((c) => c.url.includes(`/api/${SECRET}/projects/`))).toBe(true);
+    expect(result.error).toBe(`${line} got no answer: network error`);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("writes every case's path with {{env.}} as written, whatever the answer", async () => {
+    // Every probe answers 200 to both actors: findings on read, change, delete and both neighbours.
+    const { fetch } = fakeFetch((c) => (c.method === "POST" || (c.who === "owner" && c.method === "DELETE") ? undefined : status(200)));
+    const { result, all } = await runFake(await envResource({ neighbours: 1 }), fetch);
+    expect(result.cases.map((c) => `${c.probe} ${c.path}`)).toEqual([
+      "read /api/{{env.SEG}}/projects/3",
+      "change /api/{{env.SEG}}/projects/3",
+      "neighbours /api/{{env.SEG}}/projects/2",
+      "neighbours /api/{{env.SEG}}/projects/4",
+      "delete /api/{{env.SEG}}/projects/3",
+    ]);
+    expect(result.cases.every((c) => c.outcome === "finding")).toBe(true);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("writes the path of a refused neighbour with {{env.}} as written", async () => {
+    const { fetch } = fakeFetch();
+    const { result, all } = await runFake(await envResource({ probes: ["neighbours"], neighbours: 1 }), fetch);
+    expect(result.cases.map((c) => `${c.outcome} ${c.path}`)).toEqual(["denied /api/{{env.SEG}}/projects/2", "denied /api/{{env.SEG}}/projects/4"]);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("writes the path of a skipped neighbour probe (the id is not a number) with {{env.}} as written", async () => {
+    const { fetch } = fakeFetch(undefined, "abc");
+    const { result, all } = await runFake(await envResource({ probes: ["neighbours"] }), fetch);
+    expect(result.cases).toEqual([expect.objectContaining({ outcome: "skipped", path: "/api/{{env.SEG}}/projects/abc" })]);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("names an environment value that cannot stand in a path without printing it", async () => {
+    const { fetch } = fakeFetch();
+    const { result, all } = await runFake(await envResource(), fetch, { env: { SEG: "sec/ret-S3CRET" } });
+    expect(result.error).toBe(`{{env.SEG}} is a value, which cannot stand in the path ${ENV_RESOURCE}`);
+    expect(all).not.toContain("S3CRET");
+  });
+
+  it("names a failed create step by its query as written", async () => {
+    const { fetch } = fakeFetch((c) => (c.method === "POST" ? quoting(c.url) : undefined));
+    const { result, all } = await runFake(await writePlan({ createStep: { query: { token: "{{env.TOK}}" } } }), fetch);
+    expect(result.error).toBe("POST /api/projects?token={{env.TOK}} got no answer: network error");
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("refuses an unparsable URL with the secret in its query before fetch, naming the query as written", async () => {
+    const { fetch, calls } = fakeFetch();
+    const { result, all } = await runFake(await writePlan({ createStep: { query: { token: "{{env.TOK}}" } } }), fetch, { baseUrl: "http://[bad" });
+    expect(result.error).toBe("POST /api/projects?token={{env.TOK}} not sent: invalid URL");
+    expect(calls).toEqual([]);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["a newline", `alice\n${SECRET}`],
+    ["a NUL", `alice\0${SECRET}`],
+  ])("refuses a flow step's header with %s in a value from the environment, naming the header and the variable", async (_label, value) => {
+    const { fetch, calls } = fakeFetch();
+    const { result, all } = await runFake(await writePlan({ createStep: { headers: { "X-Trace": "{{env.TRACE}}" } } }), fetch, { env: { TRACE: value } });
+    expect(result.error).toBe('POST /api/projects not sent: header "X-Trace" is not valid (invalid header value, built from {{env.TRACE}})');
+    expect(calls).toEqual([]);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("refuses, at the last moment, any header fetch would not send, naming the header only", async () => {
+    const { fetch, calls } = fakeFetch();
+    const owner = { Authorization: `Bearer a\0${SECRET}` };
+    const { result, all } = await runFake(await writePlan(), fetch, { owner });
+    expect(result.error).toBe('POST /api/projects not sent: header "Authorization" is not valid (invalid header value)');
+    expect(calls).toEqual([]);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it.each([
+    ["a refused connection", Object.assign(new TypeError(`fetch failed ${SECRET}`), { cause: Object.assign(new Error(`connect ECONNREFUSED ${SECRET}`), { code: "ECONNREFUSED" }) }), "network: ECONNREFUSED"],
+    ["a timeout", new DOMException(`The operation timed out ${SECRET}`, "TimeoutError"), "timeout"],
+    ["an error with no code", new Error(`boom ${SECRET}`), "network error"],
+    ["an error with a code that is not a code", Object.assign(new Error("x"), { code: `not a code ${SECRET}` }), "network error"],
+  ])("takes only a category from %s, never its message", async (_label, error, category) => {
+    const { fetch } = fakeFetch((c) => (c.method === "POST" ? error : undefined));
+    const { result, all } = await runFake(await writePlan(), fetch);
+    expect(result.error).toBe(`POST /api/projects got no answer: ${category}`);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("takes only a category from an error that fails the cleanup", async () => {
+    const { fetch } = fakeFetch((c) => (c.method === "DELETE" && c.who === "owner" ? new Error(`boom ${SECRET}`) : undefined));
+    const { result, all } = await runFake(await writePlan({ check: { probes: ["read"] } }), fetch);
+    expect(result.cleanupErrors).toEqual(["DELETE /api/projects/3 got no answer: network error"]);
+    expect(all).not.toContain(SECRET);
+  });
+
+  it("reports an error of its own that is not a request failure as a category, never its text", async () => {
+    const { fetch } = fakeFetch();
+    const guard = new RequestGuard({ allowMutations: true, rps: 1000 });
+    guard.acquire = async () => {
+      throw new Error(`unexpected ${SECRET}`);
+    };
+    const { result, all } = await runFake(await writePlan(), fetch, { guard });
+    expect(result.error).toBe("unexpected failure (network error)");
+    expect(all).not.toContain(SECRET);
   });
 });

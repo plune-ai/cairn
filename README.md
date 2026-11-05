@@ -132,8 +132,10 @@ An actor is a saved session by its name (`.auth/<name>.storageState.json`, from 
 `sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The flow file's own `headers` (where
 the owner's token usually sits) go to the owner whole. The other actor's requests carry no identity but its own actor
 definition. From the flow file it takes only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`; its own
-headers and session cookie come from `actors.json`. Error text and the report name a path as the flow file wrote it,
-with `{{env.NAME}}` left as written, so a secret in a query parameter never reaches them. Header names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
+headers and session cookie come from `actors.json`. An error about a request says its method, its path as written and a
+category (such as `network: ECONNREFUSED`), never the text of the underlying error;
+`{{env.NAME}}` stays as written in the path, and a header or URL that cannot be sent is refused before sending, naming
+the header and the variable, so a secret from the environment never reaches the report or the terminal. Header names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
 `Cookie`), so one name goes out with one value. The check uses the same guardrails as
 every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
 production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or

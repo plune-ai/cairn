@@ -218,16 +218,29 @@ export async function actorHeaders(
 
 function fillHeaders(headers: Record<string, string>, env: Record<string, string | undefined>): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(headers).map(([k, v]) => [
-      k,
-      v.replace(TEMPLATE, (_m, key: string) => {
+    Object.entries(headers).map(([k, v]) => {
+      const filled = v.replace(TEMPLATE, (_m, key: string) => {
         if (!key.startsWith("env.")) throw new Error(`Header "${k}": only {{env.NAME}} may be used in an actor's headers`);
         const value = env[key.slice(4)];
         if (value === undefined || value === "") throw new Error(`Header "${k}": the environment variable ${key.slice(4)} is not set`);
         return value;
-      }),
-    ]),
+      });
+      const refusal = headerRefusal(k, v, filled);
+      if (refusal) throw new Error(`${refusal}; nothing was sent`);
+      return [k, filled];
+    }),
   );
+}
+
+/**
+ * Whether a header can be sent at all, as one line that names the header and the `{{env.NAME}}` it was built from and
+ * never its value: fetch quotes a bad value in its own error text, and the value may be a secret.
+ */
+function headerRefusal(name: string, template: string | undefined, value: string): string | undefined {
+  const category = !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ? "invalid header name" : /[\0\r\n]|[^\x00-\xff]/.test(value) ? "invalid header value" : undefined;
+  if (!category) return undefined;
+  const from = [...(template ?? "").matchAll(TEMPLATE)].map((m) => `{{${m[1]}}}`);
+  return `header "${name}" is not valid (${category}${from.length ? `, built from ${from.join(", ")}` : ""})`;
 }
 
 // ── running ─────────────────────────────────────────────────────────────────
@@ -282,6 +295,20 @@ export interface TwoActorReport {
 }
 
 class RequestFailed extends Error {}
+
+/**
+ * Why a request failed, as a fixed category taken from the error's name or code, never from its message: fetch quotes
+ * the URL and the header value it was given, and either may hold a secret from the environment.
+ */
+const failureCategory = (e: unknown): string => {
+  const err = e as { name?: unknown; code?: unknown; cause?: { code?: unknown } } | null;
+  if (err?.name === "TimeoutError" || err?.name === "AbortError") return "timeout";
+  const code = err?.cause?.code ?? err?.code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,40}$/.test(code) ? `network: ${code}` : "network error";
+};
+
+/** What a caught error may add to the report: our own messages (built from safe parts), never an unknown error's text. */
+const reportable = (e: unknown): string => (e instanceof RequestFailed ? e.message : `unexpected failure (${failureCategory(e)})`);
 
 const fillValue = (value: unknown, vars: Record<string, string>, env: Record<string, string | undefined>, encode = false): unknown => {
   if (typeof value === "string") {
@@ -351,13 +378,24 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     method: string,
     path: string,
     headers: Record<string, string>,
-    body?: { text: string; type: string },
-    mustSend = false,
-    shown = path,
+    body: { text: string; type: string } | undefined,
+    mustSend: boolean,
+    shown: string,
   ): Promise<Response> => {
+    const sent = body ? mergeHeaders({ "content-type": body.type }, headers) : headers;
+    // What fetch would refuse is refused here, before anything is counted or sent, without quoting the value.
+    for (const [name, value] of Object.entries(sent)) {
+      const refusal = headerRefusal(name, undefined, value);
+      if (refusal) throw new RequestFailed(`${method} ${shown} not sent: ${refusal}`);
+    }
+    try {
+      new URL(base + path);
+    } catch {
+      throw new RequestFailed(`${method} ${shown} not sent: invalid URL`);
+    }
     // The budget was reserved for the whole check before it started; the cleanup goes out even if it ran short.
     if (!(await opts.guard.acquire()) && !mustSend) throw new RequestFailed(`the request budget ran out (--max-requests ${opts.guard.maxRequests})`);
-    const init: RequestInit = { method, headers: body ? mergeHeaders({ "content-type": body.type }, headers) : headers, redirect: "manual" };
+    const init: RequestInit = { method, headers: sent, redirect: "manual" };
     if (body) init.body = body.text;
     if (timeoutMs > 0) init.signal = AbortSignal.timeout(timeoutMs);
     try {
@@ -365,8 +403,8 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       opts.guard.recordExecuted();
       return res;
     } catch (e) {
-      // fetch may quote the URL it was given ("Failed to parse URL from …"): name the shown path there too.
-      throw new RequestFailed(`${method} ${shown} got no answer: ${(e as Error).message.split(path).join(shown)}`);
+      // Method, the path as written and a category: the text of the error is never used.
+      throw new RequestFailed(`${method} ${shown} got no answer: ${failureCategory(e)}`);
     }
   };
   const json = (value: unknown): { text: string; type: string } | undefined =>
@@ -385,7 +423,12 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     const label = cleanup
       ? `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${shown}`
       : `flow "${flow.name}" step "${step.name ?? `${step.method} ${step.path}`}"`;
-    const headers = mergeHeaders(opts.owner, fillValue(step.headers ?? {}, vars, env) as Record<string, string>);
+    const stepHeaders = fillValue(step.headers ?? {}, vars, env) as Record<string, string>;
+    for (const [name, value] of Object.entries(stepHeaders)) {
+      const refusal = headerRefusal(name, step.headers![name], value);
+      if (refusal) throw new RequestFailed(`${step.method} ${shown} not sent: ${refusal}`);
+    }
+    const headers = mergeHeaders(opts.owner, stepHeaders);
     const body = step.form
       ? { text: new URLSearchParams(fillValue(step.form, vars, env) as Record<string, string>).toString(), type: "application/x-www-form-urlencoded" }
       : json(step.body === undefined ? undefined : fillValue(step.body, vars, env));
@@ -524,7 +567,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
         record("delete", "DELETE", shown, s, "deleted");
       }
     } catch (e) {
-      result.error = (e as Error).message;
+      result.error = reportable(e);
     } finally {
       // The flow's own cleanup, as the owner, whatever happened above. A step whose values were never captured cannot
       // be sent; once the flow sent anything, that is a cleanup error, since what it created may still be there.
@@ -545,7 +588,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
           // Only after the other actor's DELETE went through does a 404/410 here mean the cleanup's goal is reached.
           await runStep(flow, step, vars, true, deletedByOther ? [404, 410] : []);
         } catch (e) {
-          result.cleanupErrors.push((e as Error).message);
+          result.cleanupErrors.push(reportable(e));
         }
       }
     }
