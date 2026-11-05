@@ -55,7 +55,7 @@ import {
   renderFlowFixture,
   type ApiFlowFile,
 } from "../../api/flows.js";
-import { actorHeaders, loadTwoActorPlan, renderTwoActorReport, runTwoActorChecks, twoActorFailed, type TwoActorPlan } from "../../api/two-actor.js";
+import { actorHeaders, loadTwoActorPlan, renderTwoActorReport, runTwoActorChecks, twoActorAnswered, twoActorFailed, type TwoActorPlan } from "../../api/two-actor.js";
 import {
   computeApiCoverage,
   evaluateCoverageGate,
@@ -406,10 +406,12 @@ async function runActorsCheck(opts: ApiFlags, ctx: ModalityContext): Promise<voi
   for (const line of renderTwoActorReport(report)) out(`${line}\n`);
   for (const line of renderGuardrails(guardrails)) out(`${line}\n`);
   out(`  Report: ${displayPath(reportPath)}\n`);
-  // Same exit codes as the rest of `cairn api`: 1 a finding (or a check that could not finish), 5 nothing was sent.
+  // Same exit codes and order as the rest of `cairn api`: 1 a finding (or a check that could not finish) > 4 a check the
+  // budget could not cover > 5 no probe answered, whatever the owner's own requests got.
   if (twoActorFailed(report)) process.exitCode = 1;
-  else if (guardrails.executed === 0) {
-    err("✗ No request was sent: every check was skipped by the guardrails (see Guardrails above), so nothing was tested.\n");
+  else if (guardrails.budgetExhausted) process.exitCode = BUDGET_EXIT_CODE;
+  else if (!twoActorAnswered(report)) {
+    err("✗ No probe got an answer from the other actor (see the checks and Guardrails above), so nothing was tested.\n");
     process.exitCode = NOTHING_SENT_EXIT_CODE;
   }
 }

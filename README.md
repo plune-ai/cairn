@@ -109,8 +109,10 @@ through a saved [API flow](docs/api-flows.md); the other actor (B) then tries to
 reads the ids next to it. Each 2xx answer to B is a finding with its OWASP WSTG id: `WSTG-ATHZ-04` (IDOR) when B is
 another user, `WSTG-ATHZ-03` (privilege escalation) when B is a lower role. Only `401`, `403` and `404` count as
 refused; any other answer (a redirect, `400`, `405`, `422`, a `5xx`) is inconclusive — a `PATCH {}` stopped by
-validation never reached the access check — and fails the run like a finding. A neighbouring id counts only when both
-actors can read it. The flow's own cleanup deletes what was created, also when the check stops halfway; a cleanup step
+validation never reached the access check — and fails the run like a finding. When every answer B got within a check
+is a `401`, those cases are inconclusive too: B's credentials may not be valid, so access was not checked. A `401` next
+to any other answer stays refused. A neighbouring id counts only when both actors can read it. The flow's own cleanup
+deletes what was created, also when the check stops halfway; a check that sent nothing has no cleanup. A cleanup step
 without `expect` is done only on a 2xx, and a cleanup that answers otherwise, or cannot be sent because the create
 never returned its id, is reported as a cleanup error: the data may still be there.
 
@@ -132,15 +134,24 @@ An actor is a saved session by its name (`.auth/<name>.storageState.json`, from 
 `sessionsDir` to look elsewhere) or headers whose secrets are `{{env.NAME}}` only. The flow file's own `headers` (where
 the owner's token usually sits) go to the owner whole. The other actor's requests carry no identity but its own actor
 definition. From the flow file it takes only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`; its own
-headers and session cookie come from `actors.json`. An error about a request says its method, its path as written and a
-category (such as `network: ECONNREFUSED`), never the text of the underlying error;
-`{{env.NAME}}` stays as written in the path, and a header or URL that cannot be sent is refused before sending, naming
-the header and the variable, so a secret from the environment never reaches the report or the terminal. Header names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
+headers and session cookie come from `actors.json`. An error about a request says its method, its path and a category
+(such as `network: ECONNREFUSED`), never the text of the underlying error. In the report and the terminal a captured
+value is shown only as a whole number in the path, and not when it equals the value of an `{{env.NAME}}` that the flow
+file or `actors.json` names; everything else stays as written, `{{name}}` and `{{env.NAME}}` alike, and so does the
+whole query. The real values go only on the wire. A header whose characters cannot be sent is refused before anything
+goes out, naming the header and the `{{env.NAME}}` it was built from (one built from a captured value is refused when
+it is sent, naming the header), and a URL that cannot be parsed is refused instead of sent. So a secret from the
+environment never reaches the report or the terminal, with one known limit: a whole-number secret captured under
+another name can still be shown when neither file names it or when the server changed it (`007` echoed as `7`). Header
+names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
 `Cookie`), so one name goes out with one value. The check uses the same guardrails as
 every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
 production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or
-cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`; a finding
-exits 1. More: [the runbook](docs/runbooks/run-api-cases.md#two-actor-check-idor-and-privilege-escalation---actors-233).
+cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`. A finding
+exits 1, and so does a check no probe of which got an answer from B while another check's did; otherwise a check the
+budget could not cover exits 4, and a run in which no probe got an answer exits 5, because nothing was tested (the
+owner's own requests do not count). A probe skipped next to answered ones stays a pass, counted in the summary line.
+More: [the runbook](docs/runbooks/run-api-cases.md#two-actor-check-idor-and-privilege-escalation---actors-233).
 
 ## Interactive TUI
 

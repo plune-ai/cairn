@@ -233,11 +233,11 @@ function fillHeaders(headers: Record<string, string>, env: Record<string, string
 }
 
 /**
- * Whether a header can be sent at all, as one line that names the header and the `{{env.NAME}}` it was built from and
- * never its value: fetch quotes a bad value in its own error text, and the value may be a secret.
+ * Whether a header's characters can go on the wire, as one line that names the header and the `{{env.NAME}}` it was
+ * built from and never its value: fetch quotes a bad value in its own error text, and the value may be a secret.
  */
 function headerRefusal(name: string, template: string | undefined, value: string): string | undefined {
-  const category = !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ? "invalid header name" : /[\0\r\n]|[^\x00-\xff]/.test(value) ? "invalid header value" : undefined;
+  const category = !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ? "invalid header name" : /[^\t\x20-\x7e\x80-\xff]/.test(value) ? "invalid header value" : undefined;
   if (!category) return undefined;
   const from = [...(template ?? "").matchAll(TEMPLATE)].map((m) => `{{${m[1]}}}`);
   return `header "${name}" is not valid (${category}${from.length ? `, built from ${from.join(", ")}` : ""})`;
@@ -280,7 +280,9 @@ export interface TwoActorCheckResult {
   flow: string;
   /** Not started (a flag forbids its flow, its cleanup or mutations, or the budget cannot cover it). */
   notRun?: string;
-  /** The check stopped midway (the flow failed, a request failed); the cleanup still ran. */
+  /** It ran, but no probe got an answer from the other actor: nothing was tested. */
+  notTested?: string;
+  /** The check stopped midway (the flow failed, a request failed); the cleanup still ran if anything had gone out. */
   error?: string;
   /** The cleanup's own failures: the created data may still be there. */
   cleanupErrors: string[];
@@ -296,6 +298,16 @@ export interface TwoActorReport {
 
 class RequestFailed extends Error {}
 
+/** The codes fetch fails with: Node's socket errors and undici's own. A code is only a string on an error: no other is repeated. */
+const NETWORK_CODES = new Set([
+  "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "ENOTFOUND", "ETIMEDOUT", "EAI_AGAIN", "EPIPE", "EHOSTUNREACH", "ENETUNREACH",
+  "UND_ERR_ABORTED", "UND_ERR_BODY_TIMEOUT", "UND_ERR_BPL_MISSING_UPSTREAM", "UND_ERR_CLOSED", "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_DESTROYED", "UND_ERR_HEADERS_OVERFLOW", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_INFO", "UND_ERR_INVALID_ARG",
+  "UND_ERR_INVALID_RETURN_VALUE", "UND_ERR_NOT_SUPPORTED", "UND_ERR_PRX_TLS", "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH",
+  "UND_ERR_REQ_RETRY", "UND_ERR_RES_CONTENT_LENGTH_MISMATCH", "UND_ERR_RES_EXCEEDED_MAX_SIZE", "UND_ERR_RESPONSE_STATUS_CODE",
+  "UND_ERR_SOCKET",
+]);
+
 /**
  * Why a request failed, as a fixed category taken from the error's name or code, never from its message: fetch quotes
  * the URL and the header value it was given, and either may hold a secret from the environment.
@@ -304,11 +316,18 @@ const failureCategory = (e: unknown): string => {
   const err = e as { name?: unknown; code?: unknown; cause?: { code?: unknown } } | null;
   if (err?.name === "TimeoutError" || err?.name === "AbortError") return "timeout";
   const code = err?.cause?.code ?? err?.code;
-  return typeof code === "string" && /^[A-Z][A-Z0-9_]{2,40}$/.test(code) ? `network: ${code}` : "network error";
+  return typeof code === "string" && NETWORK_CODES.has(code) ? `network: ${code}` : "network error";
 };
 
+/** The built-in error types, the only names repeated: an error's `name` can be set to any text. */
+const BUILTIN_ERRORS = new Set(["Error", "TypeError", "RangeError", "URIError", "SyntaxError", "ReferenceError", "EvalError", "AggregateError"]);
+
 /** What a caught error may add to the report: our own messages (built from safe parts), never an unknown error's text. */
-const reportable = (e: unknown): string => (e instanceof RequestFailed ? e.message : `unexpected failure (${failureCategory(e)})`);
+const reportable = (e: unknown): string => {
+  if (e instanceof RequestFailed) return e.message;
+  const name = (e as { name?: unknown } | null)?.name;
+  return typeof name === "string" && BUILTIN_ERRORS.has(name) ? `unexpected failure (${name})` : "unexpected failure";
+};
 
 const fillValue = (value: unknown, vars: Record<string, string>, env: Record<string, string | undefined>, encode = false): unknown => {
   if (typeof value === "string") {
@@ -316,8 +335,8 @@ const fillValue = (value: unknown, vars: Record<string, string>, env: Record<str
       const v = key.startsWith("env.") ? env[key.slice(4)] : vars[key];
       if (v === undefined) throw new RequestFailed(key.startsWith("env.") ? `the environment variable ${key.slice(4)} is not set` : `no value for {{${key}}}`);
       if (encode && (v === "" || v === "." || v === ".." || v.includes("/"))) {
-        // An environment value may be a secret: name it, never print it.
-        throw new RequestFailed(`{{${key}}} is ${key.startsWith("env.") ? "a value" : JSON.stringify(v)}, which cannot stand in the path ${value}`);
+        // The value may be a secret, or anything the server answered: name it, never print it.
+        throw new RequestFailed(`{{${key}}} is a value, which cannot stand in the path ${value}`);
       }
       return encode ? encodeURIComponent(v) : v;
     });
@@ -327,15 +346,31 @@ const fillValue = (value: unknown, vars: Record<string, string>, env: Record<str
   return value;
 };
 
+/** The values of every `{{env.NAME}}` the flow file and the two-actor file name. */
+const namedEnvValues = (plan: TwoActorPlan, env: Record<string, string | undefined>): Set<string> =>
+  new Set(
+    [...JSON.stringify([plan.flows, plan.file]).matchAll(TEMPLATE)].flatMap((m) => {
+      const value = m[1]!.startsWith("env.") ? env[m[1]!.slice(4)] : undefined;
+      return value === undefined ? [] : [value];
+    }),
+  );
+
 /**
- * A path as error text and the report show it: the captured values filled in (`/api/projects/3`), every
- * `{{env.NAME}}` left as the flow file wrote it — an environment value may be a secret (`?token={{env.API_TOKEN}}`),
- * and the report and the terminal must never hold it. The query, if any, is written out unencoded, the same way.
+ * The one place that decides whether a captured value may be shown. A value from the server can hold anything: an
+ * environment value it echoed, a token it issued, a newline that forges a report line. So only a whole number is
+ * shown, and not when it equals the value of a named `{{env.NAME}}`.
  */
-export const shownPath = (path: string, vars: Record<string, string>, query?: Record<string, string>): string => {
-  const show = (s: string): string => s.replace(TEMPLATE, (m, key: string) => (!key.startsWith("env.") && vars[key] !== undefined ? vars[key] : m));
-  const q = query ? Object.entries(query).map(([k, v]) => `${k}=${show(v)}`).join("&") : "";
-  return show(path) + (q ? `?${q}` : "");
+const showable = (value: string, envValues: ReadonlySet<string>): boolean => /^\d{1,18}$/.test(value) && !envValues.has(value);
+
+/**
+ * A path as error text and the report show it: a captured value only when it is {@link showable} (`/api/projects/3`),
+ * otherwise its `{{name}}`, and every `{{env.NAME}}` and the whole query as the flow file wrote them. The real values
+ * go only on the wire.
+ */
+export const shownPath = (path: string, vars: Record<string, string>, envValues: ReadonlySet<string>, query?: Record<string, string>): string => {
+  const shown = path.replace(TEMPLATE, (m, key: string) => (!key.startsWith("env.") && vars[key] !== undefined && showable(vars[key], envValues) ? vars[key] : m));
+  const q = query ? Object.entries(query).map(([k, v]) => `${k}=${v}`).join("&") : "";
+  return shown + (q ? `?${q}` : "");
 };
 
 const pointerAt = (body: unknown, pointer: string): unknown => {
@@ -362,7 +397,7 @@ const inconclusiveDetail = (s: number): string =>
 
 /**
  * Run every check of the plan. Never throws for a failed request: a check that stops midway records its error, and
- * its cleanup has run. Findings are 2xx answers to actor B (and neighbours both actors read).
+ * its cleanup has run if anything had gone out. Findings are 2xx answers to actor B (and neighbours both actors read).
  */
 export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOptions): Promise<TwoActorReport> {
   const env = opts.env ?? process.env;
@@ -370,8 +405,16 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const base = opts.baseUrl.replace(/\/+$/, "");
   const results: TwoActorCheckResult[] = [];
+  const envValues = namedEnvValues(plan, env);
   /** Whether the current check's flow sent a request yet (so it may have created something). */
   let sentAny = false;
+
+  const refuseHeaders = (at: string, headers: Record<string, string>, templates: Record<string, string> = {}): void => {
+    for (const [name, value] of Object.entries(headers)) {
+      const refusal = headerRefusal(name, templates[name], value);
+      if (refusal) throw new RequestFailed(`${at} not sent: ${refusal}`);
+    }
+  };
 
   /** One request through the guard. A transport failure throws: the check stops there. */
   const send = async (
@@ -383,11 +426,9 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     shown: string,
   ): Promise<Response> => {
     const sent = body ? mergeHeaders({ "content-type": body.type }, headers) : headers;
-    // What fetch would refuse is refused here, before anything is counted or sent, without quoting the value.
-    for (const [name, value] of Object.entries(sent)) {
-      const refusal = headerRefusal(name, undefined, value);
-      if (refusal) throw new RequestFailed(`${method} ${shown} not sent: ${refusal}`);
-    }
+    // Characters fetch cannot carry are refused here, before anything is counted or sent, without quoting the value.
+    // A header fetch rejects for its own reasons (`Expect`, `Transfer-Encoding`) goes on and ends in "got no answer".
+    refuseHeaders(`${method} ${shown}`, sent);
     try {
       new URL(base + path);
     } catch {
@@ -399,6 +440,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     if (body) init.body = body.text;
     if (timeoutMs > 0) init.signal = AbortSignal.timeout(timeoutMs);
     try {
+      sentAny = true;
       const res = await doFetch(base + path, init);
       opts.guard.recordExecuted();
       return res;
@@ -419,20 +461,14 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     let path = fillValue(step.path, vars, env, true) as string;
     if (step.query) path += `?${new URLSearchParams(fillValue(step.query, vars, env) as Record<string, string>).toString()}`;
     // Error text names the path without any environment value: `path` itself goes only on the wire.
-    const shown = shownPath(step.path, vars, step.query);
+    const shown = shownPath(step.path, vars, envValues, step.query);
     const label = cleanup
       ? `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${shown}`
       : `flow "${flow.name}" step "${step.name ?? `${step.method} ${step.path}`}"`;
-    const stepHeaders = fillValue(step.headers ?? {}, vars, env) as Record<string, string>;
-    for (const [name, value] of Object.entries(stepHeaders)) {
-      const refusal = headerRefusal(name, step.headers![name], value);
-      if (refusal) throw new RequestFailed(`${step.method} ${shown} not sent: ${refusal}`);
-    }
-    const headers = mergeHeaders(opts.owner, stepHeaders);
+    const headers = mergeHeaders(opts.owner, fillValue(step.headers ?? {}, vars, env) as Record<string, string>);
     const body = step.form
       ? { text: new URLSearchParams(fillValue(step.form, vars, env) as Record<string, string>).toString(), type: "application/x-www-form-urlencoded" }
       : json(step.body === undefined ? undefined : fillValue(step.body, vars, env));
-    sentAny = true;
     const res = await send(step.method, path, headers, body, cleanup, shown);
     const want = step.expect === undefined ? undefined : ([] as number[]).concat(step.expect);
     const ok = (want ? want.includes(res.status) : cleanup ? is2xx(res.status) : res.status >= 200 && res.status < 400) || alsoOk.includes(res.status);
@@ -501,10 +537,18 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     let deletedByOther = false;
     sentAny = false;
     try {
+      // Every header known by now is refused before the first request, so nothing gets created that a bad cleanup
+      // header could not delete. One built from a captured value is known only when it is sent.
+      for (const step of [...flow.steps, ...flow.cleanup]) {
+        const known = Object.fromEntries(Object.entries(step.headers ?? {}).filter(([, t]) => [...t.matchAll(TEMPLATE)].every((m) => m[1]!.startsWith("env."))));
+        refuseHeaders(`${step.method} ${shownPath(step.path, {}, envValues, step.query)}`, mergeHeaders(opts.owner, fillValue(known, {}, env) as Record<string, string>), known);
+      }
+      if (probes[0]) refuseHeaders(`${probeMethod[probes[0]]} ${check.resource}`, opts.other);
+
       for (const step of flow.steps) await runStep(flow, step, vars);
       const path = fillValue(check.resource, vars, env, true) as string;
-      // What the report and error text name: no environment value in it.
-      const shown = shownPath(check.resource, vars);
+      // What the report and error text name: no environment value in it, no captured value but a whole number.
+      const shown = shownPath(check.resource, vars, envValues);
       const record = (probe: TwoActorProbe, method: string, at: string, s: number, what: string, wstgId = wstgDirect): void => {
         const outcome = outcomeOf(s);
         const detail =
@@ -525,13 +569,15 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
         const idName = [...check.resource.matchAll(TEMPLATE)].pop()![1]!;
         const id = vars[idName] ?? "";
         if (!/^\d+$/.test(id)) {
-          result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: shown, outcome: "skipped", detail: `the id ${JSON.stringify(id)} is not a number` });
+          result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: shown, outcome: "skipped", detail: `the id {{${idName}}} is not a number` });
         } else {
           for (let d = 1; d <= check.neighbours; d++) {
             for (const n of [Number(id) - d, Number(id) + d]) {
               if (n < 0) continue;
               const wire = fillValue(check.resource, { ...vars, [idName]: String(n) }, env, true) as string;
-              const at = shownPath(check.resource, { ...vars, [idName]: String(n) });
+              // A neighbour is a number made here, so it names the record it reached, unless the id itself is not
+              // shown: id ± d would give it away.
+              const at = showable(id, envValues) ? shownPath(check.resource, { ...vars, [idName]: String(n) }, envValues) : shown;
               const s = await status("GET", wire, at, opts.other);
               if (!is2xx(s)) {
                 const outcome = outcomeOf(s);
@@ -552,10 +598,10 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
                 ownerStatus: o,
                 detail:
                   ownerOutcome === "finding"
-                    ? `both actors read id ${n}, so it is private to neither (${s} / ${o})`
+                    ? `both actors read it, so it is private to neither (${s} / ${o})`
                     : ownerOutcome === "denied"
-                      ? `the other actor reads id ${n} and the owner is refused (${o}): it is the other actor's own`
-                      : `the other actor reads id ${n}; the owner's answer (${o}) is neither a refusal nor a success, so not known whose it is`,
+                      ? `the other actor reads it and the owner is refused (${o}): it is the other actor's own`
+                      : `the other actor reads it; the owner's answer (${o}) is neither a refusal nor a success, so not known whose it is`,
               });
             }
           }
@@ -569,19 +615,18 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     } catch (e) {
       result.error = reportable(e);
     } finally {
-      // The flow's own cleanup, as the owner, whatever happened above. A step whose values were never captured cannot
-      // be sent; once the flow sent anything, that is a cleanup error, since what it created may still be there.
-      for (const step of flow.cleanup) {
+      // The flow's own cleanup, as the owner, whatever happened above: a check that sent nothing created nothing, so it
+      // has none. A step whose values were never captured cannot be sent; that is a cleanup error, since what the flow
+      // created may still be there.
+      for (const step of sentAny ? flow.cleanup : []) {
         const names = [...JSON.stringify(step).matchAll(TEMPLATE)].map((m) => m[1]!);
         const missing = [...new Set(names.filter((n) => !n.startsWith("env.") && n !== "uid" && !(n in vars)))];
         if (missing.length) {
-          if (sentAny) {
-            const which = missing.map((n) => `{{${n}}}`).join(", ");
-            result.cleanupErrors.push(
-              `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${step.path} was not sent: ${which} was never captured, ` +
-                `so the resource ${check.resource} the flow created may still be on the server`,
-            );
-          }
+          const which = missing.map((n) => `{{${n}}}`).join(", ");
+          result.cleanupErrors.push(
+            `flow "${flow.name}" cleanup "${step.name ?? step.method}": ${step.method} ${step.path} was not sent: ${which} was never captured, ` +
+              `so the resource ${check.resource} the flow created may still be on the server`,
+          );
           continue;
         }
         try {
@@ -592,6 +637,15 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
         }
       }
     }
+    const answers = result.cases.filter((c) => c.status !== undefined);
+    // A 401 to everything says the server never looked at the resource: the credentials may be dead, so it is no refusal.
+    if (answers.every((c) => c.status === 401)) {
+      for (const c of answers) {
+        c.outcome = "inconclusive";
+        c.detail = "the other actor got 401 to every probe: its credentials may not be valid, so access was not checked";
+      }
+    }
+    if (answers.length === 0 && result.error === undefined) result.notTested = "no probe got an answer from the other actor";
   }
   return { baseUrl: opts.baseUrl, role: opts.role, checks: results, findings: results.flatMap((r) => r.cases).filter((c) => c.outcome === "finding").length };
 }
@@ -604,7 +658,8 @@ export function renderTwoActorReport(r: TwoActorReport): string[] {
     lines.push(`  ${c.check} (flow "${c.flow}")`);
     if (c.notRun) lines.push(`    ⊘ not run: ${c.notRun}`);
     for (const k of c.cases) lines.push(`    ${mark[k.outcome]} [${k.wstgId}] ${k.probe}: ${k.method} ${k.path} — ${k.detail}`);
-    if (c.error) lines.push(`    ✗ stopped: ${c.error} (the cleanup ran)`);
+    if (c.notTested) lines.push(`    ✗ not tested: ${c.notTested}`);
+    if (c.error) lines.push(`    ✗ stopped: ${c.error}`);
     for (const e of c.cleanupErrors) lines.push(`    ✗ cleanup failed, the data may still be there: ${e}`);
   }
   const all = r.checks.flatMap((c) => c.cases);
@@ -615,8 +670,19 @@ export function renderTwoActorReport(r: TwoActorReport): string[] {
   return lines;
 }
 
-/** Whether a report should fail the run: a finding, an inconclusive case, a check that stopped or a cleanup that failed. */
+/** Whether any probe of the run got an answer from the other actor: the owner's steps and cleanup do not count. */
+export function twoActorAnswered(r: TwoActorReport): boolean {
+  return r.checks.some((c) => c.cases.some((k) => k.status !== undefined));
+}
+
+/**
+ * Whether a report should fail the run: a finding, an inconclusive case, a check that stopped, a cleanup that failed,
+ * or a check no probe of which got an answer while another check's did.
+ */
 export function twoActorFailed(r: TwoActorReport): boolean {
-  return r.checks.some((c) => c.error !== undefined || c.cleanupErrors.length > 0 || c.cases.some((k) => k.outcome === "finding" || k.outcome === "inconclusive"));
+  return (
+    r.checks.some((c) => c.error !== undefined || c.cleanupErrors.length > 0 || c.cases.some((k) => k.outcome === "finding" || k.outcome === "inconclusive")) ||
+    (twoActorAnswered(r) && r.checks.some((c) => c.notTested !== undefined))
+  );
 }
 
