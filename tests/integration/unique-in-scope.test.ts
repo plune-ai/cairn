@@ -80,6 +80,20 @@ describe("visible and unique in its scope (integration, real Chromium)", () => {
     ]);
   });
 
+  it("two «Delete» buttons hidden while they are looked for, back when the click comes: still no blind first one", async () => {
+    const { els } = await open("/ambiguous.html");
+    const del = els.find((e) => e.role === "button" && e.name === "Delete")!;
+    const page = (backend as unknown as { page: { evaluate(script: string): Promise<unknown> } }).page;
+    await page.evaluate(`{
+      const both = [...document.querySelectorAll("button")].filter((b) => b.textContent.trim() === "Delete");
+      for (const b of both) b.style.display = "none";
+      setTimeout(() => { for (const b of both) b.style.display = ""; }, 400);
+    }`);
+    const res = await backend.act({ kind: "click", ref: del.ref, watch: false });
+    expect(res.ok).toBe(false);
+    expect(await now()).toContain("Clicked: nothing");
+  });
+
   it("two links with the same name that go to the same place are one destination: clicked, not ambiguous", async () => {
     const { els } = await open("/ambiguous.html");
     const more = els.find((e) => e.role === "link" && e.name === "More")!;

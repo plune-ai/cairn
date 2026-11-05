@@ -62,13 +62,14 @@ interface Found {
  * #226: the one visible element in the element's scope — never the first of several. One visible match is it. Several
  * are narrowed by the accessible name of the row, card or section they sit in (nearest first), taking the first
  * container after which exactly one is left. Links that all lead to the same address are one destination. Otherwise
- * `ambiguous`: the caller does not click. With no visible match, the locator is the old first-of-all one, so a hidden
- * or removed element still fails with Playwright's own reason.
+ * `ambiguous`: the caller does not click. With no visible match, the locator is of all of them and picks none: a hidden
+ * or removed element still fails with Playwright's own reason, and several that come back while it waits are refused by
+ * its strict mode rather than clicked blindly.
  */
 async function findOne(page: Page, t: Target): Promise<Found> {
   const visible = locate(page, t).filter({ visible: true });
   const count = await visible.count().catch(() => 0);
-  if (count === 0) return { locator: locate(page, t).first(), count: 0 };
+  if (count === 0) return { locator: locate(page, t), count: 0 };
   if (count === 1) return { locator: visible, count };
   const root = t.scope ? page.getByRole(t.scope.role as PwRole, t.scope.name ? { name: t.scope.name, exact: true } : {}) : page;
   for (const ctx of t.context ?? []) {
