@@ -76,10 +76,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press a
   button that says it opens something (`aria-haspopup`, `aria-expanded` or `aria-controls`, read from the element);
-  every other button is listed in `skipped` with the reason and never pressed, and on top of that nothing a
-  destructive-action filter refuses (a delete, a sign-out, «Close account», a name that pays or orders: Buy, Pay,
-  Purchase, Order, Checkout, Subscribe, Upgrade, Купити, Оплатити, Замовити, Підписатися), no completing button (Save,
-  Submit…) and no button that submits its form is pressed. A wizard's Next and Back are whole names: «Next», «Next ›»,
+  every other button is listed in `skipped` with the reason and never pressed. The invariant: while overlays are
+  explored, nothing Cairn presses can change the server, whatever the button is called. The lib backend holds it on
+  the network: from the first press to the last (and on an error) it aborts every request whose method is not GET,
+  HEAD or OPTIONS — form posts, fetch and XHR writes, beacons — and lists each one it stopped, with the element
+  pressed before it, in `overlays.json` (`guard`, `blocked`) and `report.md`. A backend that cannot guard the network
+  (cli) presses no trigger and no wizard step there; it reads the overlays already open and says so (`note`). On top
+  of the guard, for every press (triggers, nested probes, a wizard's Next and Back): no element that submits a form (a
+  submit button or a `<button>` with no type inside a form or joined to it by `form=`), nothing disabled. Names are
+  kept only where the guard cannot see: a deletion or a sign-out, which is often a GET link («Close account», «Sign
+  out», «Delete»), and a completion (Save, Submit…). There is no list of payment or order names: the guard stops
+  what such a button sends, and «Sort order» or «Purchase history» are explored like any trigger. A wizard's Next and Back are whole names: «Next», «Next ›»,
   «Далі», «Назад»; «Next: place order» is no step. Each overlay found is recorded, in
   stack order (page → overlay → nested overlay), in `overlays.json` and `report.json` (`overlays`) and as an *Overlays*
   section of `report.md`: its kind (`dialog`, `alertdialog`, `drawer`, `menu`, `listbox`), what opened it, its
@@ -92,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first: the element there lies outside the overlay and is no link, button, field or other control; when there is no
   such point it is recorded as not tried (`notTried`). A dialog is a wizard only when it has a Next and a Back or a
   step indicator («Step 1 of 3», a progressbar); an `alertdialog` never is, and «Continue» is no Next. Its Next and
-  Back are pressed, each only when enabled and passing the filters, to list its steps; where Next is blocked the
+  Back are pressed, each only when enabled, passing the filters and not submitting a form, to list its steps; Back is
+  read from the step that shows it and pressed once to check it returns to the step before; where Next is blocked the
   page's message is recorded, the empty fields are filled once and Next tried again. Nothing is submitted. Elements inside a dialog now carry its scope, so their locator is
   `getByRole('dialog', { name }).getByRole(role, { name })` (in `act`, `verify`, `getState`, `report.md`, the
   interaction map and the codegen prompt), and a same-named element on the page is not confused with them. While a

@@ -46,6 +46,7 @@ study.json    # PageStudy
 report.json   # ValidationReport + scores, deadClicks
 report.md     # the same for a person, with a Dead clicks section: clicks with no change seen, to check by hand
 overlays.json # dialogs, drawers, menus and wizards found as states: trigger, exits, elements, wizard steps; lib backend
+              # guard + blocked: the writes stopped while exploring them (nothing but GET/HEAD/OPTIONS leaves the browser)
 requests.json # requests the clicks started: method, path, status (no bodies, headers or query values); lib backend
 ```
 + a Langfuse trace (link in stdout).
