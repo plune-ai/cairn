@@ -1,4 +1,4 @@
-import { chromium, type Browser, type BrowserContext, type Download, type Locator, type Page, type Request } from "playwright";
+import { chromium, type Browser, type BrowserContext, type BrowserServer, type Download, type Locator, type Page, type Request } from "playwright";
 import type { BrowserBackend } from "../gateway.js";
 import {
   CLICK_EFFECT_WINDOW_MS,
@@ -92,7 +92,14 @@ const RECORDED_REQUESTS = new Set(["document", "fetch", "xhr"]);
 
 /** #225 review 3: the methods the write guard lets through: by HTTP's own rule they read and change nothing. */
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-type PwRoute = Parameters<Parameters<BrowserContext["route"]>[1]>[0];
+
+/** The Blink features every browser of this backend runs without. */
+const BLINK_OFF = "AutomationControlled";
+/**
+ * #225 review 4: the one API seen sending where the browser's own Fetch interception does not look (full Chromium and
+ * Chrome; the headless shell has none): it does not exist in the browser that presses.
+ */
+const SENDS_PAST_FETCH = "BackgroundFetch";
 
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** `p`, or `fallback` when it fails or takes longer than `ms`. */
@@ -102,6 +109,23 @@ const within = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
 /** The page's ARIA snapshot, or undefined when it cannot be read (mid-navigation, page gone). */
 const ariaOf = (page: Page): Promise<string | undefined> =>
   page.locator("body").ariaSnapshot({ timeout: STATE_READ_TIMEOUT_MS }).catch(() => undefined);
+
+/** #225 review 4: runs in the crawler's page: its tab's sessionStorage, which no storageState holds. */
+const readTabStorage = (): { origin: string; items: [string, string][] } => {
+  const g = globalThis as unknown as { location: { origin: string }; sessionStorage: Record<string, string> };
+  return { origin: g.location.origin, items: Object.entries(g.sessionStorage) };
+};
+
+/** #225 review 4: runs before a page's scripts in the pressing context: the session is there when the app looks for it. */
+const seedTabStorage = (tab: { origin: string; items: [string, string][] }): void => {
+  const g = globalThis as unknown as { location: { origin: string }; sessionStorage: { getItem(k: string): string | null; setItem(k: string, v: string): void } };
+  if (g.location.origin !== tab.origin) return;
+  try {
+    for (const [k, v] of tab.items) if (g.sessionStorage.getItem(k) === null) g.sessionStorage.setItem(k, v);
+  } catch {
+    // a sandboxed frame has no storage to fill
+  }
+};
 
 /**
  * Only the app's own origin is recorded: an analytics call on another host answering 204 to every click would make
@@ -142,20 +166,25 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private acting = false;
   /** #224: when each endpoint was requested outside any action, to tell a poll from a click's request. */
   private readonly background = new Map<string, number[]>();
-  /** #225 review 3: the write guard while it is on: its route handler and what it stopped. */
-  private guard?: { handler: (route: PwRoute) => Promise<void>; blocked: BlockedRequest[] };
+  /**
+   * #225 review 4: while the write guard is on, a second backend in a browser process of its own, which takes every
+   * observe, act, verify and getState. This one's context, page and fields are not touched until it is gone.
+   */
+  private pressing?: PlaywrightLibBackend;
+  /** #225 review 4: on a pressing backend, the process of its browser, to kill. */
+  private server?: BrowserServer;
   /** #225 review 3: the element (or key) pressed last, named beside each request the guard stops. */
   private lastPressed?: { role: string; name?: string };
 
   constructor(private readonly opts: PlaywrightLibOptions = {}) {}
 
+  private launchOptions(blinkOff: string) {
+    return { headless: this.opts.headless ?? true, channel: this.opts.channel, args: [`--disable-blink-features=${blinkOff}`] };
+  }
+
   private async launch(): Promise<Browser> {
     try {
-      return await chromium.launch({
-        headless: this.opts.headless ?? true,
-        channel: this.opts.channel,
-        args: ["--disable-blink-features=AutomationControlled"],
-      });
+      return await chromium.launch(this.launchOptions(BLINK_OFF));
     } catch (e) {
       // Backstop for observe/design: translate Playwright's raw "Executable doesn't exist …" into
       // the one actionable message. Covers the case the up-front preflight can't (e.g. the
@@ -165,14 +194,17 @@ export class PlaywrightLibBackend implements BrowserBackend {
     }
   }
 
+  /** A context with this backend's options: the crawler's, and the one the write guard presses in. */
+  private newContext(storageState?: PwStorageState): Promise<BrowserContext> {
+    return this.browser!.newContext({
+      ...(storageState ? { storageState } : {}),
+      ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
+    });
+  }
+
   private async ensurePage(): Promise<Page> {
     this.browser ??= await this.launch();
-    if (!this.context) {
-      this.context = await this.browser.newContext({
-        ...(this.opts.storageState ? { storageState: this.opts.storageState as unknown as PwStorageState } : {}),
-        ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
-      });
-    }
+    this.context ??= await this.newContext(this.opts.storageState as unknown as PwStorageState | undefined);
     if (!this.page) {
       this.page = await this.context.newPage();
       this.page.on("console", (m) => {
@@ -220,6 +252,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async observe(opts: ObserveOptions): Promise<Observation> {
+    if (this.pressing) return this.pressing.observe(opts);
     let status: number | undefined;
     if (opts.url) {
       this.lastStatus = undefined;
@@ -290,6 +323,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async act(action: Action): Promise<ActResult> {
+    if (this.pressing) return this.pressing.act(action);
     this.acting = true;
     try {
       const page = await this.ensurePage();
@@ -544,6 +578,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async verify(elements: ElementRef[]): Promise<VerifiedElement[]> {
+    if (this.pressing) return this.pressing.verify(elements);
     const page = await this.ensurePage();
     const out: VerifiedElement[] = [];
     for (const el of elements) {
@@ -559,6 +594,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async getState(el: ElementRef): Promise<ElementState> {
+    if (this.pressing) return this.pressing.getState(el);
     const page = await this.ensurePage();
     const loc = locate(page, el).first();
     const visible = await loc.isVisible().catch(() => false);
@@ -611,43 +647,66 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   /**
-   * #225 review 3: the write guard. While it is on, every request of the browser context — the page, the tabs it
-   * opens, its frames — whose method is not GET, HEAD or OPTIONS is aborted before it leaves the browser: a form post,
-   * a fetch or XHR write, a beacon, whatever the button that sent it was called. Each one stopped is recorded with the
-   * element pressed last before it. `release` lifts it (the caller does so in `finally`, so an error lifts it too).
+   * #225 review 4: the write guard has no release moment. Pressing happens in a throwaway browser process, in a context
+   * made from the crawler's storage with the same options. Before that context exists, a Fetch interception on the
+   * browser itself is on, and it is never taken off: every request whose method is not GET, HEAD or OPTIONS — from a
+   * page, a tab it opens, a frame, any worker — is aborted (a form post, a fetch or XHR write, a beacon, whatever the
+   * button that sent it was called) and recorded with the element pressed last before it. `release` kills the process.
+   * Nothing flows back: the crawler's own context and page never saw a press.
+   *
+   * Why not a route on a context, closed at the end: a route's interception belongs to each page, frame and worker, and
+   * goes when they go. What it holds is then let go: POSTs reached a probe server with the route on from a popup closing
+   * itself, a cross-origin frame removed, a context closing (in full Chromium and Chrome), and also from a SharedWorker
+   * and fetchLater, which it never saw. The browser's own interception saw them all, and a killed process runs no teardown.
    * Not covered: WebSocket messages, and a GET that changes the server against HTTP's rule.
    */
   async guardWrites(): Promise<WriteGuard> {
-    await this.ensurePage();
-    if (this.guard) throw new Error("The write guard is already on.");
+    if (this.pressing) throw new Error("The write guard is already on.");
+    const page = await this.ensurePage();
+    // A plain storageState leaves out IndexedDB and the tab's sessionStorage, where an app may keep its session.
+    // ponytail: IndexedDB is copied whole, however large; sessionStorage only of the origin the crawler's page is on.
+    const state = await this.context!.storageState({ indexedDB: true });
+    const tab = await within<{ origin: string; items: [string, string][] } | undefined>(page.evaluate(readTabStorage), STATE_READ_TIMEOUT_MS, undefined);
+    const server = await chromium.launchServer(this.launchOptions(`${BLINK_OFF},${SENDS_PAST_FETCH}`));
+    const pressing = new PlaywrightLibBackend(this.opts);
+    pressing.server = server;
     const blocked: BlockedRequest[] = [];
-    this.lastPressed = undefined;
-    const handler = async (route: PwRoute): Promise<void> => {
-      const req = route.request();
-      const method = req.method().toUpperCase();
-      if (SAFE_METHODS.has(method)) {
-        await route.fallback().catch(() => undefined);
-        return;
-      }
-      const path = this.blockedPath(req.url());
-      const pressed = this.lastPressed;
-      const same = blocked.find((b) => b.method === method && b.path === path && b.pressed?.role === pressed?.role && b.pressed?.name === pressed?.name);
-      if (same) same.count++;
-      else blocked.push({ method, path, ...(pressed ? { pressed: { ...pressed } } : {}), count: 1 });
-      // "aborted" (net::ERR_ABORTED): a stopped form post leaves the page where it was, with no error page over it
-      await route.abort("aborted").catch(() => undefined);
-    };
-    await this.context!.route("**/*", handler);
-    this.guard = { handler, blocked };
+    try {
+      pressing.browser = await chromium.connect(server.wsEndpoint());
+      const cdp = await pressing.browser.newBrowserCDPSession();
+      cdp.on("Fetch.requestPaused", ({ requestId, request }) => {
+        const method = request.method.toUpperCase();
+        if (SAFE_METHODS.has(method)) {
+          void cdp.send("Fetch.continueRequest", { requestId }).catch(() => undefined);
+          return;
+        }
+        const path = pressing.blockedPath(request.url);
+        const pressed = pressing.lastPressed;
+        const same = blocked.find((b) => b.method === method && b.path === path && b.pressed?.role === pressed?.role && b.pressed?.name === pressed?.name);
+        if (same) same.count++;
+        else blocked.push({ method, path, ...(pressed ? { pressed: { ...pressed } } : {}), count: 1 });
+        // "Aborted" (net::ERR_ABORTED): a stopped form post leaves the page where it was, with no error page over it
+        void cdp.send("Fetch.failRequest", { requestId, errorReason: "Aborted" }).catch(() => undefined);
+      });
+      await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+      pressing.context = await pressing.newContext(state);
+      if (tab) await pressing.context.addInitScript(seedTabStorage, tab);
+    } catch (e) {
+      await server.kill().catch(() => undefined);
+      throw e;
+    }
+    this.pressing = pressing;
     return {
       release: async () => {
-        if (this.guard?.handler === handler) {
-          await this.context?.unroute("**/*", handler).catch(() => undefined);
-          this.guard = undefined;
-        }
+        if (this.pressing === pressing) await this.discardPressing();
         return blocked.map((b) => ({ ...b }));
       },
     };
+  }
+
+  private async discardPressing(): Promise<void> {
+    await this.pressing?.server?.kill().catch(() => undefined);
+    this.pressing = undefined;
   }
 
   /** A stopped request's path, written like a recorded one; with its origin when that is not the page's. */
@@ -667,12 +726,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
         await this.context?.close().catch(() => undefined);
         this.page = undefined;
         this.browser ??= await this.launch();
-        this.context = await this.browser.newContext({
-          storageState: state as unknown as PwStorageState,
-          ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
-        });
-        // #225 review 3: a session loaded while the write guard is on keeps it on in the new context
-        if (this.guard) await this.context.route("**/*", this.guard.handler);
+        this.context = await this.newContext(state as unknown as PwStorageState);
         this.page = await this.context.newPage();
       },
       save: async (): Promise<StorageState> => {
@@ -689,12 +743,12 @@ export class PlaywrightLibBackend implements BrowserBackend {
   }
 
   async close(): Promise<void> {
+    await this.discardPressing();
     await this.page?.close().catch(() => undefined);
     await this.context?.close().catch(() => undefined);
     await this.browser?.close().catch(() => undefined);
     this.page = undefined;
     this.context = undefined;
     this.browser = undefined;
-    this.guard = undefined;
   }
 }
