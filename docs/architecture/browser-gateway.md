@@ -105,15 +105,28 @@ and a Back or a step indicator, never an `alertdialog`. The result goes to `over
 
 #### The invariant: exploring overlays changes nothing on the server
 
-While overlays are explored, nothing Cairn presses can change the server, whatever the button is called. This rests
-on the network, not on names:
+Exploring overlays changes nothing on the server, whatever the button is called: not while it runs, and not after it
+ends. No write sent because of a press may ever arrive. This rests on the network, not on names:
 
-- **The write guard** (`guardWrites()`, lib backend). From before the first press to after the last — lifted in
-  `finally`, so also on an error — the browser context routes every request and aborts each one whose method is not
-  GET, HEAD or OPTIONS: a form post, a fetch or XHR write, a beacon, a form sent from script, from the page, its
-  frames and the tabs it opens. Each one stopped is recorded (method, path written like a recorded request, the
-  element pressed last before it, how often) and reported: `overlays.json` (`guard`, `blocked`) and a table in
-  `report.md`. It does not see a WebSocket message, nor a GET that changes the server against HTTP's rule.
+- **Presses happen in a throwaway browser** (`guardWrites()`, lib backend). A browser process of its own, with a
+  context made from the crawler's `storageState()`, IndexedDB included, with the same context options, and with the
+  sessionStorage of the crawler's tab carried in for the origin it is on. Until the guard is released, every `observe`,
+  `act`, `verify` and `getState` goes there. The crawler's own context and page never see a press and come back as they
+  were, refs included.
+- **The write guard is on the browser, not on a page.** A Fetch interception on that browser, on before its first
+  context exists and never taken off, aborts each request whose method is not GET, HEAD or OPTIONS: a form post, a fetch
+  or XHR write, a beacon, a keepalive request, a form sent from script, from a page, its frames, the tabs it opens or
+  any worker. Each one stopped is recorded (method, path written like a recorded request, the element pressed last
+  before it, how often) and reported: `overlays.json` (`guard`, `blocked`) and a table in `report.md`. Background Fetch,
+  which sends where this interception does not look, is switched off in that browser.
+- **There is no release moment.** The release — in `finally`, so also on an error — kills that process with the guard
+  on. What a page was sending, and what it left for later (an outbox in localStorage), ends with it. Nothing flows
+  back: no cookie, no storage. So nothing it did can reach the server later. A route on a context would not hold this:
+  its interception belongs to each page, frame and worker, and what it holds is let go when they go. Probes saw POSTs
+  arrive with the route on from a popup closing itself, from a cross-origin frame removed, and from a context closing;
+  a SharedWorker and `fetchLater` passed it altogether.
+- **What it does not see.** A WebSocket message, and a GET that changes the server against HTTP's rule. A cookie set
+  while pressing stays there too: on a site that rotates its session on every GET, the crawler is signed out afterwards.
 - **No guard, no press.** A backend that cannot guard the network (the cli backend: the gateway's `guardWrites()`
   answers undefined) presses no trigger and no wizard step while exploring overlays. It reads the overlays already
   open and says so (`guard: "none"`, `note`).

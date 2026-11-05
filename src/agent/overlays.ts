@@ -31,10 +31,11 @@ import {
  * the nested overlays it opens, and the steps of a wizard. Detection is the ARIA snapshot's (`observe/overlays.ts`);
  * no LLM here.
  *
- * The invariant (#225 review 3): while overlays are explored, nothing cairn presses can change the server, whatever
- * the button is called. The backend's write guard aborts every request but GET, HEAD and OPTIONS from the first press
- * to the last, and lifts it in `finally`; what it stopped is in the result. A backend that cannot guard the network
- * (cli) presses no trigger and no wizard step: it reads the overlays already open and says so.
+ * The invariant (#225 reviews 3, 4): exploring overlays changes nothing on the server, whatever the button is called:
+ * not while it runs, not after it ends. Every press happens under the backend's write guard, in a throwaway browser
+ * that aborts every request but GET, HEAD and OPTIONS and is discarded, guard on, in `finally`; what it stopped is in
+ * the result. A backend that cannot guard the network (cli) presses no trigger and no wizard step: it reads the overlays
+ * already open and says so.
  *
  * On top of the guard, checks that do not depend on a name, for every press (triggers, nested probes, Next, Back): an
  * element that submits a form is not pressed, nor a disabled one. A trigger must say it opens something
@@ -327,8 +328,9 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     state.exits.sort((a, b) => EXIT_ORDER.indexOf(a.kind) - EXIT_ORDER.indexOf(b.kind));
   }
 
-  // ── the write guard (#225 review 3) ────────────────────────────────────────
-  // On before the first press, off after the last, also on an error. Without one nothing is pressed at all.
+  // ── the write guard (#225 reviews 3, 4) ────────────────────────────────────
+  // On before the first press; everything below happens in its throwaway browser, which goes away after the last press,
+  // also on an error. The crawler's own page never saw any of it. Without a guard nothing is pressed at all.
   const guard = gateway.guardWrites ? await gateway.guardWrites().catch(() => undefined) : undefined;
   if (!guard) {
     for (const top of overlayStack(baseline)) {
@@ -386,7 +388,6 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
         // one trigger that fails to open must not end the exploration of the others
       }
     }
-    await gateway.observe({ url }).catch(() => undefined); // leave the page as it was found
     return { candidates: found, maxTriggers: limit };
   }
 }

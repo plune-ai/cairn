@@ -76,11 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press a
   button that says it opens something (`aria-haspopup`, `aria-expanded` or `aria-controls`, read from the element);
-  every other button is listed in `skipped` with the reason and never pressed. The invariant: while overlays are
-  explored, nothing Cairn presses can change the server, whatever the button is called. The lib backend holds it on
-  the network: from the first press to the last (and on an error) it aborts every request whose method is not GET,
-  HEAD or OPTIONS — form posts, fetch and XHR writes, beacons — and lists each one it stopped, with the element
-  pressed before it, in `overlays.json` (`guard`, `blocked`) and `report.md`. A backend that cannot guard the network
+  every other button is listed in `skipped` with the reason and never pressed. The invariant: exploring overlays
+  changes nothing on the server, whatever the button is called, not while it runs and not after it ends. The lib
+  backend holds it on the network: exploration presses in a throwaway browser made from the crawler's storage, which
+  aborts every request whose method is not GET, HEAD or OPTIONS — form posts, fetch and XHR writes, beacons — and lists
+  each one it stopped, with the element pressed before it, in `overlays.json` (`guard`, `blocked`) and `report.md`. At
+  the end, also on an error, that browser is killed with the guard on, so nothing it did can reach the server later,
+  and nothing flows back: the crawler's own page never saw a press. Not seen: a WebSocket message, a GET that changes
+  the server. A backend that cannot guard the network
   (cli) presses no trigger and no wizard step there; it reads the overlays already open and says so (`note`). On top
   of the guard, for every press (triggers, nested probes, a wizard's Next and Back): no element that submits a form (a
   submit button or a `<button>` with no type inside a form or joined to it by `form=`), nothing disabled. Names are

@@ -203,14 +203,20 @@ describe("which button exploration may press (#225 review)", () => {
 });
 
 describe("a backend that cannot guard the network (#225 review 3)", () => {
-  it("presses no trigger and no wizard step; it reads what is already open and says why", async () => {
+  // Both ways a backend has no guard: the gateway's own (the cli backend's: it answers undefined) and no method at all.
+  it.each([
+    { how: "guardWrites answers undefined", noGuard: { guardWrites: async () => undefined } },
+    { how: "no guardWrites", noGuard: {} },
+  ])("presses no trigger and no wizard step ($how); it reads what is already open and says why", async ({ noGuard }) => {
     const { exploreOverlays } = await import("../../src/agent/overlays.js");
+    // The cookie dialog leaves the page live, so its buttons are real candidates: pressed the moment a guard is assumed.
     const aria = `- main:
   - button "New project"
   - button "Pay"
 - dialog "Cookies":
   - button "Close"`;
-    const obs = { url: "https://app.test/", screenshotB64: "", ariaSnapshot: aria, capturedBy: "cli" as const };
+    const nonModal = ["dialog|Cookies"];
+    const obs = { url: "https://app.test/", screenshotB64: "", ariaSnapshot: aria, nonModal, capturedBy: "cli" as const };
     const acts: unknown[] = [];
     const states: unknown[] = [];
     const gateway = {
@@ -218,6 +224,7 @@ describe("a backend that cannot guard the network (#225 review 3)", () => {
       act: async (a: unknown) => (acts.push(a), { ok: true }),
       verify: async () => [],
       getState: async () => (states.push(1), { visible: true, enabled: true, popup: { hasPopup: "dialog" } }),
+      ...noGuard,
       session: () => {
         throw new Error("no session");
       },
@@ -226,7 +233,10 @@ describe("a backend that cannot guard the network (#225 review 3)", () => {
       },
       close: async () => undefined,
     };
-    const study = { url: obs.url, screenshotB64: "", ariaYaml: aria, elements: parseAriaSnapshot(aria), capturedBy: "cli" as const };
+    const elements = parseAriaSnapshot(aria, { nonModal: new Set(nonModal) });
+    expect(elements.find((e) => e.name === "New project")).toMatchObject({ role: "button", interactive: true });
+    expect(elements.find((e) => e.name === "New project")!.underOverlay).toBeUndefined();
+    const study = { url: obs.url, screenshotB64: "", ariaYaml: aria, elements, capturedBy: "cli" as const };
     const out = await exploreOverlays({ gateway, url: obs.url, study });
 
     expect(acts.filter((a) => (a as { kind: string }).kind === "click")).toEqual([]);

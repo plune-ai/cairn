@@ -196,11 +196,12 @@ export interface BlockedRequest {
 }
 
 /**
- * #225 review 3: the network guard of a backend. While it is on, every request of the browser context whose method is
- * not GET, HEAD or OPTIONS (a form post, a fetch or XHR write, a beacon) is aborted before it leaves the browser.
+ * #225 review 3: the network guard of a backend. While it is on, everything the backend does happens in a throwaway
+ * browser, where every request whose method is not GET, HEAD or OPTIONS (a form post, a fetch or XHR write, a beacon)
+ * is aborted before it leaves the browser.
  */
 export interface WriteGuard {
-  /** Lifts the guard and returns what it stopped, in the order first seen. */
+  /** Discards that browser with the guard still on and returns what it stopped, in the order first seen. */
   release(): Promise<BlockedRequest[]>;
 }
 
