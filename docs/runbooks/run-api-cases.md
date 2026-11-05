@@ -91,8 +91,9 @@ and `two-actor.json` in `--out`. A captured value is shown there only as a whole
 equals the value of an `{{env.NAME}}` that the flow file or `actors.json` names; everything else stays as written,
 `{{name}}`, `{{env.NAME}}` and the whole query, and the real values go only on the wire. A neighbour shows its computed
 number, unless the id it was computed from is not shown. So a secret from the environment never reaches the report or
-the terminal, with one known limit: a whole-number secret captured under another name can still be shown when neither
-file names it or when the server changed it (`007` echoed as `7`).
+the terminal, with one known limit: a whole number the server answered is shown unless it equals a
+value a file names, so a number that is a secret or part of one can be shown when neither file names that exact value
+(`007` echoed as `7`).
 
 Exit 1 on a finding, an inconclusive case, a check that stopped, a cleanup that failed, or a check no probe of which got
 an answer from the other actor while another check's did (the output names it: `not tested`). Otherwise exit 4 when a

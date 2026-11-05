@@ -298,9 +298,10 @@ export interface TwoActorReport {
 
 class RequestFailed extends Error {}
 
-/** The codes fetch fails with: Node's socket errors and undici's own. A code is only a string on an error: no other is repeated. */
+/** The codes fetch fails with: Node's socket and TLS errors and undici's own. A code is only a string on an error: no other is repeated. */
 const NETWORK_CODES = new Set([
   "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "ENOTFOUND", "ETIMEDOUT", "EAI_AGAIN", "EPIPE", "EHOSTUNREACH", "ENETUNREACH",
+  "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID",
   "UND_ERR_ABORTED", "UND_ERR_BODY_TIMEOUT", "UND_ERR_BPL_MISSING_UPSTREAM", "UND_ERR_CLOSED", "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_DESTROYED", "UND_ERR_HEADERS_OVERFLOW", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_INFO", "UND_ERR_INVALID_ARG",
   "UND_ERR_INVALID_RETURN_VALUE", "UND_ERR_NOT_SUPPORTED", "UND_ERR_PRX_TLS", "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH",

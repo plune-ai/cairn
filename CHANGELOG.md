@@ -28,8 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file or `actors.json` names; everything else stays as written, `{{name}}`, `{{env.NAME}}` and the whole query. A
   header whose characters cannot be sent is refused before anything goes out (one built from a captured value when it
   is sent), naming the header and not its value, and a URL that cannot be parsed is refused instead of sent. So a secret
-  from the environment never reaches the report or the terminal, with one known limit: a whole-number secret captured
-  under another name can still be shown when neither file names it or when the server changed it (`007` echoed as `7`).
+  from the environment never reaches the report or the terminal, with one known limit: a whole number the server answered is
+  shown unless it equals a value a file names, so a number that is a secret or part of one can be shown when neither
+  file names that exact value (`007` echoed as `7`).
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else

@@ -1005,6 +1005,7 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
     ["a code shaped like one but not on the list", Object.assign(new TypeError("x"), { cause: { code: "NOTACODE1234" } }), "network error"],
     ["a code of undici's", Object.assign(new TypeError("x"), { cause: { code: "UND_ERR_SOCKET" } }), "network: UND_ERR_SOCKET"],
     ["a code on the error itself", Object.assign(new Error("x"), { code: "ECONNRESET" }), "network: ECONNRESET"],
+    ["a staging address with a self-signed certificate", Object.assign(new TypeError("x"), { cause: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" } }), "network: DEPTH_ZERO_SELF_SIGNED_CERT"],
     ["an abort", new DOMException(`aborted ${SECRET}`, "AbortError"), "timeout"],
   ])("takes only a category from %s, never its message", async (_label, error, category) => {
     const { fetch } = fakeFetch((c) => (c.method === "POST" ? error : undefined));

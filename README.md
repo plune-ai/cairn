@@ -141,8 +141,9 @@ file or `actors.json` names; everything else stays as written, `{{name}}` and `{
 whole query. The real values go only on the wire. A header whose characters cannot be sent is refused before anything
 goes out, naming the header and the `{{env.NAME}}` it was built from (one built from a captured value is refused when
 it is sent, naming the header), and a URL that cannot be parsed is refused instead of sent. So a secret from the
-environment never reaches the report or the terminal, with one known limit: a whole-number secret captured under
-another name can still be shown when neither file names it or when the server changed it (`007` echoed as `7`). Header
+environment never reaches the report or the terminal, with one known limit: a whole number the server answered is shown
+unless it equals a value a file names, so a number that is a secret or part of one can be shown when neither file
+names that exact value (`007` echoed as `7`). Header
 names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
 `Cookie`), so one name goes out with one value. The check uses the same guardrails as
 every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
