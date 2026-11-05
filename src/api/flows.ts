@@ -29,6 +29,8 @@ const SECRET_KEY = /pass(?:w|phrase|code)|pwd|secret|token|credential|api[-_]?ke
 const SECRET_WORDS = new Set(["pass", "passwd", "pw", "creds"]);
 const isSecretKey = (key: string): boolean =>
   SECRET_KEY.test(key) || key.split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/).some((w) => SECRET_WORDS.has(w.toLowerCase()));
+/** A header whose name says it carries a credential (`Authorization`, `Cookie`, `X-Api-Key`, `X-Auth-Token`, …). */
+export const isCredentialHeader = (name: string): boolean => SENSITIVE.test(name) || isSecretKey(name);
 /** The only shape a secret may take in the file: `{{env.NAME}}`, after an optional `Bearer `/`Basic `/`Token ` scheme. */
 const ENV_ONLY = /^(?:(?:Bearer|Basic|Token) )?\{\{\s*env\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$/i;
 /** Names the Playwright test fixtures and options already use — a flow named so would shadow one. */
@@ -100,7 +102,7 @@ export function flowChangesData(flow: ApiFlow): boolean {
 }
 
 /** Every `{{…}}` name in a value (strings, arrays and objects, keys left alone). */
-function templateNames(value: unknown): string[] {
+export function templateNames(value: unknown): string[] {
   if (typeof value === "string") return [...value.matchAll(TEMPLATE)].map((m) => m[1]!);
   if (Array.isArray(value)) return value.flatMap(templateNames);
   if (value && typeof value === "object") return Object.values(value).flatMap(templateNames);
@@ -116,6 +118,13 @@ function literalSecrets(value: unknown, at = ""): string[] {
     if (typeof v === "string" && isSecretKey(k) && v !== "" && !ENV_ONLY.test(v)) return [here];
     return literalSecrets(v, here);
   });
+}
+
+/** #233: the same rule for any header map Cairn reads from a file — a secret only as `{{env.NAME}}`. */
+export function secretHeaderProblems(headers: Record<string, string> | undefined, where: string): string[] {
+  const errors: string[] = [];
+  checkHeaders(headers, where, errors);
+  return errors;
 }
 
 function checkHeaders(headers: Record<string, string> | undefined, where: string, errors: string[]): void {

@@ -23,6 +23,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too. A JSON answer that never ends (a long poll, a watch stream) does not hold the run: after 3 s its body is cut off,
   the request is kept with method, path and status, and the run log says how many were cut off. Nothing is written
   when no API request was seen, or on the cli backend.
+
+- **Two-actor API security check: IDOR and privilege escalation (#233).** `cairn api --base-url <u> --actors <file>
+  --allow-mutations`: the owner creates a resource through a saved API flow (#230), the other actor (a saved session or
+  `{{env.NAME}}` headers) tries to read, change and delete it and reads the ids next to it; each 2xx is a finding tagged
+  `WSTG-ATHZ-04` (another user) or `WSTG-ATHZ-03` (a lower role). Same guardrails as the rest of `cairn api`
+  (`--allow-mutations`, `--allowed-methods`, `--allowed-paths`, budget, rate); the flow's cleanup runs in a `finally`.
+  Only `401`, `403` and `404` count as refused; any other non-2xx answer is inconclusive and fails the run, and so is
+  a check in which every answer the other actor got is a `401`, since its credentials may not be valid. The other
+  actor's requests carry no identity but its own actor definition. From the flow file it takes only `Accept`,
+  `Accept-Language`, `Content-Type` and `User-Agent`; its own headers and session cookie come from `actors.json`.
+  Header names merge case-insensitively. A check refused before its first request has no cleanup. A cleanup step without
+  `expect` is done only on a 2xx, and a `404` or `410` counts as already gone only when the other actor's `DELETE` of
+  that resource went through; a cleanup that answers otherwise, or that cannot be sent because its value was never
+  captured, is a cleanup error naming the request and the resource. A captured JSON whole number past 2^53
+  stops the check, naming the capture: it may have been rounded, and a read or a cleanup must not reach another record.
+  A string id above 2^53 is used as written, and its neighbours are skipped. Exit codes, the first that applies wins: `1`
+  for a two-actor file or saved session that cannot be used, a finding, an inconclusive case, a check that stopped, a
+  cleanup that failed, or a check `not tested` (it ran with no probe answered, or `--allowed-methods`/`--allowed-paths`
+  refused its flow or cleanup) while another check got an answer; `4` for a check not started because the budget could
+  not cover it; `5` when no probe in the run got an answer, because nothing was tested (the owner's own requests do not
+  count); otherwise `0`. An error about a request says its method, its path and a category, never the text of the
+  underlying error. A captured value is shown only as a whole number in the path, and not when it equals the value of an
+  `{{env.NAME}}` the flow file or `actors.json` names; everything else stays as written, `{{name}}`, `{{env.NAME}}` and
+  the whole query. What is known in advance is refused before the first request: a bad header name, a header value whose
+  characters cannot be sent because of an actor's header or an `{{env.NAME}}`, and, anywhere in the flow's steps and
+  cleanup, an `{{env.NAME}}` that is not set or that cannot stand in a path. What a captured value holds is known only
+  when it is sent: a header with characters from one is refused then, naming the header. A URL that cannot be parsed is
+  refused instead of sent. So a secret from the environment never reaches the report or the terminal, with two known
+  limits: a whole number the server answered is shown unless it equals a value a file names, so a number that is a secret
+  or part of one can be shown when neither file names that exact value (`007` echoed as `7`); and a neighbour hidden
+  because it equals a named value, next to an id that is shown, tells what that value is.
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else

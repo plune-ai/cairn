@@ -55,6 +55,7 @@ import {
   renderFlowFixture,
   type ApiFlowFile,
 } from "../../api/flows.js";
+import { actorHeaders, loadTwoActorPlan, renderTwoActorReport, runTwoActorChecks, twoActorAnswered, twoActorFailed, type TwoActorPlan } from "../../api/two-actor.js";
 import {
   computeApiCoverage,
   evaluateCoverageGate,
@@ -107,6 +108,8 @@ interface ApiFlags {
   saveFlows?: string;
   /** #230: write the Playwright fixture for the API flows in this file (no request is sent). */
   flows?: string;
+  /** #233: run the two-actor IDOR / privilege-escalation check described in this file. */
+  actors?: string;
 }
 
 /**
@@ -350,6 +353,69 @@ async function writeFlowFixture(opts: ApiFlags, ctx: ModalityContext): Promise<v
   ctx.out(`✓ Fixture → ${target}\n  Use it in a spec: import { test, expect } from './${FLOW_FIXTURE_FILE.replace(/\.ts$/, "")}';\n`);
 }
 
+/**
+ * #233: `cairn api --base-url <url> --actors <file> --allow-mutations` — the two-actor check (`src/api/two-actor.ts`).
+ * Every request goes through the same {@link RequestGuard} as the rest of `cairn api`: without `--allow-mutations`
+ * nothing is sent, and `--allowed-methods` / `--allowed-paths` / `--max-requests` / `--rps` hold as for any case.
+ */
+async function runActorsCheck(opts: ApiFlags, ctx: ModalityContext): Promise<void> {
+  if (opts.spec !== undefined || opts.scenarios || opts.saveFlows !== undefined || opts.flows !== undefined || opts.adversarial || opts.negative) {
+    throw new Error("--actors runs the two-actor check from its own file: run it without --spec, --scenarios, --save-flows, --flows, --negative and --adversarial.");
+  }
+  if (opts.baseUrl === undefined) throw new Error("--actors needs --base-url <url>: the staging address the check may create data on.");
+  const maxRequests = opts.maxRequests === undefined ? DEFAULT_MAX_REQUESTS : parsePositiveInt("--max-requests", opts.maxRequests);
+  const rps = opts.rps === undefined ? DEFAULT_RPS : parsePositiveNumber("--rps", opts.rps, MIN_RPS);
+  const allowedMethods = opts.allowedMethods === undefined ? undefined : parseList(opts.allowedMethods);
+  const allowedPaths = opts.allowedPaths === undefined ? undefined : parseList(opts.allowedPaths);
+  if (allowedMethods && allowedMethods.length === 0) throw new Error("--allowed-methods needs at least one method (e.g. GET,HEAD).");
+  if (allowedPaths && allowedPaths.length === 0) throw new Error("--allowed-paths needs at least one path mask (e.g. /pets/*).");
+  const base = parseBaseUrl(opts.baseUrl);
+  const secrets: string[] = [...base.secrets];
+  const out = (s: string): void => ctx.out(maskSecrets(s, secrets));
+  const err = (s: string): void => ctx.err(maskSecrets(s, secrets));
+  const guard = new RequestGuard({ allowMutations: opts.allowMutations, allowedMethods, allowedPaths, maxRequests, rps });
+
+  let plan: TwoActorPlan;
+  let owner: Record<string, string>;
+  let other: Record<string, string>;
+  try {
+    plan = await loadTwoActorPlan(resolve(opts.actors!));
+    owner = await actorHeaders(plan.file.actors.owner, plan, base.baseUrl);
+    other = await actorHeaders(plan.file.actors.other, plan, base.baseUrl);
+  } catch (e) {
+    err(`✗ ${(e as Error).message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  for (const h of [owner, other]) {
+    if (base.basicAuth && !Object.keys(h).some((k) => k.toLowerCase() === "authorization")) h["Authorization"] = base.basicAuth;
+    secrets.push(...collectSecrets(h));
+  }
+  if (!opts.allowMutations) {
+    err("⚠ The two-actor check creates data with the owner's flow: it needs --allow-mutations, for a staging address only. Nothing is sent.\n");
+  }
+  err(`▸ Two-actor check: ${plan.file.checks.length} check(s) against ${base.baseUrl}…\n`);
+  const report = await runTwoActorChecks(plan, { baseUrl: base.baseUrl, guard, owner, other, role: plan.file.actors.other.role });
+  const guardrails = guard.report();
+
+  const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `api-${randomUUID()}`);
+  await mkdir(outDir, { recursive: true });
+  const reportPath = join(outDir, "two-actor.json");
+  await writeFile(reportPath, maskSecrets(JSON.stringify({ schemaVersion: ARTIFACT_SCHEMA_VERSION, mode: "api-two-actor", ...report, guardrails }, null, 2), secrets), "utf8");
+
+  for (const line of renderTwoActorReport(report)) out(`${line}\n`);
+  for (const line of renderGuardrails(guardrails)) out(`${line}\n`);
+  out(`  Report: ${displayPath(reportPath)}\n`);
+  // Same exit codes and order as the rest of `cairn api`: 1 a finding (or a check that could not finish) > 4 a check the
+  // budget could not cover > 5 no probe answered, whatever the owner's own requests got.
+  if (twoActorFailed(report)) process.exitCode = 1;
+  else if (guardrails.budgetExhausted) process.exitCode = BUDGET_EXIT_CODE;
+  else if (!twoActorAnswered(report)) {
+    err("✗ No probe got an answer from the other actor (see the checks and Guardrails above), so nothing was tested.\n");
+    process.exitCode = NOTHING_SENT_EXIT_CODE;
+  }
+}
+
 export const apiModality: Modality = {
   name: "api",
   gated: false,
@@ -357,6 +423,8 @@ export const apiModality: Modality = {
   async run(rawCtx: ModalityContext): Promise<void> {
     const opts = rawCtx.flags as ApiFlags;
     // #230: --flows is its own mode — it writes the fixture and sends nothing.
+    // #233: --actors is its own mode — the two-actor check, through the same guardrails.
+    if (opts.actors !== undefined) return runActorsCheck(opts, rawCtx);
     if (opts.flows !== undefined) return writeFlowFixture(opts, rawCtx);
     if (opts.saveFlows !== undefined && !opts.scenarios) {
       throw new Error("--save-flows saves the chains --scenarios makes: add --scenarios.");

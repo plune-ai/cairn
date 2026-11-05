@@ -291,6 +291,7 @@ export class RequestGuard {
 
   recordSkip(reason: SkipReason): void {
     this.skippedBy[reason] = (this.skippedBy[reason] ?? 0) + 1;
+    if (reason === "budget exhausted") this.exhausted = true;
   }
   recordBlocked(name: string, reason: string): void {
     this.blockedList.push({ name, reason });
