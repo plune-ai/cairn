@@ -76,30 +76,37 @@ for the owner's answer on a neighbour the other actor read. When every answer th
 `401`, those cases are inconclusive too: its credentials may not be valid, so access was not checked. A `401` next to
 any other answer stays refused. The other actor's requests carry no identity but its
 own actor definition. From the flow file it takes only `Accept`, `Accept-Language`, `Content-Type` and `User-Agent`;
-its own headers and session cookie come from `actors.json`. Header names merge case-insensitively, so one name carries one value. Every header known in advance (the actors', and the steps' and cleanup steps' with `{{env.NAME}}` filled in) is
-checked before the first request, so nothing gets created that a bad cleanup header could not delete; a header built
-from a captured value is checked when it is sent. A check that sent nothing has no cleanup. Otherwise the flow's cleanup runs as the owner
-in a `finally`, also when a request fails halfway. A cleanup step without `expect` is done only on a 2xx (a `302` to a
+its own headers and session cookie come from `actors.json`. Header names merge case-insensitively, so one name carries one value. What is known in advance is checked before the first request: the actors' headers, every header name in the
+flow's steps and cleanup, and every `{{env.NAME}}` in their paths, queries, bodies, forms and headers, which must be set,
+must be able to stand in a path where it is in one, and must have characters a header can carry where it is in one. So
+the flow creates nothing its cleanup is already known not to be able to send. What a captured value holds is checked
+when it is sent. A check refused before its first request has no cleanup. Otherwise the flow's cleanup runs as the owner
+in a `finally`, also when a request fails halfway; a request fetch itself rejects counts as sent, so it can report a
+cleanup error though nothing reached the server. A cleanup step without `expect` is done only on a 2xx (a `302` to a
 login page after the owner's session ended is a cleanup error naming the method, path and status); only after the
 other actor's `DELETE` went through does a `404` or `410` from it count as done. A cleanup step whose value was never
 captured (the create answered without the id) cannot be sent and is reported as a cleanup error naming the resource
-and the missing value. Run it against a disposable staging
+and the missing value. A captured JSON number that is not a safe integer stops the check, naming the capture: it may
+have been rounded, and a read or a cleanup must not reach another record. A string id above 2^53 is used as written, and
+its neighbours are skipped. Run it against a disposable staging
 environment only: without `--allow-mutations` nothing is sent (exit 5); a check whose flow or cleanup
 `--allowed-methods`/`--allowed-paths` refuse, or that the remaining `--max-requests` budget cannot cover, is not
 started; a probe they refuse is listed as skipped. Output: one line per case with its WSTG id, the Guardrails section,
 and `two-actor.json` in `--out`. A captured value is shown there only as a whole number in the path, and not when it
 equals the value of an `{{env.NAME}}` that the flow file or `actors.json` names; everything else stays as written,
 `{{name}}`, `{{env.NAME}}` and the whole query, and the real values go only on the wire. A neighbour shows its computed
-number, unless the id it was computed from is not shown. So a secret from the environment never reaches the report or
-the terminal, with one known limit: a whole number the server answered is shown unless it equals a
-value a file names, so a number that is a secret or part of one can be shown when neither file names that exact value
-(`007` echoed as `7`).
+number, unless that number equals such a value or the id it was computed from is not shown. So a secret from the
+environment never reaches the report or the terminal, with two known limits: a whole number the server answered is shown
+unless it equals a value a file names, so a number that is a secret or part of one can be shown when neither file names
+that exact value (`007` echoed as `7`); and a neighbour hidden because it equals a named value, next to an id that is
+shown, tells what that value is.
 
-Exit 1 on a finding, an inconclusive case, a check that stopped, a cleanup that failed, or a check no probe of which got
-an answer from the other actor while another check's did (the output names it: `not tested`). Otherwise exit 4 when a
-check was not started because the budget could not cover it, and exit 5 when no probe in the whole run got an answer,
-because nothing was tested; the owner's steps and cleanup do not count as answers. A probe skipped next to answered ones
-(a UUID id skips `neighbours`, `--allowed-methods` narrows a probe) stays a pass, counted in the summary line.
+Exit codes, the first that applies wins: `1` for a two-actor file or saved session that cannot be used, a finding, an
+inconclusive case, a check that stopped, a cleanup that failed, or a check `not tested` (it ran with no probe answered,
+or `--allowed-methods`/`--allowed-paths` refused its flow or cleanup) while another check got an answer; `4` for a check
+not started because the budget could not cover it; `5` when no probe in the run got an answer, because nothing was
+tested (the owner's own requests do not count); otherwise `0`. A probe skipped next to answered ones (a UUID id skips
+`neighbours`, `--allowed-methods` narrows a probe) stays a pass, counted in the summary line.
 
 ## Auth / headers (nothing hardcoded)
 - **Config (per run):** `--header "Authorization: Bearer $TOKEN"` — repeatable. Config headers win.

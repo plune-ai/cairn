@@ -112,9 +112,11 @@ refused; any other answer (a redirect, `400`, `405`, `422`, a `5xx`) is inconclu
 validation never reached the access check — and fails the run like a finding. When every answer B got within a check
 is a `401`, those cases are inconclusive too: B's credentials may not be valid, so access was not checked. A `401` next
 to any other answer stays refused. A neighbouring id counts only when both actors can read it. The flow's own cleanup
-deletes what was created, also when the check stops halfway; a check that sent nothing has no cleanup. A cleanup step
-without `expect` is done only on a 2xx, and a cleanup that answers otherwise, or cannot be sent because the create
-never returned its id, is reported as a cleanup error: the data may still be there.
+deletes what was created, also when the check stops halfway; a check refused before its first request has no cleanup.
+A cleanup step without `expect` is done only on a 2xx, and a cleanup that answers otherwise, or cannot be sent because
+the create never returned its id, is reported as a cleanup error: the data may still be there. A captured JSON number
+that is not a safe integer stops the check, naming the capture: it may have been rounded, and a read or a cleanup must
+not reach another record. A string id above 2^53 is used as written, and its neighbours are skipped.
 
 ```json
 {
@@ -138,20 +140,28 @@ headers and session cookie come from `actors.json`. An error about a request say
 (such as `network: ECONNREFUSED`), never the text of the underlying error. In the report and the terminal a captured
 value is shown only as a whole number in the path, and not when it equals the value of an `{{env.NAME}}` that the flow
 file or `actors.json` names; everything else stays as written, `{{name}}` and `{{env.NAME}}` alike, and so does the
-whole query. The real values go only on the wire. A header whose characters cannot be sent is refused before anything
-goes out, naming the header and the `{{env.NAME}}` it was built from (one built from a captured value is refused when
-it is sent, naming the header), and a URL that cannot be parsed is refused instead of sent. So a secret from the
-environment never reaches the report or the terminal, with one known limit: a whole number the server answered is shown
-unless it equals a value a file names, so a number that is a secret or part of one can be shown when neither file
-names that exact value (`007` echoed as `7`). Header
+whole query. The real values go only on the wire. What is known in advance is refused before the first request: a bad
+header name, a header value whose characters cannot be sent because of an actor's header or an `{{env.NAME}}`, and,
+anywhere in the flow's steps and cleanup, an `{{env.NAME}}` that is not set or that cannot stand in a path. A refused
+header names itself and the templates it was built from. What a captured value holds is known only when it is sent: a
+header with characters from one is refused then, naming the header. A URL that cannot be parsed is refused instead of
+sent. So a secret from the environment never reaches the report or the terminal, with two known limits: a whole number
+the server answered is shown unless it equals a value a file names, so a number that is a secret or part of one can be
+shown when neither file names that exact value (`007` echoed as `7`); and a neighbour hidden because it equals a named
+value, next to an id that is shown, tells what that value is. Header
 names are merged case-insensitively (the actor's own win, a saved session's cookies win over a written
 `Cookie`), so one name goes out with one value. The check uses the same guardrails as
 every `cairn api` run: nothing is sent without `--allow-mutations`, so give it only a staging address you own, never
 production; `--allowed-methods`, `--allowed-paths`, `--max-requests` and `--rps` hold as well, and a check whose flow or
-cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`. A finding
-exits 1, and so does a check no probe of which got an answer from B while another check's did; otherwise a check the
-budget could not cover exits 4, and a run in which no probe got an answer exits 5, because nothing was tested (the
-owner's own requests do not count). A probe skipped next to answered ones stays a pass, counted in the summary line.
+cleanup they refuse is not started. Findings print with their WSTG id and go to `two-actor.json` in `--out`.
+
+Exit codes, the first that applies wins: `1` for a two-actor file or saved session that cannot be used, a finding, an
+inconclusive case, a check that stopped, a cleanup that failed, or a check `not tested` (it ran with no probe answered,
+or `--allowed-methods`/`--allowed-paths` refused its flow or cleanup) while another check got an answer; `4` for a check
+not started because the budget could not cover it; `5` when no probe in the run got an answer, because nothing was
+tested (the owner's own requests do not count); otherwise `0`. A probe skipped next to answered ones stays a pass,
+counted in the summary line.
+
 More: [the runbook](docs/runbooks/run-api-cases.md#two-actor-check-idor-and-privilege-escalation---actors-233).
 
 ## Interactive TUI

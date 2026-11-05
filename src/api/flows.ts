@@ -102,7 +102,7 @@ export function flowChangesData(flow: ApiFlow): boolean {
 }
 
 /** Every `{{…}}` name in a value (strings, arrays and objects, keys left alone). */
-function templateNames(value: unknown): string[] {
+export function templateNames(value: unknown): string[] {
   if (typeof value === "string") return [...value.matchAll(TEMPLATE)].map((m) => m[1]!);
   if (Array.isArray(value)) return value.flatMap(templateNames);
   if (value && typeof value === "object") return Object.values(value).flatMap(templateNames);

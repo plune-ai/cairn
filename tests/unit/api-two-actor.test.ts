@@ -66,6 +66,10 @@ describe("parseTwoActorFile (#233)", () => {
     expect(() => parseTwoActorFile(file({ actors: { owner: {}, other: { session: "bob" } } }), flows)).toThrow(/an actor needs a session or headers/);
     expect(() => parseTwoActorFile(file({}, { resource: "/api/projects" }), flows)).toThrow(/names the created id/);
   });
+
+  it("sees an uncaptured name in the change body with a tab inside its braces", () => {
+    expect(() => parseTwoActorFile(file({}, { change: { method: "PATCH", body: { v: "{{\tnope}}" } } }), flows)).toThrow(/\{\{nope\}\} is not captured/);
+  });
 });
 
 describe("cookieHeaderFor (#233)", () => {

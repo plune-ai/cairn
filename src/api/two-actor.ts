@@ -19,7 +19,7 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { SessionStore } from "../session/index.js";
 import type { StorageState } from "../browser/types.js";
-import { loadApiFlows, secretHeaderProblems, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
+import { loadApiFlows, secretHeaderProblems, templateNames, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
 import type { RequestGuard } from "./guard.js";
 
 export type TwoActorProbe = "read" | "change" | "delete" | "neighbours";
@@ -121,8 +121,7 @@ function checkAgainstFlows(file: TwoActorFile, flows: ApiFlowFile): string[] {
     if (flow.kind !== "data") return errors.push(`${at}: "${check.flow}" is a sign-in flow; the owner creates the resource with a data flow`);
     if (flow.cleanup.length === 0) errors.push(`${at}: "${check.flow}" has no cleanup — the check never creates what it cannot delete`);
     const captured = new Set(flow.steps.flatMap((s) => Object.keys(s.capture ?? {})));
-    for (const m of [...check.resource.matchAll(TEMPLATE), ...JSON.stringify(check.change.body ?? null).matchAll(TEMPLATE)]) {
-      const name = m[1]!;
+    for (const name of templateNames([check.resource, check.change.body])) {
       if (name === "uid" || name.startsWith("env.") || captured.has(name)) continue;
       errors.push(`${at}: {{${name}}} is not captured by flow "${check.flow}"`);
     }
@@ -280,7 +279,7 @@ export interface TwoActorCheckResult {
   flow: string;
   /** Not started (a flag forbids its flow, its cleanup or mutations, or the budget cannot cover it). */
   notRun?: string;
-  /** It ran, but no probe got an answer from the other actor: nothing was tested. */
+  /** It ran, or a flag kept its flow from running, and no probe got an answer from the other actor: nothing was tested. */
   notTested?: string;
   /** The check stopped midway (the flow failed, a request failed); the cleanup still ran if anything had gone out. */
   error?: string;
@@ -350,8 +349,8 @@ const fillValue = (value: unknown, vars: Record<string, string>, env: Record<str
 /** The values of every `{{env.NAME}}` the flow file and the two-actor file name. */
 const namedEnvValues = (plan: TwoActorPlan, env: Record<string, string | undefined>): Set<string> =>
   new Set(
-    [...JSON.stringify([plan.flows, plan.file]).matchAll(TEMPLATE)].flatMap((m) => {
-      const value = m[1]!.startsWith("env.") ? env[m[1]!.slice(4)] : undefined;
+    templateNames([plan.flows, plan.file]).flatMap((name) => {
+      const value = name.startsWith("env.") ? env[name.slice(4)] : undefined;
       return value === undefined ? [] : [value];
     }),
   );
@@ -383,6 +382,7 @@ const pointerAt = (body: unknown, pointer: string): unknown => {
   return cur;
 };
 
+const NO_ANSWER = "no probe got an answer from the other actor";
 const is2xx = (s: number): boolean => s >= 200 && s < 300;
 /**
  * The answers that mean "refused": 401, 403 and 404 (a fixed server may hide that the resource exists). Anything else
@@ -485,12 +485,16 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       throw new RequestFailed(`${label}: the answer is not JSON, so nothing can be captured from it`);
     }
     const missing: string[] = [];
+    const inexact: string[] = [];
     for (const [name, pointer] of Object.entries(step.capture)) {
       const v = pointerAt(answer, pointer);
       if (v === undefined || v === null || typeof v === "object" || String(v) === "") missing.push(`${pointer} for ${name}`);
+      // JSON.parse has already rounded a number past the safe range: it may be another record's id, so it is never kept.
+      else if (typeof v === "number" && !Number.isSafeInteger(v)) inexact.push(`{{${name}}}`);
       else vars[name] = String(v);
     }
     if (missing.length) throw new RequestFailed(`${label}: the answer has no value at ${missing.join(", ")}`);
+    if (inexact.length) throw new RequestFailed(`${label}: ${inexact.join(", ")} is not a safe integer (the number may have been rounded), so it is not used`);
   };
 
   const status = async (method: string, path: string, shown: string, headers: Record<string, string>, body?: unknown): Promise<number> => {
@@ -515,6 +519,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     const refused = [...flow.steps, ...flow.cleanup].find((s) => !opts.guard.allowsMethod(s.method) || !opts.guard.allowsPath(s.path));
     if (refused) {
       result.notRun = `not allowed — flow "${flow.name}" sends ${refused.method} ${refused.path}, which --allowed-methods/--allowed-paths refuse`;
+      result.notTested = NO_ANSWER;
       opts.guard.recordSkip("not allowed");
       continue;
     }
@@ -538,11 +543,14 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     let deletedByOther = false;
     sentAny = false;
     try {
-      // Every header known by now is refused before the first request, so nothing gets created that a bad cleanup
-      // header could not delete. One built from a captured value is known only when it is sent.
+      // Everything known by now is refused before the first request, so the flow creates nothing its cleanup is already
+      // known not to be able to send. A stand-in takes the place of each name that is not an {{env.NAME}}: a real
+      // {{uid}} is always sendable, and what a captured value holds is known only when it is sent.
       for (const step of [...flow.steps, ...flow.cleanup]) {
-        const known = Object.fromEntries(Object.entries(step.headers ?? {}).filter(([, t]) => [...t.matchAll(TEMPLATE)].every((m) => m[1]!.startsWith("env."))));
-        refuseHeaders(`${step.method} ${shownPath(step.path, {}, envValues, step.query)}`, mergeHeaders(opts.owner, fillValue(known, {}, env) as Record<string, string>), known);
+        const standIns = Object.fromEntries(templateNames(step).map((name) => [name, "0"]));
+        fillValue(step.path, standIns, env, true);
+        fillValue([step.query, step.body, step.form], standIns, env);
+        refuseHeaders(`${step.method} ${shownPath(step.path, {}, envValues, step.query)}`, mergeHeaders(opts.owner, fillValue(step.headers ?? {}, standIns, env) as Record<string, string>), step.headers);
       }
       if (probes[0]) refuseHeaders(`${probeMethod[probes[0]]} ${check.resource}`, opts.other);
 
@@ -569,12 +577,14 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       if (probes.includes("neighbours")) {
         const idName = [...check.resource.matchAll(TEMPLATE)].pop()![1]!;
         const id = vars[idName] ?? "";
-        if (!/^\d+$/.test(id)) {
-          result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: shown, outcome: "skipped", detail: `the id {{${idName}}} is not a number` });
+        // Past the safe range `id ± d` would be rounded to some other number, so a string id that large is not counted from.
+        const unusable = !/^\d+$/.test(id) ? "is not a number" : !Number.isSafeInteger(Number(id)) ? "is too large to count from" : undefined;
+        if (unusable) {
+          result.cases.push({ check: result.check, probe: "neighbours", wstgId: WSTG_IDOR, method: "GET", path: shown, outcome: "skipped", detail: `the id {{${idName}}} ${unusable}` });
         } else {
           for (let d = 1; d <= check.neighbours; d++) {
             for (const n of [Number(id) - d, Number(id) + d]) {
-              if (n < 0) continue;
+              if (n < 0 || !Number.isSafeInteger(n)) continue;
               const wire = fillValue(check.resource, { ...vars, [idName]: String(n) }, env, true) as string;
               // A neighbour is a number made here, so it names the record it reached, unless the id itself is not
               // shown: id ± d would give it away.
@@ -620,8 +630,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       // has none. A step whose values were never captured cannot be sent; that is a cleanup error, since what the flow
       // created may still be there.
       for (const step of sentAny ? flow.cleanup : []) {
-        const names = [...JSON.stringify(step).matchAll(TEMPLATE)].map((m) => m[1]!);
-        const missing = [...new Set(names.filter((n) => !n.startsWith("env.") && n !== "uid" && !(n in vars)))];
+        const missing = [...new Set(templateNames(step).filter((n) => !n.startsWith("env.") && n !== "uid" && !(n in vars)))];
         if (missing.length) {
           const which = missing.map((n) => `{{${n}}}`).join(", ");
           result.cleanupErrors.push(
@@ -646,7 +655,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
         c.detail = "the other actor got 401 to every probe: its credentials may not be valid, so access was not checked";
       }
     }
-    if (answers.length === 0 && result.error === undefined) result.notTested = "no probe got an answer from the other actor";
+    if (answers.length === 0 && result.error === undefined) result.notTested = NO_ANSWER;
   }
   return { baseUrl: opts.baseUrl, role: opts.role, checks: results, findings: results.flatMap((r) => r.cases).filter((c) => c.outcome === "finding").length };
 }

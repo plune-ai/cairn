@@ -632,6 +632,20 @@ describe("cairn api --actors (#233)", () => {
       if (wire) expect(app!.log).toContain(wire);
       expect(process.exitCode ?? 0).toBe(exit);
     });
+
+    it.each<[string, Parameters<typeof writePlan>[0]]>([
+      ["a tab, in a flow body", { flow: { steps: [createStep({ body: { k: "{{\tenv.CAIRN_TEST_SECRET}}" } })] } }],
+      ["a newline, in a flow body", { flow: { steps: [createStep({ body: { k: "{{\nenv.CAIRN_TEST_SECRET}}" } })] } }],
+      ["a tab, in a header in actors.json", { owner: { headers: { Authorization: "Bearer {{env.ALICE_TOKEN}}", "X-Pin": "{{\tenv.CAIRN_TEST_SECRET}}" } } }],
+      ["a newline, in a header in actors.json", { owner: { headers: { Authorization: "Bearer {{env.ALICE_TOKEN}}", "X-Pin": "{{\nenv.CAIRN_TEST_SECRET}}" } } }],
+    ])("does not show a number a file names with %s inside the braces", async (_label, plan) => {
+      process.env.CAIRN_TEST_SECRET = "482913";
+      const { file, terminal } = await runAgainst(refusing(() => ({ id: 482913 })), { ...plan, check: readOnly });
+      expect(terminal).toContain("read: GET /api/projects/{{projectId}} — refused (403)");
+      expect(file).not.toContain("482913");
+      expect(terminal).not.toContain("482913");
+      expect(app!.log).toContain("GET /api/projects/482913 other");
+    });
   });
 
   describe("a check passes only if a probe was answered", () => {
@@ -669,6 +683,43 @@ describe("cairn api --actors (#233)", () => {
       });
       expect(terminal).toMatch(/project \/api\/other\/\{\{projectId\}\} \(flow "project"\)\n\s+✗ not tested: no probe got an answer from the other actor/);
       expect(process.exitCode).toBe(1);
+    });
+
+    it("exits 1 and names a check whose flow --allowed-paths refuses when another check got an answer", async () => {
+      const second = { name: "second", steps: [createStep({ path: "/api/other" })], returns: ["projectId"], cleanup: [{ name: "delete", method: "DELETE", path: "/api/other/{{projectId}}", expect: 204 }] };
+      const plan = { check: { probes: ["read"] }, extraFlows: [second], extraChecks: [{ flow: "second", resource: "/api/other/{{projectId}}", probes: ["read"] }] };
+      const { file, terminal } = await runAgainst(refusing(() => ({ id: 3 })), plan, "--allowed-paths", "/api/projects,/api/projects/{{projectId}}");
+      expect(terminal).toMatch(/second \/api\/other\/\{\{projectId\}\} \(flow "second"\)\n\s+⊘ not run: not allowed[^\n]*\n\s+✗ not tested: no probe got an answer from the other actor/);
+      expect(file).toContain('"notTested": "no probe got an answer from the other actor"');
+      expect(process.exitCode).toBe(1);
+    });
+
+    it("still exits 5 when a flag refuses the only check's flow: nothing got an answer", async () => {
+      const { terminal } = await runAgainst(refusing(() => ({ id: 3 })), { check: { probes: ["read"] } }, "--allowed-methods", "GET");
+      expect(terminal).toContain("not run: not allowed");
+      expect(terminal).toContain("nothing was tested");
+      expect(app!.log).toEqual([]);
+      expect(process.exitCode).toBe(5);
+    });
+
+    describe("which exit code wins", () => {
+      const uuidOnly = { flow: "project", resource: "/api/projects/{{projectId}}", probes: ["neighbours"], neighbours: 0 };
+      const readOnly = { flow: "project", resource: "/api/projects/{{projectId}}", probes: ["read"] };
+
+      it("a check that stopped before any probe exits 1, not 5", async () => {
+        await runAgainst((method) => [method === "POST" ? 500 : 403], { check: { probes: ["read"] } });
+        expect(process.exitCode).toBe(1);
+      });
+
+      it("a check not tested and one the budget cannot cover, nothing answered, exits 4, not 5", async () => {
+        await runAgainst(refusing(() => ({ id: 3 })), { check: uuidOnly, extraChecks: [readOnly] }, "--max-requests", "2");
+        expect(process.exitCode).toBe(4);
+      });
+
+      it("a check not tested next to an answered one exits 1, even with one the budget cannot cover", async () => {
+        await runAgainst(refusing(() => ({ id: 3 })), { check: readOnly, extraChecks: [uuidOnly, readOnly] }, "--max-requests", "5");
+        expect(process.exitCode).toBe(1);
+      });
     });
 
     it.each<[string, Answer, Record<string, unknown>, string[]]>([
@@ -903,6 +954,112 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
     expect(result.error).toBe('GET /api/projects/{{projectId}} not sent: header "Cookie" is not valid (invalid header value)');
     expect(calls).toEqual([]);
     expect(all).not.toContain(SECRET);
+  });
+
+  describe("what is known before the first request", () => {
+    const deleteStep = (more: Record<string, unknown>) => ({ name: "delete", method: "DELETE", path: "/api/projects/{{projectId}}", expect: 204, ...more });
+    const secondStep = (more: Record<string, unknown>) => ({ name: "second", method: "POST", path: "/api/projects/{{projectId}}/x", ...more });
+    const unsetIn: [string, Record<string, unknown>][] = [
+      ["path", { path: "/api/{{env.CAIRN_NEVER_SET}}/{{projectId}}" }],
+      ["query", { query: { t: "{{env.CAIRN_NEVER_SET}}" } }],
+      ["body", { body: { t: "{{env.CAIRN_NEVER_SET}}" } }],
+      ["form", { form: { t: "{{env.CAIRN_NEVER_SET}}" } }],
+      ["headers", { headers: { "X-T": "{{env.CAIRN_NEVER_SET}}" } }],
+    ];
+
+    it.each(unsetIn)("refuses an unset {{env.}} in a cleanup step's %s: the server sees nothing", async (_field, more) => {
+      const { fetch, calls } = fakeFetch();
+      const { result } = await runFake(await writePlan({ flow: { cleanup: [deleteStep(more)] } }), fetch);
+      expect(result.error).toBe("the environment variable CAIRN_NEVER_SET is not set");
+      expect(result.cleanupErrors).toEqual([]);
+      expect(calls).toEqual([]);
+    });
+
+    it.each(unsetIn)("refuses an unset {{env.}} in a later step's %s: the server sees nothing", async (_field, more) => {
+      const { fetch, calls } = fakeFetch();
+      const { result } = await runFake(await writePlan({ flow: { steps: [createStep(), secondStep(more)] } }), fetch);
+      expect(result.error).toBe("the environment variable CAIRN_NEVER_SET is not set");
+      expect(calls).toEqual([]);
+    });
+
+    it.each([
+      ["a slash", `sec/${SECRET}`],
+      ["a dot segment", ".."],
+    ])("refuses an environment value with %s in a cleanup step's path: the server sees nothing", async (_label, value) => {
+      const { fetch, calls } = fakeFetch();
+      const { result, all } = await runFake(await writePlan({ flow: { cleanup: [deleteStep({ path: "/api/{{env.PART}}/{{projectId}}" })] } }), fetch, { env: { PART: value } });
+      expect(result.error).toBe("{{env.PART}} is a value, which cannot stand in the path /api/{{env.PART}}/{{projectId}}");
+      expect(calls).toEqual([]);
+      expect(all).not.toContain(SECRET);
+    });
+
+    it.each([
+      ["a bad value next to {{uid}}", { "X-Trace": "{{env.TRACE}}-{{uid}}" }, "invalid header value, built from {{env.TRACE}}, {{uid}}", "X-Trace"],
+      ["a bad name with {{uid}}", { "X Bad": "{{uid}}" }, "invalid header name, built from {{uid}}", "X Bad"],
+      ["a bad value next to a captured one", { "X-Trace": "{{env.TRACE}}-{{projectId}}" }, "invalid header value, built from {{env.TRACE}}, {{projectId}}", "X-Trace"],
+      ["a bad name with a captured value", { "X Bad": "{{projectId}}" }, "invalid header name, built from {{projectId}}", "X Bad"],
+    ])("refuses a cleanup header with %s: the server sees nothing", async (_label, headers, why, name) => {
+      const { fetch, calls } = fakeFetch();
+      const { result, all } = await runFake(await writePlan({ flow: { cleanup: [deleteStep({ headers })] } }), fetch, { env: { TRACE: `a\n${SECRET}` } });
+      expect(result.error).toBe(`DELETE /api/projects/{{projectId}} not sent: header "${name}" is not valid (${why})`);
+      expect(calls).toEqual([]);
+      expect(all).not.toContain(SECRET);
+    });
+
+    it("reports a cleanup step with a tab inside its braces as never captured, not as a failed request", async () => {
+      const { fetch } = fakeFetch((c) => (c.method === "POST" ? new Response("{}", { status: 201 }) : undefined));
+      const { result } = await runFake(await writePlan({ flow: { cleanup: [deleteStep({ path: "/api/projects/{{\tprojectId}}" })] } }), fetch);
+      expect(result.cleanupErrors).toEqual([expect.stringContaining("was not sent: {{projectId}} was never captured")]);
+    });
+  });
+
+  describe("a number JSON.parse may have rounded", () => {
+    const created = (json: string) => (c: Call) => (c.method === "POST" ? new Response(json, { status: 201 }) : undefined);
+    const urls = (calls: Call[]) => calls.map((c) => `${c.method} ${new URL(c.url).pathname}`);
+
+    it.each([
+      ["above 2^53", "9007199254740993"],
+      ["far above it", "1e21"],
+      ["with a fraction", "3.5"],
+    ])("stops the check on a captured number %s: no read and no delete can reach another record", async (_label, number) => {
+      const { fetch, calls } = fakeFetch(created(`{"id":${number}}`));
+      const { result, all } = await runFake(await writePlan(), fetch);
+      expect(result.error).toBe('flow "project" step "create": {{projectId}} is not a safe integer (the number may have been rounded), so it is not used');
+      expect(urls(calls)).toEqual(["POST /api/projects"]);
+      expect(result.cleanupErrors).toEqual([expect.stringContaining("may still be on the server")]);
+      expect(all).not.toContain("900719925474099");
+    });
+
+    it("keeps the other captures of that answer, so the cleanup still goes to the created record", async () => {
+      const { fetch, calls } = fakeFetch(created('{"id":3,"size":9007199254740993}'));
+      const { result } = await runFake(await writePlan({ flow: { steps: [createStep({ capture: { size: "/size", projectId: "/id" } })] } }), fetch);
+      expect(result.error).toBe('flow "project" step "create": {{size}} is not a safe integer (the number may have been rounded), so it is not used');
+      expect(urls(calls)).toEqual(["POST /api/projects", "DELETE /api/projects/3"]);
+    });
+
+    it("takes the largest safe integer as it is, and reads no neighbour past it", async () => {
+      const { fetch, calls } = fakeFetch(created('{"id":9007199254740991}'));
+      const { result } = await runFake(await writePlan({ check: { probes: ["read", "neighbours"], neighbours: 1 } }), fetch);
+      expect(result.error).toBeUndefined();
+      expect(result.cases.map((c) => c.path)).toEqual(["/api/projects/9007199254740991", "/api/projects/9007199254740990"]);
+      expect(urls(calls).at(-1)).toBe("DELETE /api/projects/9007199254740991");
+    });
+
+    it("reads no neighbour below zero", async () => {
+      const { fetch } = fakeFetch(created('{"id":0}'));
+      const { result } = await runFake(await writePlan({ check: { probes: ["neighbours"], neighbours: 1 } }), fetch);
+      expect(result.cases.map((c) => c.path)).toEqual(["/api/projects/1"]);
+    });
+
+    it("uses a string id above 2^53 as written, and skips its neighbours", async () => {
+      const { fetch, calls } = fakeFetch(created('{"id":"9007199254740993"}'));
+      const { result } = await runFake(await writePlan({ check: { probes: ["read", "neighbours"], neighbours: 1 } }), fetch);
+      expect(result.cases.map((c) => `${c.probe} ${c.outcome} ${c.path} ${c.detail}`)).toEqual([
+        "read denied /api/projects/9007199254740993 refused (404)",
+        "neighbours skipped /api/projects/9007199254740993 the id {{projectId}} is too large to count from",
+      ]);
+      expect(urls(calls)).toEqual(["POST /api/projects", "GET /api/projects/9007199254740993", "DELETE /api/projects/9007199254740993"]);
+    });
   });
 
   it("sends no cleanup for a check that sent nothing, even one that needs no captured value", async () => {

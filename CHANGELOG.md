@@ -18,19 +18,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a check in which every answer the other actor got is a `401`, since its credentials may not be valid. The other
   actor's requests carry no identity but its own actor definition. From the flow file it takes only `Accept`,
   `Accept-Language`, `Content-Type` and `User-Agent`; its own headers and session cookie come from `actors.json`.
-  Header names merge case-insensitively. A check that sent nothing has no cleanup. A cleanup step without `expect` is
-  done only on a 2xx, and a `404` or `410` counts as already gone only when the other actor's `DELETE` of that resource
-  went through; a cleanup that answers otherwise, or that cannot be sent because its value was never captured, is a
-  cleanup error naming the request and the resource. A check with no answer next to one that got an answer exits 1;
-  otherwise a check the budget cannot cover exits 4, and a run in which no probe got an answer from the other actor
-  exits 5. An error about a request says its method, its path and a category, never the text of the underlying error. A captured
-  value is shown only as a whole number in the path, and not when it equals the value of an `{{env.NAME}}` the flow
-  file or `actors.json` names; everything else stays as written, `{{name}}`, `{{env.NAME}}` and the whole query. A
-  header whose characters cannot be sent is refused before anything goes out (one built from a captured value when it
-  is sent), naming the header and not its value, and a URL that cannot be parsed is refused instead of sent. So a secret
-  from the environment never reaches the report or the terminal, with one known limit: a whole number the server answered is
-  shown unless it equals a value a file names, so a number that is a secret or part of one can be shown when neither
-  file names that exact value (`007` echoed as `7`).
+  Header names merge case-insensitively. A check refused before its first request has no cleanup. A cleanup step without
+  `expect` is done only on a 2xx, and a `404` or `410` counts as already gone only when the other actor's `DELETE` of
+  that resource went through; a cleanup that answers otherwise, or that cannot be sent because its value was never
+  captured, is a cleanup error naming the request and the resource. A captured JSON number that is not a safe integer
+  stops the check, naming the capture: it may have been rounded, and a read or a cleanup must not reach another record.
+  A string id above 2^53 is used as written, and its neighbours are skipped. Exit codes, the first that applies wins: `1`
+  for a two-actor file or saved session that cannot be used, a finding, an inconclusive case, a check that stopped, a
+  cleanup that failed, or a check `not tested` (it ran with no probe answered, or `--allowed-methods`/`--allowed-paths`
+  refused its flow or cleanup) while another check got an answer; `4` for a check not started because the budget could
+  not cover it; `5` when no probe in the run got an answer, because nothing was tested (the owner's own requests do not
+  count); otherwise `0`. An error about a request says its method, its path and a category, never the text of the
+  underlying error. A captured value is shown only as a whole number in the path, and not when it equals the value of an
+  `{{env.NAME}}` the flow file or `actors.json` names; everything else stays as written, `{{name}}`, `{{env.NAME}}` and
+  the whole query. What is known in advance is refused before the first request: a bad header name, a header value whose
+  characters cannot be sent because of an actor's header or an `{{env.NAME}}`, and, anywhere in the flow's steps and
+  cleanup, an `{{env.NAME}}` that is not set or that cannot stand in a path. What a captured value holds is known only
+  when it is sent: a header with characters from one is refused then, naming the header. A URL that cannot be parsed is
+  refused instead of sent. So a secret from the environment never reaches the report or the terminal, with two known
+  limits: a whole number the server answered is shown unless it equals a value a file names, so a number that is a secret
+  or part of one can be shown when neither file names that exact value (`007` echoed as `7`); and a neighbour hidden
+  because it equals a named value, next to an id that is shown, tells what that value is.
 - **`cairn api --spec` takes a Postman collection or a HAR file (#228).** The format is told from the content: a
   Postman collection (v2.x; v1 is refused with how to export v2.1), a HAR (`log.entries`), else OpenAPI as before. A
   collection or a HAR is converted to OpenAPI 3.0, saved as `openapi.derived.json` in the run directory (`--out`, else
