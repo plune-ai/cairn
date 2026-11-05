@@ -3,8 +3,7 @@ import { resolve, dirname, basename, join, relative, sep } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
-import { ApiTrafficRecorder, FLUSH_TIMEOUT_MS, parseApiOrigins } from "../browser/api-traffic.js";
-import { DERIVED_SPEC_FILE, writeDerivedSpec } from "../api/derived.js";
+import { ApiTrafficRecorder, parseApiOrigins, writeTrafficSpec } from "../browser/api-traffic.js";
 import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
 import type { AppliedEnvironment, Environment } from "../environment/index.js";
 import type { MailboxSession } from "../mailbox/index.js";
@@ -227,39 +226,6 @@ async function ejectToProjectIfRequested(opts: {
  * End-to-end exploration → methodological cases → runnable @playwright/test → validation/repair (MVP, Sprint 3).
  * Artifacts land in runsBaseDir/<runId>/; everything is traced in Langfuse.
  */
-/**
- * #229: the API requests the run saw, folded into an OpenAPI draft → openapi.derived.json in the run dir, scrubbed of
- * the traffic's own secrets and of the run's (knowledge, environment). Nothing is written when none was seen; the
- * cli backend records nothing (`recorder` undefined).
- */
-async function writeTrafficSpec(
-  recorder: ApiTrafficRecorder | undefined,
-  dir: string,
-  url: string,
-  secrets: string[],
-  onProgress: (event: string) => void,
-): Promise<void> {
-  if (!recorder) return;
-  await recorder.flush();
-  const { static: statics, otherOrigin } = recorder.leftOut;
-  const left = [
-    ...(statics ? [`${statics} page/static request(s)`] : []),
-    ...(otherOrigin ? [`${otherOrigin} to other origins (allow one with --api-origin)`] : []),
-  ];
-  const cut = recorder.cutOff;
-  if (cut) left.push(`${cut} response ${cut === 1 ? "body" : "bodies"} cut off after ${FLUSH_TIMEOUT_MS / 1000}s (recorded without a schema)`);
-  const leftText = left.length ? `; left out: ${left.join(", ")}` : "";
-  if (recorder.recorded === 0) {
-    onProgress(`api — no API request seen on ${new URL(url).origin}, no ${DERIVED_SPEC_FILE}${leftText}`);
-    return;
-  }
-  const { doc, secrets: own } = recorder.spec({ title: `${new URL(url).host} (from the UI traffic)` });
-  await writeDerivedSpec(dir, doc, [...own, ...secrets]);
-  onProgress(
-    `api — ${recorder.recorded} API request(s) → ${recorder.operations} operation(s) → ${DERIVED_SPEC_FILE} (inferred, x-cairn-derived)${leftText}`,
-  );
-}
-
 export async function runExploration(input: ExploreInput): Promise<ExploreResult> {
   const cfg = input.config;
   // Onboarding guardrail: explore observes + validates → it needs a browser. Fail fast with a

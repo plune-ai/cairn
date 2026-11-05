@@ -102,9 +102,14 @@ function requestKey(r: Request): string {
   }
 }
 
-/** #229: one response, handed to the recorder; its body is read only when the recorder asks (a JSON answer). */
+/**
+ * #229: one response, handed to the recorder; its body and its full headers are read only when the recorder asks (a JSON
+ * answer, the API's own traffic). `allHeaders` because `headers()` leaves the cookies out. An answer a service worker
+ * gave is the worker's, not the API's.
+ */
 function noteResponse(traffic: ApiTrafficRecorder, res: Response): void {
   try {
+    if (res.fromServiceWorker()) return;
     const req = res.request();
     const headers = res.headers();
     const size = Number(headers["content-length"]);
@@ -114,6 +119,7 @@ function noteResponse(traffic: ApiTrafficRecorder, res: Response): void {
       resourceType: req.resourceType(),
       status: res.status(),
       requestHeaders: req.headers(),
+      allHeaders: async () => [...Object.entries(await req.allHeaders()), ...Object.entries(await res.allHeaders())],
       postData: req.postData(),
       responseContentType: headers["content-type"],
       ...(Number.isFinite(size) ? { responseSize: size } : {}),

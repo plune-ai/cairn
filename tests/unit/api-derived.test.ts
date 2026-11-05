@@ -203,7 +203,7 @@ describe("the shared pieces (#228, reused by #229)", () => {
     }
   });
 
-  it("writeDerivedSpec scrubs a secret that rode in a name, raw or JSON-escaped", async () => {
+  it("writeDerivedSpec drops free text that holds a secret, raw or JSON-escaped, and edits no string", async () => {
     const dir = await mkdtemp(join(tmpdir(), "cairn-derived-"));
     try {
       const doc = { openapi: "3.0.3", info: { title: 'Login with FAKE-tok-9z8y7x and "q"FAKE"q', version: "1" }, paths: {} };
@@ -211,7 +211,8 @@ describe("the shared pieces (#228, reused by #229)", () => {
       const saved = await readFile(file, "utf8");
       expect(saved).not.toContain("FAKE-tok-9z8y7x");
       expect(saved).not.toContain('\\"q\\"FAKE');
-      expect(saved).toContain("‹redacted›");
+      expect(saved).not.toContain("‹redacted›");
+      expect((JSON.parse(saved) as { info: { title: string } }).info.title).toBe("API draft");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -358,11 +359,11 @@ describe("scrubbing keeps the document whole and drops credentials (#228 review)
     expect(saved).not.toContain("‹redacted›");
   });
 
-  it("a sensitive-named field's plain-looking value is scrubbed where it rode into the document", async () => {
+  it("a sensitive-named field's plain-looking value becomes a parameter where it rode in a path", async () => {
     // Not credential-shaped and not under a header: only the sensitive field name (`session_token`) marks it secret.
     const text = har([{ method: "GET", url: "https://app.example.test/api/lookup/correcthorsebattery?session_token=correcthorsebattery" }]);
     const derived = deriveSpec(text)!;
-    expect(JSON.stringify(derived.doc)).toContain("correcthorsebattery"); // it is in the path as seen
+    expect(Object.keys((derived.doc as { paths: object }).paths)).toEqual(["/api/lookup/{id}"]);
     const { saved } = await writeAndIngest(text);
     expect(saved).not.toContain("correcthorsebattery");
   });

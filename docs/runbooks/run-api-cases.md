@@ -47,12 +47,16 @@
    The format is told from the content (a Postman collection v2.x, a HAR's `log.entries`; anything else is read as
    OpenAPI, as before). It is converted to OpenAPI 3.0 and saved as `openapi.derived.json` in the run directory
    (`--out`, else `runs/api-<id>/`), and the run reads that file as if it had been given. Ids in a path become
-   parameters (`/projects/123` → `/projects/{id}`, `:id` and `{{id}}` keep their name), body schemas are inferred
+   parameters (`/projects/123` → `/projects/{id}`; in a collection `:id` and `{{id}}` keep their name), body schemas are inferred
    from the request and response examples, and every operation and inferred schema is marked `x-cairn-derived: true`:
    trust it less than a written spec. From a HAR only the API requests of the origin most of them went to are kept;
-   pages, scripts, styles, images and fonts are left out, and the output counts what was. No header, cookie, query or
-   body value is written (only names, types and status codes); `Authorization`, `Cookie`, `Set-Cookie` and values
-   that look secret are scrubbed from the file as well. A Postman v1 collection is refused: export it as v2.1.
+   pages, scripts, styles, images and fonts are left out, and the output counts what was. Header, cookie, query and
+   body values are not written as such: a word of a path or a name is written only in a fixed form and not when it equals
+   a value seen (a word) or a secret (a name), so `user.name` and `filter.status` are left out. A plain word in a path
+   stays as written when it appeared nowhere else, unless three or more such words sit in the same place before the same
+   ending, and a plain word used as a key or a query name stays unless it is a secret, so read the draft before sharing
+   it. The name of a collection, a request or a folder is written as it is, and dropped whole when it holds a secret. A
+   Postman v1 collection is refused: export it as v2.1.
 
 ## Save scenario chains as API flows (`--save-flows`, #230)
 `cairn api --spec ./openapi.yaml --scenarios --save-flows flows.json` saves each chain that has a `DELETE` as an API

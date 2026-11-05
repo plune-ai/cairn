@@ -13,16 +13,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `design` record the application's API requests — those made while pages load and those clicks start — and at the
   end of the run fold them into OpenAPI 3.0, saved as `openapi.derived.json` in the run directory, ready for
   `cairn api --spec`. Ids in a path become parameters (`/projects/123` and `/projects/456` → `/projects/{id}`),
-  with methods, response codes, query keys and body schemas inferred from the examples, all marked
-  `x-cairn-derived: true`. Pages, scripts, styles, images and fonts are left out, and so is every origin but `--url`'s
-  unless `--api-origin <list>` (comma-separated origins) allows it; the run log counts what was left out. A JSON response
-  body (up to 1 MB) is read for its schema only and not kept; no body, header, cookie or query value is written, and
-  `Authorization`, cookies and secret-looking values of the traffic, the knowledge and the environment are scrubbed
-  from the file as well. An e-mail address in a path becomes a parameter, and an object keyed by e-mail addresses or
-  tokens is written as a map (`additionalProperties`), never with the keys as names — for Postman and HAR input (#228)
-  too. A JSON answer that never ends (a long poll, a watch stream) does not hold the run: after 3 s its body is cut off,
-  the request is kept with method, path and status, and the run log says how many were cut off. Nothing is written
-  when no API request was seen, or on the cli backend.
+  with methods, response codes, query names and body schemas inferred from the examples, all marked
+  `x-cairn-derived: true`. Pages, scripts, styles, images, fonts and answers a service worker made itself are left out,
+  and so is every origin but `--url`'s unless `--api-origin <list>` (comma-separated origins, no `*`, no user or password)
+  allows it; the run log counts what was left out and names up to three of the origins refused. The host and the port
+  are not in the file: its title is generic and it has no `servers`, since `cairn api` takes the address from `--base-url`.
+
+  A string from the traffic reaches the file only in a fixed form that free text cannot have. A name (a JSON key, a form
+  field, a query name) must match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, not be long random text and not be a secret of the
+  run or a credential of the traffic; one that fails is left out alone, so `user.name` and `filter.status` are left out
+  too, and an object most of whose keys fail, or with many keys of one shape, is a map (`additionalProperties`). A word of
+  a path stays only as ASCII letters with digits at the end of a `-`/`_` part, up to 32 characters, not 6 or more hex characters and not equal
+  to any value the traffic showed or a secret of the run; anything else is a parameter, and so are three or more distinct
+  words in the same place before the same ending. A media type is written from a fixed set. Bodies, headers, cookies and
+  query values are not written as such, but no form tells a value from a word of the API:
+  a plain word in a path stays as written when it appeared nowhere else in the traffic, unless three or more such
+  words sit in the same place before the same ending, and a plain word used as a key, a form field or a query name
+  stays unless it is a secret of the run or a credential of the traffic, so read the draft before sharing it.
+
+  A JSON response is parsed for its schema and its values and not kept: one that says it is over 1 MB is not read, and one
+  with no `content-length` is read whole and dropped if it is over 1 MB. A JSON answer that never ends (a long poll, a
+  watch stream) does not hold the run: after 3 s its body is cut off, the request is kept with method, path and status,
+  and the run log says how many were cut off. Nothing is written when no API request was seen, when the requests make no
+  operation, when more than 1 000 000 distinct values were seen (the log says why), or on the cli backend; a failed write
+  goes to the log and the run goes on. Postman and HAR input (#228) goes through the same forms, and instead of a text
+  pass over the finished file, the name of a collection, a request or a folder that holds a secret is dropped whole.
 
 - **Two-actor API security check: IDOR and privilege escalation (#233).** `cairn api --base-url <u> --actors <file>
   --allow-mutations`: the owner creates a resource through a saved API flow (#230), the other actor (a saved session or

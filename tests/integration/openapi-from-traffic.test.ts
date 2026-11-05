@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,12 +10,16 @@ import { runDesign, runExploration } from "../../src/agent/index.js";
 import { ingestOpenApi } from "../../src/api/openapi.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
 import type { BrowserGateway } from "../../src/browser/index.js";
+import { PlaywrightLibBackend } from "../../src/browser/backends/playwright-lib.js";
+import { ApiTrafficRecorder, writeTrafficSpec } from "../../src/browser/api-traffic.js";
+import type { Page } from "playwright";
 
 /**
  * #229: while `explore` / `design` drive a SPA in real Chromium, the app's own API requests — those made while the
  * page loads and those its clicks start — are folded into openapi.derived.json in the run dir. The LLM-driven graph is
  * replaced by a script that clicks through the SPA's screens with the run's real gateway; everything else is the run.
  */
+const blockWrite = vi.hoisted(() => ({ in: undefined as string | undefined }));
 vi.mock("../../src/eval/judge.js", async (orig) => ({
   ...(await orig<typeof import("../../src/eval/judge.js")>()),
   judgeTestCases: async () => [],
@@ -28,6 +32,8 @@ vi.mock("../../src/eval/pilot.js", async (orig) => ({
 }));
 vi.mock("../../src/agent/graph.js", () => ({
   runExploreGraph: async (deps: { gateway: BrowserGateway }, { url }: { url: string }) => {
+    // A folder where the draft should go: the run dir exists by now, and is the only one under `blockWrite.in`.
+    if (blockWrite.in) await mkdir(join(blockWrite.in, (await readdir(blockWrite.in))[0]!, "openapi.derived.json"));
     const g = deps.gateway;
     const click = async (name: string): Promise<void> => {
       const el = parseAriaSnapshot((await g.observe({})).ariaSnapshot).find((e) => e.role === "button" && e.name === name);
@@ -118,6 +124,18 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
         res.write("[");
       } else if (req.method === "GET" && path === "/api/vault/opensesame") {
         send(200, { open: true });
+      } else if (path === "/setcookie") {
+        // HttpOnly: the page cannot read it, and `request.headers()` does not show it. The second never travels back.
+        res.writeHead(200, { "content-type": "application/json", "set-cookie": ["sess=plainsessionword; Path=/; HttpOnly", "only=onlysetword; Path=/elsewhere; HttpOnly"] });
+        res.end("{}");
+      } else if (path === "/sw.js") {
+        res.writeHead(200, { "content-type": "text/javascript" });
+        res.end(`self.addEventListener("install", () => self.skipWaiting());
+          self.addEventListener("activate", (e) => e.waitUntil(clients.claim()));
+          self.addEventListener("fetch", (e) => {
+            if (e.request.url.includes("/api/through-worker")) e.respondWith(fetch(e.request));
+            if (e.request.url.includes("/api/from-worker")) e.respondWith(new Response("{}", { headers: { "content-type": "application/json" } }));
+          });`);
       } else if (req.method === "GET" && path === "/api/settings") {
         send(200, { theme: "dark", notifications: true });
       } else {
@@ -192,6 +210,10 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
     for (const t of TOKENS) expect(saved, t).not.toContain(t);
     expect(saved).not.toMatch(/"(?:authorization|cookie|set-cookie)"/i);
     expect(events.join("\n")).toMatch(/api — \d+ API request\(s\) → 6 operation\(s\) → openapi\.derived\.json/);
+    expect(events.join("\n")).toMatch(/\d+ to other origins: http:\/\/127\.0\.0\.1:\d+ \(\d+\) \(allow one with --api-origin\)/);
+    // The host and the port are not in the file; the page asks for `?sort=name`, and `name` is still a property.
+    expect(saved).not.toContain("127.0.0.1");
+    expect(model.endpoints.find((e) => e.path === "/api/projects" && e.method === "POST")!.requestBody?.schema).toMatchObject({ properties: { name: { type: "string" } } });
   });
 
   it("after design too; and `cairn api --spec openapi.derived.json` runs on the same app", { timeout: 90_000 }, async () => {
@@ -203,7 +225,7 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
     const { buildProgram } = await import("../../src/cli/index.js");
     await buildProgram().parseAsync(["node", "cairn", "api", "--spec", file, "--base-url", appUrl, "--out", apiOut, "--rps", "1000"]);
     const text = out.join("");
-    expect(text).toContain("API spec: 127.0.0.1");
+    expect(text).toContain("API spec: API draft (from the UI traffic)");
     // GETs are sent and pass; the two POSTs are listed but not sent (no --allow-mutations).
     expect(text).toMatch(/4\/4 case\(s\) passed · 2 not sent/);
     expect(process.exitCode ?? 0).toBe(0);
@@ -226,6 +248,72 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
     const watch = model.endpoints.find((e) => e.method === "GET" && e.path === "/api/watch");
     expect(watch?.responses.map((r) => r.status)).toEqual(["200"]);
     await readFile(join(result.runDir, "report.json"), "utf8");
+  });
+
+  it("a failed write of the draft does not stop the run: the report is written and the log says why", { timeout: 90_000 }, async () => {
+    const own = join(base, "write-fails");
+    await mkdir(own);
+    blockWrite.in = own;
+    const events: string[] = [];
+    try {
+      const result = await runExploration({ url: start(), config: config(), runsBaseDir: own, knowledgeDir: join(base, "none"), fresh: true, onProgress: (e) => events.push(e) });
+      expect((JSON.parse(await readFile(join(result.runDir, "report.json"), "utf8")) as { partial?: boolean }).partial).toBeUndefined();
+      expect(events.join("\n")).toMatch(/could not write openapi\.derived\.json \(EISDIR\)/);
+    } finally {
+      blockWrite.in = undefined;
+    }
+  });
+
+  it("a --url that is no URL fails as the run's own failure, with its report", { timeout: 90_000 }, async () => {
+    const own = join(base, "bad-url");
+    const failure: unknown = await runDesign({ url: "example.com", config: config(), runsBaseDir: own, knowledgeDir: join(base, "none"), fresh: true }).catch((e: unknown) => e);
+    expect((failure as Error).name).not.toBe("TypeError");
+    const [run] = await readdir(own);
+    expect((JSON.parse(await readFile(join(own, run!, "report.json"), "utf8")) as { partial?: boolean }).partial).toBe(true);
+  });
+
+  /** A page in real Chromium through the real backend and recorder, and the file they leave. */
+  async function throughChromium(act: (page: Page) => Promise<void>): Promise<string> {
+    const rec = new ApiTrafficRecorder({ origins: [appUrl] });
+    const b = new PlaywrightLibBackend({ headless: true, apiTraffic: rec });
+    const dir = await mkdtemp(join(base, "chromium-"));
+    try {
+      await b.observe({ url: `${appUrl}/app.html` });
+      await act((b as unknown as { page: Page }).page);
+      await new Promise((r) => setTimeout(r, 300));
+      await writeTrafficSpec(rec, dir, appUrl, [], () => undefined);
+      return await readFile(join(dir, "openapi.derived.json"), "utf8");
+    } finally {
+      await b.close();
+    }
+  }
+
+  it("a cookie's value travelling in a path is not in the file, also an HttpOnly one and one only ever set", { timeout: 90_000 }, async () => {
+    const saved = await throughChromium((page) =>
+      page.evaluate(async () => {
+        await fetch("/setcookie");
+        await fetch("/api/sess/plainsessionword");
+        await fetch("/api/only/onlysetword");
+      }),
+    );
+    expect(saved).not.toContain("plainsessionword");
+    expect(saved).not.toContain("onlysetword");
+    expect(saved).toContain("/api/sess/{id}");
+    expect(saved).toContain("/api/only/{id}");
+  });
+
+  it("a response from a service worker is not API traffic; what the worker itself asks the network for is", { timeout: 90_000 }, async () => {
+    const saved = await throughChromium(async (page) => {
+      await page.evaluate(() => navigator.serviceWorker.register("/sw.js").then(() => navigator.serviceWorker.ready));
+      await page.reload();
+      await page.evaluate(async () => {
+        await fetch("/api/from-worker");
+        await fetch("/api/through-worker");
+      });
+    });
+    expect(saved).toContain("/api/session"); // what the page asks the network for itself stays
+    expect(saved).not.toContain("/api/from-worker");
+    expect(saved).toContain("/api/through-worker"); // once more through Playwright: the worker's own fetch, answered by the API
   });
 
   it("a value known only from the run's own secrets (knowledge) is scrubbed from the file when the traffic carries it", { timeout: 90_000 }, async () => {

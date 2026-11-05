@@ -127,7 +127,7 @@ export function clickFailure(message: string): ClickFailure | undefined {
 const V = "‹v›";
 
 /** How often a run of letters switches case: random text flips about every other letter, a CamelCase word rarely. */
-function caseFlips(run: string): number {
+export function caseFlips(run: string): number {
   let n = 0;
   for (let k = 1; k < run.length; k++) if (/[A-Z]/.test(run[k]!) !== /[A-Z]/.test(run[k - 1]!)) n += 1;
   return n;

@@ -35,9 +35,9 @@ describe("ApiTrafficRecorder (#229)", () => {
     await rec.flush();
     expect(rec.recorded).toBe(4);
     expect(rec.leftOut).toEqual({ static: 3, otherOrigin: 2 });
-    const { doc } = rec.spec({ title: "app" });
+    const doc = rec.spec();
     expect(Object.keys((doc as { paths: object }).paths).sort()).toEqual(["/api/projects", "/api/projects/{id}", "/api/session"]);
-    expect((doc as { servers: unknown }).servers).toEqual([{ url: APP }]);
+    expect((doc as { servers?: unknown }).servers).toBeUndefined();
     const op = (doc as { paths: Record<string, Record<string, Record<string, unknown>>> }).paths["/api/projects/{id}"]!.get!;
     expect(op[DERIVED_KEY]).toBe(true);
     expect(Object.keys(op.responses as object)).toEqual(["200", "404"]);
@@ -48,17 +48,17 @@ describe("ApiTrafficRecorder (#229)", () => {
     sample(rec);
     await rec.flush();
     expect(rec.leftOut.otherOrigin).toBe(1);
-    expect(Object.keys((rec.spec({ title: "app" }).doc as { paths: object }).paths)).toContain("/v1/flags");
+    expect(Object.keys((rec.spec() as { paths: object }).paths)).toContain("/v1/flags");
   });
 
   it("the file it gives is read by ingestOpenApi and holds no token, cookie or body value", async () => {
     const rec = new ApiTrafficRecorder({ origins: [APP] });
     sample(rec);
     await rec.flush();
-    const { doc, secrets } = rec.spec({ title: "app" });
+    const doc = rec.spec();
     const dir = await mkdtemp(join(tmpdir(), "cairn-traffic-"));
     try {
-      const file = await writeDerivedSpec(dir, doc, secrets);
+      const file = await writeDerivedSpec(dir, doc);
       const model = await ingestOpenApi(file);
       expect(model.endpoints.map((e) => `${e.method} ${e.path}`).sort()).toEqual([
         "GET /api/projects",
@@ -69,7 +69,6 @@ describe("ApiTrafficRecorder (#229)", () => {
       for (const t of [JWT, "FAKEtrafficSIG0042", "FAKE-traffic-sid-5e6f7a", "FAKE-traffic-q-1a2b", "FAKE-traffic-Pa55!", "FAKE-traffic-resp-tok-77", "FAKE-traffic-body-value", "analytics.example-tracker"]) {
         expect(saved, t).not.toContain(t);
       }
-      expect(secrets).toEqual(expect.arrayContaining([JWT, "FAKE-traffic-sid-5e6f7a", "FAKE-traffic-q-1a2b", "FAKE-traffic-Pa55!", "FAKE-traffic-resp-tok-77"]));
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -108,7 +107,7 @@ describe("ApiTrafficRecorder (#229)", () => {
     await rec.flush(100);
     expect(Date.now() - t0).toBeLessThan(2_000);
     expect(rec.cutOff).toBe(1);
-    const paths = (rec.spec({ title: "app" }).doc as { paths: Record<string, { get: { responses: Record<string, Record<string, unknown>> } }> }).paths;
+    const paths = (rec.spec() as { paths: Record<string, { get: { responses: Record<string, Record<string, unknown>> } }> }).paths;
     expect(paths["/api/watch"]!.get.responses["200"]).toEqual({ description: "Status 200, as recorded" });
     expect(paths["/api/a"]!.get.responses["200"]!.content).toBeDefined();
   });
@@ -117,7 +116,7 @@ describe("ApiTrafficRecorder (#229)", () => {
     const rec = new ApiTrafficRecorder({ origins: [APP] });
     rec.note({ method: "GET", url: `${APP}/api/users/alice.smith@example.com/avatar`, resourceType: "fetch", status: 200, responseContentType: "application/json", body: json({ "bob.jones@example.com": { role: "admin" } }) });
     await rec.flush();
-    const text = JSON.stringify(rec.spec({ title: "app" }).doc);
+    const text = JSON.stringify(rec.spec());
     expect(text).not.toContain("alice.smith@example.com");
     expect(text).not.toContain("bob.jones@example.com");
     expect(text).toContain("/api/users/{id}/avatar");

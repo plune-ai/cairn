@@ -499,7 +499,7 @@ export const apiModality: Modality = {
       const text = isUrl(spec) ? undefined : await readFile(source, "utf8").catch(() => undefined);
       let derived: DerivedSpec | undefined;
       try {
-        derived = text === undefined ? undefined : deriveSpec(text);
+        derived = text === undefined ? undefined : deriveSpec(text, secrets);
       } catch (e) {
         ctx.err(`✗ Could not read ${source}: ${(e as Error).message}\n`);
         process.exitCode = 1;

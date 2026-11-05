@@ -52,13 +52,28 @@ openapi.derived.json # OpenAPI draft from the app's API traffic (#229); lib back
 `openapi.derived.json` (#229) folds the API requests the run saw — while pages loaded and after each click — into
 OpenAPI 3.0: ids in paths become parameters (`/projects/123` → `/projects/{id}`), with methods, response codes and body
 schemas inferred from the examples, all marked `x-cairn-derived: true`. Only `--url`'s origin is kept, plus those given
-with `--api-origin https://api.example.com` (comma-separated); analytics, CDNs and pages, scripts, styles, images and
-fonts stay out (the run log counts them). No body, header, cookie or query value is written, only names, types and
-status codes, and the traffic's credentials are scrubbed from the file as well. An e-mail address in a path becomes a parameter, and an
-object keyed by e-mail addresses or tokens is a map (`additionalProperties`). A response body still open 3 s after the
-run ends (a long poll, a watch stream) is cut off: the request stays, without a schema, and the run log counts it. Give it straight to
-`cairn api --spec runs/<runId>/openapi.derived.json --base-url <url>`. The sign-in of an `--env-file` environment runs
-in its own browser and is not recorded.
+with `--api-origin https://api.example.com` (comma-separated, no `*`, no user or password); analytics, CDNs, pages,
+scripts, styles, images, fonts and answers a service worker made itself stay out (the run log counts them and names up
+to three of the origins refused, so a `--url` that redirects to `www.` or `https` shows what to pass). The host and the
+port are not in the file: `cairn api` takes the address from `--base-url`.
+
+A string from the traffic reaches the file only in a fixed form. A name (a JSON key, a form field, a query name) must
+match `^[A-Za-z_][A-Za-z0-9_-]{0,63}$`, not be long random text and not be a secret of the run or a credential of the
+traffic; one that fails is left out alone, so `user.name` and `filter.status` are left out too. An object most of whose
+keys fail, or with many keys of one shape, is a map (`additionalProperties`). A word of a path stays only as ASCII letters
+with digits at the end of a `-`/`_` part, up to 32 characters, not 6 or more hex characters and not equal to any value the traffic showed or a
+secret of the run; anything else is a parameter. Bodies, headers, cookies and query values are not written as such, but no
+form tells a value from a word of the API:
+a plain word in a path stays as written when it appeared nowhere else in the traffic, unless three or more such
+words sit in the same place before the same ending, and a plain word used as a key, a form field or a query name
+stays unless it is a secret of the run or a credential of the traffic, so read the draft before sharing it.
+
+A JSON response is parsed for its schema and its values and not kept: one that says it is over 1 MB is not read, and one
+with no `content-length` is read whole and dropped if it is over 1 MB. A response body still open 3 s after the run ends
+(a long poll, a watch stream) is cut off: the request stays, without a schema, and the run log counts it. A failed write
+goes to the log and the run goes on. Past 1 000 000 distinct values the run writes no file, because it could no longer
+check it, and the log says why. Give the file straight to `cairn api --spec runs/<runId>/openapi.derived.json --base-url <url>`.
+The sign-in of an `--env-file` environment runs in its own browser and is not recorded.
 + a Langfuse trace (link in stdout).
 
 ## Diagnostics
