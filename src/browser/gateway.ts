@@ -42,7 +42,8 @@ export interface BrowserGateway {
   getState(element: ElementRef): Promise<ElementState>;
   /**
    * #225 review 3: the network guard of the observe/act backend — on until released. Absent, or undefined, when that
-   * backend cannot guard the network (the cli backend): a caller that needs the guard then presses nothing.
+   * backend cannot guard the network (the cli backend): a caller that needs the guard then presses nothing. Rejects when
+   * it could not start, with a `code` in fixed words; its message is not for a report.
    */
   guardWrites?(): Promise<WriteGuard | undefined>;
   session(): SessionApi;

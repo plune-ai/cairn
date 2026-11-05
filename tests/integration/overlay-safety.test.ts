@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
+import type { ChildProcess } from "node:child_process";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, onTestFinished, vi } from "vitest";
+import { chromium } from "playwright";
 import { startFixtureServer, type FixtureServer } from "../fixtures/server.js";
 import { PlaywrightLibBackend } from "../../src/browser/backends/playwright-lib.js";
 import { capture } from "../../src/observe/index.js";
@@ -138,9 +140,31 @@ describe("what a press did never reaches the server later (integration, real Chr
     gateway = backend as unknown as BrowserGateway;
   });
   afterEach(async () => {
+    vi.restoreAllMocks();
     await backend.close();
     await server.close();
   });
+
+  /** The process of each browser the guard starts from here on, as Playwright hands it over. */
+  function browsersStarted(): ChildProcess[] {
+    const started: ChildProcess[] = [];
+    const real = chromium.launchServer.bind(chromium);
+    vi.spyOn(chromium, "launchServer").mockImplementation(async (options) => {
+      const browser = await real(options);
+      started.push(browser.process());
+      onTestFinished(() => void browser.kill().catch(() => undefined)); // a test that went red leaves no browser behind
+      return browser;
+    });
+    return started;
+  }
+  /** Read from the system, not from the handle: signal 0 tests that the process is there and does nothing to it. */
+  const running = (browser: ChildProcess): boolean => {
+    try {
+      return process.kill(browser.pid!, 0);
+    } catch {
+      return false;
+    }
+  };
 
   /** The same press on the crawler's own page, with no guard: the write must arrive, or the zero above it says nothing. */
   async function theWriteIsReal(page: string, expected: string): Promise<void> {
@@ -271,14 +295,137 @@ describe("what a press did never reaches the server later (integration, real Chr
   it("a throw out of the pressing still rejects, and lifts the guard: the crawler's next write reaches the server", async () => {
     const page = lateWrites("immediate");
     const study = await capture(gateway, page);
-    // outside the per-trigger catch: reading what a button announces, before any trigger is pressed
-    const broken = vi.spyOn(backend, "getState").mockImplementation(() => {
-      throw new Error("state read broke");
-    });
-    await expect(exploreOverlays({ gateway, url: page, study })).rejects.toThrow("state read broke");
-    broken.mockRestore();
+    const started = browsersStarted();
+    // outside the per-trigger catch: the caller's progress callback, with the guard on and nothing pressed yet
+    const onProgress = (event: string): void => {
+      if (event.includes("pressing")) throw new Error("progress broke");
+    };
+    await expect(exploreOverlays({ gateway, url: page, study, onProgress })).rejects.toThrow("progress broke");
+    expect(started.map(running)).toEqual([false]);
 
     await gateway.observe({ url: lateWrites("on-load") });
     await expect.poll(() => server.writes, { timeout: 5_000 }).toEqual([{ method: "POST", url: "/w/on-load" }]);
   }, 180_000);
+
+  it("the release ends the browser's process, and so does closing the backend with the guard on", async () => {
+    const started = browsersStarted();
+    await gateway.observe({ url: lateWrites("immediate") });
+    const guard = await backend.guardWrites();
+    expect(started.map(running)).toEqual([true]); // the check can see a process that runs
+    await guard.release();
+    expect(started.map(running)).toEqual([false]);
+
+    await backend.guardWrites();
+    expect(started.map(running)).toEqual([false, true]);
+    await backend.close();
+    expect(started.map(running)).toEqual([false, false]);
+  }, 180_000);
+
+  it("exploring ends the browser's process, and a page with nothing to press starts none", async () => {
+    const started = browsersStarted();
+    const page = lateWrites("immediate");
+    await exploreOverlays({ gateway, url: page, study: await capture(gateway, page) });
+    expect(started.map(running)).toEqual([false]);
+
+    const list = `${server.url}/wizard-disabled.html`;
+    const nothing = { ...(await capture(gateway, list)), elements: [] };
+    const out = await exploreOverlays({ gateway, url: list, study: nothing });
+    expect(started).toHaveLength(1);
+    expect(out).toMatchObject({ guard: "none", states: [], skipped: [], blocked: [] });
+    expect(out.note).toMatch(/nothing was pressed/);
+  }, 180_000);
+
+  it("an app that reads through POST: the stop is reported, and the trigger it hid says it was not there", async () => {
+    const page = lateWrites("read-by-post");
+    const study = await capture(gateway, page);
+    expect(study.elements.map((e) => e.name)).toContain("Open panel"); // the crawler's page read it: the POST is the app's own
+    expect(paths()).toEqual(["/w/graphql"]);
+
+    const out = await exploreOverlays({ gateway, url: page, study });
+    await arrival();
+    expect(paths()).toEqual(["/w/graphql"]); // not one more
+    expect(out.guard).toBe("network");
+    expect(out.states).toEqual([]);
+    expect(out.blocked).toContainEqual(expect.objectContaining({ method: "POST", path: "/w/graphql" }));
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringMatching(/announces .*not there/) }]);
+    expect(out.note).toMatch(/not there/);
+  }, 180_000);
+
+  it("the crawler's browser is gone before the buttons are read: it says so, and starts no other", async () => {
+    const page = lateWrites("immediate");
+    const study = await capture(gateway, page);
+    await (backend as unknown as { browser: { close(): Promise<void> } }).browser.close();
+    const started = browsersStarted();
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(started).toEqual([]);
+    expect(out.guard).toBe("none");
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("could not be read") }]);
+    expect(out.note).toMatch(/could not be read/);
+  }, 180_000);
+
+  it.each([
+    { when: "before the first press", before: true },
+    { when: "at the first press", before: false },
+  ])("the browser that presses dies $when: the result says so, and the crawler goes on", async ({ before }) => {
+    const page = lateWrites("immediate");
+    const study = await capture(gateway, page);
+    const kill = (): Promise<void> => (backend as unknown as { pressing: { server: { kill(): Promise<void> } } }).pressing.server.kill();
+    if (before) {
+      const real = backend.guardWrites.bind(backend);
+      vi.spyOn(backend, "guardWrites").mockImplementationOnce(async () => {
+        const guard = await real();
+        await kill();
+        return guard;
+      });
+    } else {
+      const real = backend.act.bind(backend);
+      vi.spyOn(backend, "act").mockImplementationOnce(async (a) => {
+        await kill();
+        return real(a);
+      });
+    }
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(out).toMatchObject({ guard: "network", states: [], blocked: [] });
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("could not be pressed") }]);
+    expect(out.note).toMatch(/could not be pressed/);
+    expect((await gateway.observe({ url: page })).ariaSnapshot).toContain("Open panel");
+  }, 180_000);
+
+  it("the browser cannot be started: that is the reason given, with no word of what the failure said", async () => {
+    const page = lateWrites("immediate");
+    const study = await capture(gateway, page);
+    vi.spyOn(chromium, "launchServer").mockRejectedValueOnce(new Error("Failed to launch: Error: spawn ENOMEM"));
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(out.guard).toBe("none");
+    expect(out.note).toContain("the write guard did not start (BROWSER_START_FAILED)");
+    expect(out.note).not.toMatch(/cannot guard the network|ENOMEM|Failed to launch/);
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("did not start") }]);
+    await arrival();
+    expect(server.writes).toEqual([]);
+  }, 180_000);
+
+  it("IndexedDB that cannot be restored: that is the reason given, nothing is pressed, and no browser stays", async () => {
+    const page = lateWrites("key-zero");
+    const study = await capture(gateway, page);
+    const started = browsersStarted();
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(out.guard).toBe("none");
+    expect(out.note).toContain("the write guard did not start (SESSION_RESTORE_FAILED)");
+    expect(out.note).not.toMatch(/cannot guard the network|IndexedDB|token-of-the-session/);
+    expect(out.states).toEqual([]);
+    expect(started.map(running)).toEqual([false]);
+    await arrival();
+    expect(server.writes).toEqual([]);
+  }, 180_000);
+
+  it("IndexedDB that cannot be read does not hang the run: that is the reason given, and the crawler goes on", async () => {
+    const page = lateWrites("blocked-upgrade");
+    const study = await capture(gateway, page);
+    const started = browsersStarted();
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(out.guard).toBe("none");
+    expect(out.note).toContain("the write guard did not start (SESSION_READ_FAILED)");
+    expect(started).toEqual([]);
+    expect((await gateway.observe({ url: page })).ariaSnapshot).toContain("Open panel");
+  }, 60_000);
 });

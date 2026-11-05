@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { BrowserGateway } from "../browser/gateway.js";
-import type { BlockedRequest, ElementRef, ElementState, Observation, OverlayScope } from "../browser/types.js";
+import type { BlockedRequest, ElementRef, ElementState, Observation, OverlayScope, WriteGuard } from "../browser/types.js";
 import type { PageStudy } from "../observe/index.js";
 import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import {
@@ -34,8 +34,8 @@ import {
  * The invariant (#225 reviews 3, 4): exploring overlays changes nothing on the server, whatever the button is called:
  * not while it runs, not after it ends. Every press happens under the backend's write guard, in a throwaway browser
  * that aborts every request but GET, HEAD and OPTIONS and is discarded, guard on, in `finally`; what it stopped is in
- * the result. A backend that cannot guard the network (cli) presses no trigger and no wizard step: it reads the overlays
- * already open and says so.
+ * the result. A backend that cannot guard the network (cli), or a guard that did not start, presses no trigger and no
+ * wizard step: it reads the overlays already open and says so. With nothing to press, no guard is started at all.
  *
  * On top of the guard, checks that do not depend on a name, for every press (triggers, nested probes, Next, Back): an
  * element that submits a form is not pressed, nor a disabled one. A trigger must say it opens something
@@ -60,16 +60,17 @@ export interface ExploreOverlaysResult {
   skipped: { role: string; name?: string; reason: string }[];
   /** Toast and validation texts seen anywhere, in order, once each. */
   toasts: string[];
-  /** `network`: the write guard was on for every press. `none`: the backend has none, so nothing was pressed. */
+  /** `network`: the write guard was on for every press. `none`: no guard was on, so nothing was pressed; `note` says why. */
   guard: "network" | "none";
-  /** The writes the guard stopped, each with the element pressed before it (`[]` when none, or no guard). */
+  /** The requests the guard stopped, each with the element pressed before it (`[]` when none, or no guard). */
   blocked: BlockedRequest[];
-  /** Why exploration did less than usual (no guard), for a person to read. */
+  /** Why exploration did less than usual, for a person to read. Fixed words and counts, never what an error said. */
   note?: string;
 }
 
-export const NO_GUARD_NOTE =
-  "the browser backend cannot guard the network, so no trigger and no wizard step was pressed; only overlays already open were read";
+const NOT_PRESSED_NOTE = "no trigger and no wizard step was pressed; only overlays already open were read";
+export const NO_GUARD_NOTE = `the browser backend cannot guard the network, so ${NOT_PRESSED_NOTE}`;
+const NOTHING_TO_PRESS_NOTE = "no button on the page announces an overlay, so nothing was pressed";
 
 const MAX_TRIGGERS = 8;
 /** Nested overlays are followed this deep (page → overlay → nested overlay → one more). */
@@ -87,6 +88,20 @@ const COMPLETION_REASON = "completes the form; not pressed";
 const SILENT_REASON = "does not say it opens anything (no aria-haspopup, aria-expanded or aria-controls); not pressed";
 const DISABLED_REASON = "disabled; not pressed";
 const SUBMITS_FORM_REASON = "submits a form";
+const UNREAD_REASON = "could not be read as visible on the page, so what it announces is not known; not pressed";
+const NOT_THERE_REASON = "announces a popup on the page, but was not there in the browser that presses (a stopped request can be why); not pressed";
+const PRESS_FAILED_REASON = "could not be pressed, or what it opened could not be read to the end";
+
+/**
+ * #225 review 5: what a failed start of the guard may say of its error: the code or the name, each only in the shape a
+ * code or an error's name has. Never its message, which can quote what the session holds, and this goes into the report.
+ */
+function errorCategory(e: unknown): string {
+  const { name, code } = (typeof e === "object" && e !== null ? e : {}) as { name?: unknown; code?: unknown };
+  if (typeof code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(code)) return code;
+  if (typeof name === "string" && /^([A-Z][A-Za-z0-9]{0,39})?Error$/.test(name)) return name;
+  return "unknown error";
+}
 
 /**
  * Why `e` may not be pressed while looking for an overlay, or undefined when it may. The deny-list first (destructive,
@@ -137,6 +152,9 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     for (const t of fresh) if (!toasts.includes(t)) toasts.push(t);
     return fresh;
   };
+  let unread = 0;
+  let notThere = 0;
+  let pressFailed = 0;
   const skip = (e: { role: string; name?: string }, reason: string): void => {
     if (!skipped.some((s) => s.role === e.role && s.name === e.name && s.reason === reason)) {
       skipped.push({ role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), reason });
@@ -156,13 +174,13 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     s.els.find((e) => e.role === step.role && e.name === step.name && sameScope(e.scope, step.scope) && !e.underOverlay);
 
   /** The page from scratch, then each step of `path` pressed in turn. `before`: the overlays open before the last press. */
-  async function replay(path: Step[]): Promise<{ ok: boolean; outcome?: string; before: number; snap: Snap }> {
+  async function replay(path: Step[]): Promise<{ ok: boolean; missing?: true; outcome?: string; before: number; snap: Snap }> {
     let s = read(await gateway.observe({ url }));
     let before = s.stack.length;
     let outcome: string | undefined;
     for (const step of path) {
       const el = find(s, step);
-      if (!el) return { ok: false, before, snap: s };
+      if (!el) return { ok: false, missing: true, before, snap: s };
       before = s.stack.length;
       const res = await gateway.act({ kind: "click", ref: el.ref, timeoutMs: PRESS_TIMEOUT_MS });
       if (!res.ok) return { ok: false, outcome: res.outcome, before, snap: s };
@@ -289,8 +307,7 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
       if (here) {
         for (const b of probes) {
           const fresh = here.els.find((e) => e.role === b.role && e.name === b.name && sameScope(e.inside, scope) && !e.underOverlay) ?? b;
-          const state = passesSafetyFilters(b.name) && !isCompletionName(b.name) && !fresh.disabled ? await gateway.getState(fresh).catch(() => undefined) : undefined;
-          reasons.set(b, refusal(fresh, state?.popup, state?.submitsForm));
+          reasons.set(b, await refusalOf(fresh));
         }
       }
       let probed = 0;
@@ -328,11 +345,79 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     state.exits.sort((a, b) => EXIT_ORDER.indexOf(a.kind) - EXIT_ORDER.indexOf(b.kind));
   }
 
+  // ── what may be pressed (#225 review 5) ────────────────────────────────────
+  // Only a button that says it opens something is pressed (allow-list). Read on the crawler's own page, before anything
+  // starts: reading presses nothing, and it is the page the study describes. Where the presses happen, a request the app
+  // reads through may be stopped and the button not be there at all.
+  if (!gateway.guardWrites) return readOpenOverlays(NO_GUARD_NOTE);
+  const found: ElementRef[] = [];
+  for (const e of study.elements.filter((e) => e.role === "button" && e.interactive && !e.underOverlay && !e.scope && !e.inside)) {
+    if (found.some((c) => c.name === e.name)) continue;
+    const reason = await refusalOf(e);
+    if (reason) skip(e, reason);
+    else found.push(e);
+  }
+  if (found.length === 0) {
+    // no second browser for nothing to press
+    const why = unread > 0 ? `${troubles()}, so nothing was pressed` : NOTHING_TO_PRESS_NOTE;
+    say(`exploreOverlays — ${why}`);
+    return { states, skipped, toasts, guard: "none", blocked: [], note: why };
+  }
+  const limit = input.maxTriggers ?? MAX_TRIGGERS;
+  for (const c of found.slice(limit)) skip(c, `over the limit of ${limit} triggers`);
+  const triggers = found.slice(0, limit);
+
   // ── the write guard (#225 reviews 3, 4) ────────────────────────────────────
   // On before the first press; everything below happens in its throwaway browser, which goes away after the last press,
   // also on an error. The crawler's own page never saw any of it. Without a guard nothing is pressed at all.
-  const guard = gateway.guardWrites ? await gateway.guardWrites().catch(() => undefined) : undefined;
+  let guard: WriteGuard | undefined;
+  try {
+    guard = await gateway.guardWrites();
+  } catch (e) {
+    const failed = `the write guard did not start (${errorCategory(e)})`;
+    for (const c of triggers) skip(c, `${failed}; not pressed`);
+    return readOpenOverlays(`${failed}, so ${NOT_PRESSED_NOTE}`);
+  }
   if (!guard) {
+    for (const c of triggers) skip(c, "no write guard; not pressed");
+    return readOpenOverlays(NO_GUARD_NOTE);
+  }
+  let blocked: BlockedRequest[] = [];
+  try {
+    await pressTriggers();
+  } finally {
+    blocked = await guard.release().catch(() => []);
+  }
+  for (const b of blocked) say(`exploreOverlays — stopped ${b.method} ${b.path}${b.pressed ? ` after "${b.pressed.name ?? b.pressed.role}"` : ""}`);
+  say(`exploreOverlays — ${states.length} overlay state(s) from ${triggers.length} triggers`);
+  const trouble = troubles();
+  if (trouble) say(`exploreOverlays — ${trouble}`);
+  return { states, skipped, toasts, guard: "network", blocked, ...(trouble ? { note: trouble } : {}) };
+
+  /** Why `e` may not be pressed, or undefined when it may. A button its name or its study refuses is not read at all. */
+  async function refusalOf(e: ElementRef): Promise<string | undefined> {
+    if (!passesSafetyFilters(e.name) || isCompletionName(e.name) || e.disabled) return refusal(e, undefined);
+    const state = await gateway.getState(e).catch(() => undefined);
+    if (!state?.visible) {
+      unread++;
+      return UNREAD_REASON; // what it announces is not known, which is not the same as announcing nothing
+    }
+    return refusal(e, state.popup, state.submitsForm);
+  }
+
+  /** What did not go as usual, for a person to read: fixed words and counts, nothing a page or an error said. */
+  function troubles(): string {
+    return [
+      unread > 0 ? `${unread} button(s) could not be read` : "",
+      notThere > 0 ? `${notThere} trigger(s) announced on the page were not there in the browser that presses` : "",
+      pressFailed > 0 ? `${pressFailed} trigger(s) could not be pressed, or what they opened could not be read to the end` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+  }
+
+  /** Nothing is pressed: only the overlays open when the page was read are recorded, and the result says why. */
+  function readOpenOverlays(why: string): ExploreOverlaysResult {
     for (const top of overlayStack(baseline)) {
       states.push({
         id: `overlay-${states.length + 1}`,
@@ -347,48 +432,32 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
         skipped: [],
       });
     }
-    say(`exploreOverlays — ${NO_GUARD_NOTE}`);
-    return { states, skipped, toasts, guard: "none", blocked: [], note: NO_GUARD_NOTE };
+    say(`exploreOverlays — ${why}`);
+    return { states, skipped, toasts, guard: "none", blocked: [], note: why };
   }
-  let blocked: BlockedRequest[] = [];
-  let candidates: ElementRef[] = [];
-  let maxTriggers = input.maxTriggers ?? MAX_TRIGGERS;
-  try {
-    ({ candidates, maxTriggers } = await pressTriggers());
-  } finally {
-    blocked = await guard.release().catch(() => []);
-  }
-  for (const b of blocked) say(`exploreOverlays — stopped ${b.method} ${b.path}${b.pressed ? ` after "${b.pressed.name ?? b.pressed.role}"` : ""}`);
-  say(`exploreOverlays — ${states.length} overlay state(s) from ${Math.min(candidates.length, maxTriggers)} triggers`);
-  return { states, skipped, toasts, guard: "network", blocked };
 
   /** The page's own triggers, pressed while the write guard is on. */
-  async function pressTriggers(): Promise<{ candidates: ElementRef[]; maxTriggers: number }> {
-    // Only a button that says it opens something is pressed (allow-list), read on the page as it is with nothing open.
-    const found: ElementRef[] = [];
-    const pageButtons = study.elements.filter((e) => e.role === "button" && e.interactive && !e.underOverlay && !e.scope && !e.inside);
-    if (pageButtons.length > 0) await gateway.observe({ url }).catch(() => undefined);
-    for (const e of pageButtons) {
-      if (found.some((c) => c.name === e.name)) continue;
-      const vetted = passesSafetyFilters(e.name) && !isCompletionName(e.name) && !e.disabled;
-      const state = vetted ? await gateway.getState(e).catch(() => undefined) : undefined;
-      const reason = refusal(e, state?.popup, state?.submitsForm);
-      if (reason) skip(e, reason);
-      else found.push(e);
-    }
-    const limit = input.maxTriggers ?? MAX_TRIGGERS;
-    for (const c of found.slice(limit)) skip(c, `over the limit of ${limit} triggers`);
-    for (const c of found.slice(0, limit)) {
+  async function pressTriggers(): Promise<void> {
+    say(`exploreOverlays — pressing ${triggers.length} trigger(s) with the write guard on`);
+    for (const c of triggers) {
       try {
         const step: Step = { role: c.role, name: c.name };
         const re = await replay([step]);
-        if (!re.ok || re.snap.stack.length <= re.before) continue; // it opened nothing: not a trigger
-        await inspect([step], { snap: re.snap, before: re.before }, undefined, 0);
+        if (re.missing) {
+          notThere++;
+          skip(c, NOT_THERE_REASON);
+        } else if (!re.ok) {
+          pressFailed++;
+          skip(c, PRESS_FAILED_REASON);
+        } else if (re.snap.stack.length > re.before) {
+          await inspect([step], { snap: re.snap, before: re.before }, undefined, 0);
+        } // else it opened nothing: not a trigger
       } catch {
         // one trigger that fails to open must not end the exploration of the others
+        pressFailed++;
+        skip(c, PRESS_FAILED_REASON);
       }
     }
-    return { candidates: found, maxTriggers: limit };
   }
 }
 

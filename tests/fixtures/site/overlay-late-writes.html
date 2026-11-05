@@ -94,6 +94,27 @@
       // A number new with every load, in the accessibility tree: it tells one document from the next.
       $("stamp").textContent = "Load " + Math.random();
       if (kind === "on-load") post("/w/on-load");
+      // An app that reads through POST (GraphQL): the trigger is there only once the answer is.
+      if (kind === "read-by-post") {
+        $("open").hidden = true;
+        post("/w/graphql").then((r) => {
+          if (r && r.ok) $("open").hidden = false;
+        });
+      }
+      // IndexedDB that the browser which presses cannot be given: a record under the key 0, which does not restore…
+      if (kind === "key-zero") {
+        const open = indexedDB.open("session", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("kv");
+        open.onsuccess = () => open.result.transaction("kv", "readwrite").objectStore("kv").put("token-of-the-session", 0);
+      }
+      // …or that cannot be read: an upgrade waiting on a connection this page keeps open.
+      if (kind === "blocked-upgrade") {
+        const open = indexedDB.open("stuck", 1);
+        open.onsuccess = () => {
+          window.kept = open.result;
+          indexedDB.open("stuck", 2);
+        };
+      }
       if (kind === "self-closing" || kind === "hide-only") {
         addEventListener("pagehide", () => {
           for (let i = 0; i < 8; i++) post("/w/on-the-way-out", { keepalive: true });
