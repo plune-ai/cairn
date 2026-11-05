@@ -137,6 +137,8 @@ interface PwSuite {
 }
 interface PwJson {
   suites?: PwSuite[];
+  /** What failed outside any test: a config that did not load, a crash in a global hook. */
+  errors?: { message?: string }[];
 }
 
 /** Playwright's two fixed top-level hook step titles — kept out of the reviewer's chapter list. */
@@ -297,14 +299,19 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
  * Pure (no process/IO) so the failure-surfacing logic is unit-tested without spawning a runner.
  */
 export function resultsFromRunnerOutput(stdout: string, stderr: string): RawTestResult[] {
-  if (isMissingBrowserError(stderr) || isMissingBrowserError(stdout)) {
+  const start = stdout.indexOf("{");
+  let report: PwJson | undefined;
+  try {
+    report = start < 0 ? undefined : (JSON.parse(stdout.slice(start)) as PwJson);
+  } catch {
+    report = undefined;
+  }
+  const results = report ? extract(report) : [];
+  // A report is read for what the run said, not whole: on CI its metadata holds the pull request's title and diff,
+  // and those may well say "playwright install" with every browser in place.
+  const said = report ? [stdout.slice(0, start), ...(report.errors ?? []).map((e) => e.message), ...results.map((r) => r.error)].join("\n") : stdout;
+  if (isMissingBrowserError(stderr) || isMissingBrowserError(said)) {
     throw missingBrowsersError("Playwright could not launch a browser to run the generated tests.");
   }
-  const start = stdout.indexOf("{");
-  if (start < 0) return [];
-  try {
-    return extract(JSON.parse(stdout.slice(start)) as PwJson);
-  } catch {
-    return [];
-  }
+  return results;
 }
