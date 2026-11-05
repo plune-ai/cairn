@@ -490,7 +490,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       const v = pointerAt(answer, pointer);
       if (v === undefined || v === null || typeof v === "object" || String(v) === "") missing.push(`${pointer} for ${name}`);
       // JSON.parse has already rounded a number past the safe range: it may be another record's id, so it is never kept.
-      else if (typeof v === "number" && !Number.isSafeInteger(v)) inexact.push(`{{${name}}}`);
+      else if (typeof v === "number" && Number.isInteger(v) && !Number.isSafeInteger(v)) inexact.push(`{{${name}}}`);
       else vars[name] = String(v);
     }
     if (missing.length) throw new RequestFailed(`${label}: the answer has no value at ${missing.join(", ")}`);

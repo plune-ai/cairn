@@ -1020,7 +1020,6 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
     it.each([
       ["above 2^53", "9007199254740993"],
       ["far above it", "1e21"],
-      ["with a fraction", "3.5"],
     ])("stops the check on a captured number %s: no read and no delete can reach another record", async (_label, number) => {
       const { fetch, calls } = fakeFetch(created(`{"id":${number}}`));
       const { result, all } = await runFake(await writePlan(), fetch);
@@ -1028,6 +1027,14 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
       expect(urls(calls)).toEqual(["POST /api/projects"]);
       expect(result.cleanupErrors).toEqual([expect.stringContaining("may still be on the server")]);
       expect(all).not.toContain("900719925474099");
+    });
+
+    it("keeps a captured fraction: it is no rounded id, and it shows as its name", async () => {
+      const { fetch, calls } = fakeFetch(created('{"id":3,"price":3.5}'));
+      const { result, all } = await runFake(await writePlan({ flow: { steps: [createStep({ capture: { price: "/price", projectId: "/id" } })] } }), fetch);
+      expect(result.error).toBeUndefined();
+      expect(urls(calls)).toContain("DELETE /api/projects/3");
+      expect(all).not.toContain("3.5");
     });
 
     it("keeps the other captures of that answer, so the cleanup still goes to the created record", async () => {

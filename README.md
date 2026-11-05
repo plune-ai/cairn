@@ -114,8 +114,7 @@ is a `401`, those cases are inconclusive too: B's credentials may not be valid, 
 to any other answer stays refused. A neighbouring id counts only when both actors can read it. The flow's own cleanup
 deletes what was created, also when the check stops halfway; a check refused before its first request has no cleanup.
 A cleanup step without `expect` is done only on a 2xx, and a cleanup that answers otherwise, or cannot be sent because
-the create never returned its id, is reported as a cleanup error: the data may still be there. A captured JSON number
-that is not a safe integer stops the check, naming the capture: it may have been rounded, and a read or a cleanup must
+the create never returned its id, is reported as a cleanup error: the data may still be there. A captured JSON whole number past 2^53 stops the check, naming the capture: it may have been rounded, and a read or a cleanup must
 not reach another record. A string id above 2^53 is used as written, and its neighbours are skipped.
 
 ```json

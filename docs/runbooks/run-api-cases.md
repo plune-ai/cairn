@@ -86,7 +86,7 @@ cleanup error though nothing reached the server. A cleanup step without `expect`
 login page after the owner's session ended is a cleanup error naming the method, path and status); only after the
 other actor's `DELETE` went through does a `404` or `410` from it count as done. A cleanup step whose value was never
 captured (the create answered without the id) cannot be sent and is reported as a cleanup error naming the resource
-and the missing value. A captured JSON number that is not a safe integer stops the check, naming the capture: it may
+and the missing value. A captured JSON whole number past 2^53 stops the check, naming the capture: it may
 have been rounded, and a read or a cleanup must not reach another record. A string id above 2^53 is used as written, and
 its neighbours are skipped. Run it against a disposable staging
 environment only: without `--allow-mutations` nothing is sent (exit 5); a check whose flow or cleanup

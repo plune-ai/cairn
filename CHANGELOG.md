@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Header names merge case-insensitively. A check refused before its first request has no cleanup. A cleanup step without
   `expect` is done only on a 2xx, and a `404` or `410` counts as already gone only when the other actor's `DELETE` of
   that resource went through; a cleanup that answers otherwise, or that cannot be sent because its value was never
-  captured, is a cleanup error naming the request and the resource. A captured JSON number that is not a safe integer
+  captured, is a cleanup error naming the request and the resource. A captured JSON whole number past 2^53
   stops the check, naming the capture: it may have been rounded, and a read or a cleanup must not reach another record.
   A string id above 2^53 is used as written, and its neighbours are skipped. Exit codes, the first that applies wins: `1`
   for a two-actor file or saved session that cannot be used, a finding, an inconclusive case, a check that stopped, a
