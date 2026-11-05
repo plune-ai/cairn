@@ -82,9 +82,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aborts every request whose method is not GET, HEAD or OPTIONS — form posts, fetch and XHR writes, beacons — and lists
   each one it stopped, with the element pressed before it, in `overlays.json` (`guard`, `blocked`) and `report.md`. At
   the end, also on an error, that browser is killed with the guard on, so nothing it did can reach the server later,
-  and nothing flows back: the crawler's own page never saw a press. Not seen: a WebSocket message, a GET that changes
-  the server. A backend that cannot guard the network
-  (cli) presses no trigger and no wizard step there; it reads the overlays already open and says so (`note`). On top
+  and nothing flows back: the crawler's own page never saw a press. One exception, on `--channel` (full Chromium) over
+  HTTPS: with `Reporting-Endpoints` and a CSP `report-to`, the browser's own Reporting API report goes out as a POST. It
+  is not the app's doing, and it is not in `blocked`. Not seen: a WebSocket message, a GET that changes the server. Not
+  checked: Network Error Logging. A backend that cannot guard the network (cli), or a guard that did not start, presses
+  no trigger and no wizard step there; it reads the overlays already open and says why (`note`). With nothing to press,
+  no second browser is started. On top
   of the guard, for every press (triggers, nested probes, a wizard's Next and Back): no element that submits a form (a
   submit button or a `<button>` with no type inside a form or joined to it by `form=`), nothing disabled. Names are
   kept only where the guard cannot see: a deletion or a sign-out, which is often a GET link («Close account», «Sign
