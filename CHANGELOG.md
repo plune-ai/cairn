@@ -149,6 +149,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never decides what an overlay is. On by default; `ExploreDeps.overlays: false` turns the step off. A page-level
   wizard (not inside an overlay) and a side panel that stays on the page from the start are not found yet.
 
+- **Click only what is visible and unique in its scope; no blind `.first()` (#226).** On the lib backend `act()`,
+  `verify()` and `getState()` look in the current scope (the dialog, #225) among the visible elements only. One match:
+  it is the element. Several: they are narrowed by the accessible name of the row, list item, card, section or form
+  the element sits in, nearest first, taking the first container after which exactly one is left
+  (`getByRole('row', { name: 'Jane Roe Delete', exact: true }).getByRole('button', { name: 'Delete', exact: true })`);
+  `verify()` then marks the element `verified` with `narrowedBy`. Links with the same name that all lead to the same
+  address are one destination and are followed. When nothing narrows them the element is `ambiguous`: `act()` answers
+  `ok: false, outcome: "ambiguous"` with `ambiguous: { role, name, count }` and clicks nothing, `verify()` returns
+  `ambiguous: true`, `getState()` reads nothing from a guess, and the run report lists it: `report.json` (`ambiguous`)
+  and a *Ambiguous elements* section of `report.md`, which names the likely accessibility problem (identical names
+  with nothing to tell the controls apart). `verify()`'s `count` is now the number of visible elements, not of all.
+  The design and codegen prompts no longer say `(×N — repeated, .first())`: an element a row narrows carries that
+  locator, an ambiguous one is marked «do not click it», one with no narrowing known is told to narrow by context. The
+  codegen rule «ALWAYS use `.first()`» is replaced by «narrow by context; `.first()` / `.nth()` only with a comment
+  saying why the position is the point of the check (for example sorting)», and the interaction map no longer appends
+  `.first()` to a repeated element's locator. Generated code is linted before it is run (`lintErrors`): `page.mouse.click`
+  (also through an alias such as `const m = page.mouse`), `force: true` (also as a quoted key, `!0`, or the shorthand
+  of a variable set to true that a spread carries), and `.first()` / `.last()` / `.nth(` (also `['first']()` and
+  `>> nth=` / `:nth-match(` in a selector) without a comment on its line or the line above are errors; a `// TODO`,
+  `FIXME` or a tool directive is no reason. The file is read whole, so a regex with an apostrophe or a template over
+  several lines no longer hides the code after it; a suite with
+  one is not run, each error becomes a failed result that goes into the repair loop like a failing test (the hint,
+  the no-progress stop, keep-best), in `explore`, `design` and `automate`. Words in strings and comments are not read
+  as calls. Counted over the fixture pages (what Cairn puts into generated code or tells the generator to write: the
+  interaction map's locators, the `.first()` hints of the codegen and design prompts, the writer prompt's rule): on the
+  pages that were there before, 0 hints and 1 rule before, 0 and 0 after; on the two new pages with repeated elements
+  (the three-row table, two identical buttons and two identical links) 7 map locators, 7 + 7 prompt hints and 1 rule
+  before, 0 after.
+
 ### Fixed
 
 - **A pull request that mentions `playwright install` no longer reads as a missing browser.** On GitHub Actions the

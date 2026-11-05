@@ -157,3 +157,18 @@ describe("report and locators", () => {
     expect(md).toContain('dialog "New project"');
   });
 });
+
+describe("report: ambiguous elements (#226)", () => {
+  const base = { runId: "r", url: "u", backend: "lib", profile: "p", pageSemantics: "s", elements: [], testCases: [] };
+  it("no Ambiguous section when there are none", () => {
+    expect(renderReportMd(base)).not.toContain("Ambiguous");
+    expect(renderReportMd({ ...base, ambiguous: [] })).not.toContain("Ambiguous");
+  });
+  it("lists each element, says it was not clicked, and names the accessibility problem", () => {
+    const md = renderReportMd({ ...base, ambiguous: [{ page: "http://x/files", role: "button", name: "Delete", count: 2 }] });
+    expect(md).toContain("## Ambiguous elements (1)");
+    expect(md).toContain('| http://x/files | button "Delete" | 2 |');
+    expect(md).toMatch(/did not click/i);
+    expect(md).toMatch(/accessib/i);
+  });
+});

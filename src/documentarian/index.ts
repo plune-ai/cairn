@@ -30,7 +30,7 @@ export const InteractionElementSchema = z.object({
   ref: z.string(),
   role: z.string(),
   name: z.string().optional(),
-  /** Playwright locator expression (getByRole(...), `.first()` for repeated elements). */
+  /** Playwright locator expression (getByRole(...), through its dialog or row when that is what tells it apart). */
   locator: z.string(),
   /** The view/tab this element lives behind, when known (multi-state pages). */
   container: z.string().optional(),
@@ -87,7 +87,8 @@ export function buildInteractionMap(
       ref: v.ref,
       role: v.role,
       name: v.name,
-      locator: `${locatorFor(v)}${v.count > 1 ? ".first()" : ""}`,
+      // #226: never `.first()` — a repeated element is reached through the row, card or section that narrows it
+      locator: locatorFor(v),
       // ponytail: container = the tab/view the element sits behind (known deterministically). Richer
       // landmark/region inference from the ARIA tree is a follow-up if reviewers want it.
       container: v.viaSwitcher ? `${v.viaSwitcher.role} "${v.viaSwitcher.name ?? ""}"` : undefined,

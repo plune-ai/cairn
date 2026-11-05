@@ -5,6 +5,7 @@ import type { PageStudy } from "../observe/index.js";
 import type { TestCase } from "../design/index.js";
 import type { VerifiedElement } from "../browser/types.js";
 import { formatTransitions, type Transition } from "../probe/index.js";
+import { repeatedHint } from "../observe/locator-hints.js";
 import { detectLanguage } from "../checklist/index.js";
 import type { ParsedTestCase, ParsedApiCase } from "../artifacts/testcase-md.js";
 import { GeneratedSuiteSchema, type GeneratedSuite } from "./schema.js";
@@ -53,7 +54,7 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
     .filter((e) => e.interactive)
     .map(
       (e) =>
-        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${e.count > 1 ? ` (×${e.count} — repeated, .first())` : ""}${e.scope ? ` [inside ${e.scope.role}${e.scope.name ? ` "${e.scope.name}"` : ""}: locate it through that ${e.scope.role}]` : ""}${e.viaSwitcher ? ` [first click tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
+        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${repeatedHint(e)}${e.scope ? ` [inside ${e.scope.role}${e.scope.name ? ` "${e.scope.name}"` : ""}: locate it through that ${e.scope.role}]` : ""}${e.viaSwitcher ? ` [first click tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
     )
     .join("\n");
   const testCases = input.testCases

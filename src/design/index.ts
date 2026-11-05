@@ -4,6 +4,7 @@ import type { PromptRegistry } from "../prompts/index.js";
 import type { PageStudy } from "../observe/index.js";
 import type { VerifiedElement } from "../browser/types.js";
 import { formatTransitions, type Transition } from "../probe/index.js";
+import { repeatedHint } from "../observe/locator-hints.js";
 import { DesignResultSchema, type TestCase } from "./schema.js";
 import { dedupCases } from "./dedup.js";
 import { designedCaseStableId } from "../artifacts/contract.js";
@@ -69,7 +70,7 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
     .filter((e) => e.interactive)
     .map(
       (e) =>
-        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${e.count > 1 ? ` (×${e.count} — repeated, .first())` : ""}${e.scope ? ` [inside ${e.scope.role}${e.scope.name ? ` "${e.scope.name}"` : ""}]` : ""}${e.viaSwitcher ? ` [behind tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
+        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${repeatedHint(e)}${e.scope ? ` [inside ${e.scope.role}${e.scope.name ? ` "${e.scope.name}"` : ""}]` : ""}${e.viaSwitcher ? ` [behind tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
     )
     .join("\n");
 

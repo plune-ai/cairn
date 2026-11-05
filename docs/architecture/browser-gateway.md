@@ -158,6 +158,19 @@ ends. No write sent because of a press may ever arrive. This rests on the networ
   button writes, and the guard stops every write; a list both missed names («Complete payment», «Book now») and
   refused safe ones («Sort order», «Purchase history»).
 
+### Visible and unique in its scope (#226)
+
+`act()`, `verify()` and `getState()` never take «the first of several». They look among the visible elements of the
+element's scope (its dialog, or the page). One match is the element. Several are narrowed by the accessible name of the
+container the element sits in (`ElementRef.context`: named `row`, `listitem`, `article`, `group`, `region`, `form`,
+`treeitem`, nearest first): the first container after which exactly one match is left wins (`narrowedBy` in
+`verify()`), and the locator is `getByRole('row', { name }).getByRole(role, { name })`. Links that share one `href` are
+one destination. Otherwise the element is `ambiguous`: no click (`outcome: "ambiguous"`, `ambiguous: { role, name,
+count }`), no state read, and the run lists it (`report.json` → `ambiguous`, *Ambiguous elements* in `report.md`). The
+generated code is held to the same rule before it is run: `lintErrors` (`src/codegen/lint.ts`) rejects
+`page.mouse.click`, `force: true` and an uncommented `.first()` / `.nth(`, and `runRepairLoop({ errors })` turns each
+into a failed result for the repair loop.
+
 ## Routing contract (IMPORTANT)
 
 ```

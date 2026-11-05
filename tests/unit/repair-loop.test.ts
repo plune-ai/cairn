@@ -402,3 +402,47 @@ describe("runRepairLoop with locator-heal (ADR-0022, spec §6.6)", () => {
     expect(peak).toBe(1);
   });
 });
+
+describe("runRepairLoop — errors in the generated code are repaired before the suite is run (#226)", () => {
+  const bad = (): GeneratedSuite => ({ files: [{ path: "s.spec.ts", content: "await page.mouse.click(1, 1);" }] });
+  const errorsOf = (s: GeneratedSuite) =>
+    s.files.flatMap((f) => (f.content.includes("mouse.click") ? [{ file: f.path, kind: "mouse-click" as const, detail: "line 1: page.mouse.click clicks at coordinates" }] : []));
+
+  it("a suite with an error is not run; the error is the repair hint; the clean suite is then run and kept", async () => {
+    const hints: (string | undefined)[] = [];
+    const validate = vi.fn(async () => report([{ test: "t", status: "passed" }], 1));
+    let n = 0;
+    const r = await runRepairLoop({
+      generate: async (hint) => {
+        hints.push(hint);
+        return n++ === 0 ? bad() : { files: [{ path: "ok.spec.ts", content: "// fine" }] };
+      },
+      validate,
+      errors: errorsOf,
+      maxRepair: 3,
+    });
+    expect(validate).toHaveBeenCalledTimes(1); // only the clean suite ran
+    expect(hints[0]).toBeUndefined();
+    expect(hints[1]).toContain("mouse-click");
+    expect(hints[1]).toContain("page.mouse.click clicks at coordinates");
+    expect(r.attempts).toBe(1);
+    expect(r.bestSuite.files[0]!.path).toBe("ok.spec.ts");
+    expect(r.bestValidation.greenRatio).toBe(1);
+  });
+
+  it("an error that is not fixed stops the loop early (same failure twice) and shows in the kept validation", async () => {
+    const validate = vi.fn(async () => report([{ test: "t", status: "passed" }], 1));
+    const r = await runRepairLoop({ generate: async () => bad(), validate, errors: errorsOf, maxRepair: 5 });
+    expect(validate).not.toHaveBeenCalled();
+    expect(r.stoppedEarly).toBe(true);
+    expect(r.attempts).toBeLessThan(5);
+    expect(r.bestValidation.results[0]).toMatchObject({ status: "failed", test: expect.stringContaining("mouse-click") });
+    expect(r.bestValidation.results[0]!.error).toContain("page.mouse.click");
+  });
+
+  it("without `errors` the loop is what it was", async () => {
+    const validate = vi.fn(async () => report([{ test: "t", status: "passed" }], 1));
+    await runRepairLoop({ generate: async () => bad(), validate, maxRepair: 2 });
+    expect(validate).toHaveBeenCalledTimes(1);
+  });
+});
