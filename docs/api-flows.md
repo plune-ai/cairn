@@ -123,6 +123,11 @@ answer says only why (`got no answer: ECONNREFUSED`, a timeout, or a network err
 call log, which holds the full URL and every header; to see it, run the tests with `DEBUG=pw:api`. A trace, if your
 Playwright config records one, does keep every request's headers.
 
+That covers the fixture's own requests. A request the test sends itself still fails with Playwright's call log, and
+Playwright writes that log to disk whole, `Authorization` and `set-cookie` included:
+`test-results/<test>/error-context.md`, beside the nearest `package.json` (with `--screencast`, under
+`runs/<id>/screencasts/`, beside the video). Keep that folder out of anything you publish, such as a CI artifact.
+
 ## Flows that change data need an explicit flag
 
 The same read-only default as `cairn api --base-url` (#196): a data flow with a `POST`, `PUT`, `PATCH` or `DELETE`

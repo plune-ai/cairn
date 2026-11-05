@@ -313,6 +313,8 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
   it("#250: a test's own failed request and expect(response).toBeOK() reach the report without their call log", { timeout: 120000 }, async () => {
     const secret = "S3CRET-q7";
     const headers = `{ headers: { Authorization: 'Bearer ${secret}' } }`;
+    const caught = (title: string, then: string): string =>
+      `test('${title}', async ({ request }) => { try { await request.get('http://127.0.0.1:1/api/${secret}', ${headers}); } catch (e) { ${then} } });`;
     const run = await new ArtifactStore(ITEST_BASE).openRun("no-request-log");
     await run.writeSuite({
       files: [
@@ -321,12 +323,23 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
           path: "ok.spec.ts",
           content: `import { test, expect } from '@playwright/test';\ntest('not ok', async ({ request }) => { await expect(await request.post('${app.url}/api/broken?k=${secret}', ${headers})).toBeOK(); });\n`,
         },
+        {
+          path: "carried.spec.ts",
+          content: `import { test, expect } from '@playwright/test';\n${[
+            caught("a diff", "expect((e as Error).message).toBe('x');"),
+            caught("a substring", "expect((e as Error).message).toContain('nope');"),
+            caught("indented", "throw new Error('Failed:\\n' + (e as Error).message.replace(/^/gm, '    '));"),
+            caught("no heading", "throw new Error('Failed:\\n' + (e as Error).message.split('Call log:')[1]);"),
+          ].join("\n")}\n`,
+        },
       ],
     });
     const results = await runSpecs(run.dir, { workers: 1 });
     const byTitle = Object.fromEntries(results.map((r) => [r.title, r]));
     expect(byTitle["failed request"]?.error).toMatch(/apiRequestContext\.get: connect ECONNREFUSED/);
     expect(byTitle["not ok"]?.error).toMatch(/toBeOK/);
+    expect(byTitle["not ok"]?.error).toContain("← 500 Internal Server Error");
+    expect(results.filter((r) => r.status === "failed")).toHaveLength(6);
     expect(JSON.stringify(results)).not.toContain(secret);
   });
 

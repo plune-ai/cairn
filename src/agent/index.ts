@@ -1158,10 +1158,13 @@ export async function runAutomate(input: {
     };
 
     let sessionPath: string | undefined;
+    const sessionStore = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
     if (input.sessionFile) sessionPath = resolve(input.sessionFile);
-    else if (input.sessionName) {
-      sessionPath = new SessionStore(resolve(input.sessionsDir ?? ".auth")).pathFor(input.sessionName);
-    }
+    else if (input.sessionName) sessionPath = sessionStore.pathFor(input.sessionName);
+    // #250: the run only passes this path on. Playwright reads the file in every test and its parse error quotes it, so
+    // an unread bad file would become every test's failure text, and the repair hint. It stops here, in one fixed line.
+    if (input.validate && input.sessionFile) await sessionStore.loadFile(resolve(input.sessionFile));
+    else if (input.validate && input.sessionName) await sessionStore.load(input.sessionName);
 
     // Environment for the validation run: Basic Auth for the context, the post-login session for use.storageState.
     const envRun = input.validate ? await startEnvironment(input, cfg, onProgress) : undefined;
@@ -1184,7 +1187,7 @@ export async function runAutomate(input: {
         ? lazyGateway(async () =>
             makeGateway({
               backend: "lib",
-              storageState: sessionPath ? await new SessionStore(resolve(input.sessionsDir ?? ".auth")).loadFile(sessionPath) : undefined,
+              storageState: sessionPath ? await sessionStore.loadFile(sessionPath) : undefined,
               channel: cfg.browser.channel,
               httpCredentials: envRun?.applied.httpCredentials,
             }),

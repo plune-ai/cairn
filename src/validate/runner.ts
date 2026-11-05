@@ -222,18 +222,45 @@ function withoutFrame(message: string | undefined): string | undefined {
   return message?.split(FRAME)[0]?.trim();
 }
 
-/** A call log: its heading and the lines under it, up to a blank line. */
-const CALL_LOG = /^Call log:\n(?:.+\n?)*/gm;
-/** The lines Playwright logs a request with: `→ POST <url>` and `← 401 Unauthorized`, each followed by its headers. */
-const REQUEST_LINE = /^(?:\u001b\[[0-9;]*m)?\s*(?:- )?[→←] /m;
+/** A colour code, real or as a test's own text printed it (`\x1b[2m` inside a diff). */
+const COLOUR = /(?:\u001b|\\x1b|\\u001b)\[[0-9;]*m/g;
+/** What may stand before a line of a call log: Playwright's `- `, a diff's `+ `, an indent, a test's own quote. */
+const LINE_PREFIX = /^[\s+\-|>"]*/;
+/** A line as written, without colour codes and that prefix. */
+const lineText = (line: string): string => line.replace(COLOUR, "").replace(LINE_PREFIX, "").trimEnd();
+
+const REQUEST_SENT = /^→ [A-Z]+ /;
+const REQUEST_ANSWERED = /^← (\d{3})(?: (.*))?$/;
+/** A header in a request's log. Only right after `→` or `←`: elsewhere `name: value` is just text. */
+const LOGGED_HEADER = /^:?[!#$%&'*+.^_`|~0-9A-Za-z-]+:(?: |$)/;
+/** A status's reason as a server may write it: the server chooses this text, so anything else is left out. */
+const PLAIN_REASON = /^[A-Za-z][A-Za-z '-]{0,60}$/;
 
 /**
- * #250: an error without a request's call log. Playwright writes the full URL and every header into the error of a
- * failed request, and of `expect(response).toBeOK()`; they hold tokens and cookies, which must not reach an LLM or a
- * report. A locator's call log stays: it names the locator that failed and what stopped it.
+ * #250: an error without a request's log. Playwright writes `→ POST <url>` and `← 401 Unauthorized`, each with its
+ * headers, into the error of a failed request and of `expect(response).toBeOK()`; they hold tokens and cookies, which
+ * must not reach an LLM or a report. Of the log only each status stays, which is what repair needs to know. The lines
+ * are found by what they are, wherever they stand: a test may carry the text on in a diff, indented, or cut from its
+ * heading. On a single line (`JSON.stringify(e.message)`) they are not found. A locator's call log stays whole: it
+ * names the locator that failed and what stopped it.
  */
 function withoutRequestLog(message: string | undefined): string | undefined {
-  return message?.replace(CALL_LOG, (log) => (REQUEST_LINE.test(log) ? "" : log)).trim();
+  if (!message?.includes("→") && !message?.includes("←")) return message;
+  const kept: string[] = [];
+  let inRequestLog = false;
+  for (const line of message.split("\n")) {
+    const text = lineText(line);
+    const answered = REQUEST_ANSWERED.exec(text);
+    if (answered || REQUEST_SENT.test(text)) {
+      if (lineText(kept.at(-1) ?? "") === "Call log:") kept.pop();
+      if (answered) kept.push(`← ${answered[1]}${PLAIN_REASON.test(answered[2] ?? "") ? ` ${answered[2]}` : ""}`);
+      inRequestLog = true;
+    } else if (!inRequestLog || !LOGGED_HEADER.test(text)) {
+      inRequestLog = false;
+      kept.push(line);
+    }
+  }
+  return kept.join("\n").trim();
 }
 
 function extract(json: PwJson): RawTestResult[] {
