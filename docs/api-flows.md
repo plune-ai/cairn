@@ -84,7 +84,7 @@ parameters go in `query`; it is appended to the base URL, so a base path such as
 (sent as JSON) or `form` (sent URL-encoded; not both), `expect` (a status or a list; default any 2xx or 3xx; redirects
 are not followed) and `capture` (name → JSON pointer into the JSON answer, `/id` or `$response.body#/id`).
 
-Templates, in any string of a step: `{{name}}` — a value captured by an earlier step (in the cleanup, any step);
+Templates, in a step's `path`, `headers`, `query`, `body` and `form` (a `name` is only a label, and is not filled): `{{name}}` — a value captured by an earlier step (in the cleanup, any step);
 `{{env.NAME}}` — read from the environment when the test runs; `{{uid}}` — a value unique to this fixture run, for
 names that must not collide. In a path, values are URL-encoded, and a value that is empty, `.`, `..` or holds a `/`
 is refused rather than sent. A captured value that is empty counts as not captured. A template that names nothing known is refused when

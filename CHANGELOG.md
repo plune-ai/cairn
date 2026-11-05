@@ -262,6 +262,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BrowsersNotInstalledError`, every browser in place. Now it reads what the run said (stderr, the report's errors, the
   tests' errors).
 
+- **`cairn api --actors` stops only for what it would send, and carries out its cleanup (#251).** A capture that no
+  request sends no longer stops the check, whatever the answer holds there (a number past 2^53 such as a timestamp, no
+  value, no JSON at all). A template in a step's `name` no longer keeps a cleanup from going out and the record from being
+  deleted; the written fixture had the same fault and left such a step out without a word. A captured `1e400`, which
+  parses as `Infinity`, now stops the check instead of going out as `DELETE /api/projects/Infinity`. A `{{uid}}` in the
+  flow file's or an actor's headers goes out as one value for each check instead of being refused.
+
 - **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
   The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private
   networks and reported it as an unresolved `$ref`. The text is read the way the lookup of #227 reads it: `GET`, no

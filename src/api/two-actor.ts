@@ -19,7 +19,7 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { SessionStore } from "../session/index.js";
 import type { StorageState } from "../browser/types.js";
-import { loadApiFlows, secretHeaderProblems, templateNames, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
+import { loadApiFlows, secretHeaderProblems, stepTemplateNames, templateNames, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
 import type { RequestGuard } from "./guard.js";
 
 export type TwoActorProbe = "read" | "change" | "delete" | "neighbours";
@@ -90,6 +90,7 @@ export interface TwoActorPlan {
 }
 
 const TEMPLATE = /\{\{\s*([\w.]+)\s*\}\}/g;
+const UID = /\{\{\s*uid\s*\}\}/g;
 
 /** Read and check a two-actor file's text against its (already read) flow file. Throws one error listing every problem. */
 export function parseTwoActorFile(text: string, flows: ApiFlowFile, source = "the two-actor file"): TwoActorFile {
@@ -219,8 +220,9 @@ export async function actorHeaders(
 function fillHeaders(headers: Record<string, string>, env: Record<string, string | undefined>): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).map(([k, v]) => {
-      const filled = v.replace(TEMPLATE, (_m, key: string) => {
-        if (!key.startsWith("env.")) throw new Error(`Header "${k}": only {{env.NAME}} may be used in an actor's headers`);
+      const filled = v.replace(TEMPLATE, (m, key: string) => {
+        if (key === "uid") return m; // one value for each check: filled when a request goes out
+        if (!key.startsWith("env.")) throw new Error(`Header "${k}": only {{env.NAME}} and {{uid}} may be used in an actor's headers`);
         const value = env[key.slice(4)];
         if (value === undefined || value === "") throw new Error(`Header "${k}": the environment variable ${key.slice(4)} is not set`);
         return value;
@@ -410,6 +412,10 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
   const envValues = namedEnvValues(plan, env);
   /** Whether the current check's flow sent a request yet (so it may have created something). */
   let sentAny = false;
+  /** The current check's `{{uid}}`, for the actors' headers, which are filled once for the whole run. */
+  let uid = "";
+  /** The names the current check's requests send: a capture no request sends is not read. */
+  let used: ReadonlySet<string> = new Set();
 
   const refuseHeaders = (at: string, headers: Record<string, string>, templates: Record<string, string> = {}): void => {
     for (const [name, value] of Object.entries(headers)) {
@@ -427,7 +433,8 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     mustSend: boolean,
     shown: string,
   ): Promise<Response> => {
-    const sent = body ? mergeHeaders({ "content-type": body.type }, headers) : headers;
+    const filled = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, v.replace(UID, uid)]));
+    const sent = body ? mergeHeaders({ "content-type": body.type }, filled) : filled;
     // Characters fetch cannot carry are refused here, before anything is counted or sent, without quoting the value.
     // A header fetch rejects for its own reasons (`Expect`, `Transfer-Encoding`) goes on and ends in "got no answer".
     refuseHeaders(`${method} ${shown}`, sent);
@@ -475,7 +482,9 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     const want = step.expect === undefined ? undefined : ([] as number[]).concat(step.expect);
     const ok = (want ? want.includes(res.status) : cleanup ? is2xx(res.status) : res.status >= 200 && res.status < 400) || alsoOk.includes(res.status);
     if (!ok) throw new RequestFailed(`${label} answered ${res.status} (want ${want ? want.join(" or ") : cleanup ? "2xx" : "2xx or 3xx"})`);
-    if (!step.capture) {
+    // Only what a request sends counts: a capture nothing sends cannot stop the check, whatever the answer holds.
+    const captures = Object.entries(step.capture ?? {}).filter(([name]) => used.has(name));
+    if (captures.length === 0) {
       await res.arrayBuffer().catch(() => undefined);
       return;
     }
@@ -487,11 +496,11 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     }
     const missing: string[] = [];
     const inexact: string[] = [];
-    for (const [name, pointer] of Object.entries(step.capture)) {
+    for (const [name, pointer] of captures) {
       const v = pointerAt(answer, pointer);
       if (v === undefined || v === null || typeof v === "object" || String(v) === "") missing.push(`${pointer} for ${name}`);
-      // JSON.parse has already rounded a number past the safe range: it may be another record's id, so it is never kept.
-      else if (typeof v === "number" && Number.isInteger(v) && !Number.isSafeInteger(v)) inexact.push(`{{${name}}}`);
+      // JSON.parse has already rounded a number past the safe range, or made it Infinity: it may be another record's id, so it is never kept.
+      else if (typeof v === "number" && ((Number.isInteger(v) && !Number.isSafeInteger(v)) || !Number.isFinite(v))) inexact.push(`{{${name}}}`);
       else vars[name] = String(v);
     }
     if (missing.length) throw new RequestFailed(`${label}: the answer has no value at ${missing.join(", ")}`);
@@ -543,12 +552,14 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     const vars: Record<string, string> = { uid: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) };
     let deletedByOther = false;
     sentAny = false;
+    uid = vars.uid!;
+    used = new Set([...[...flow.steps, ...flow.cleanup].flatMap(stepTemplateNames), ...templateNames([check.resource, check.change.body])]);
     try {
       // Everything known by now is refused before the first request, so the flow creates nothing its cleanup is already
       // known not to be able to send. A stand-in takes the place of each name that is not an {{env.NAME}}: a real
       // {{uid}} is always sendable, and what a captured value holds is known only when it is sent.
       for (const step of [...flow.steps, ...flow.cleanup]) {
-        const standIns = Object.fromEntries(templateNames(step).map((name) => [name, "0"]));
+        const standIns = Object.fromEntries(stepTemplateNames(step).map((name) => [name, "0"]));
         fillValue(step.path, standIns, env, true);
         fillValue([step.query, step.body, step.form], standIns, env);
         refuseHeaders(`${step.method} ${shownPath(step.path, {}, envValues, step.query)}`, mergeHeaders(opts.owner, fillValue(step.headers ?? {}, standIns, env) as Record<string, string>), step.headers);
@@ -631,7 +642,7 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       // has none. A step whose values were never captured cannot be sent; that is a cleanup error, since what the flow
       // created may still be there.
       for (const step of sentAny ? flow.cleanup : []) {
-        const missing = [...new Set(templateNames(step).filter((n) => !n.startsWith("env.") && n !== "uid" && !(n in vars)))];
+        const missing = [...new Set(stepTemplateNames(step).filter((n) => !n.startsWith("env.") && n !== "uid" && !(n in vars)))];
         if (missing.length) {
           const which = missing.map((n) => `{{${n}}}`).join(", ");
           result.cleanupErrors.push(

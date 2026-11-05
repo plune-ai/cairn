@@ -101,6 +101,11 @@ export function flowChangesData(flow: ApiFlow): boolean {
   return flow.kind === "data" && [...flow.steps, ...flow.cleanup].some((s) => !READ_ONLY_METHODS.has(s.method));
 }
 
+/** The `{{…}}` names a step sends: its path, headers, query, body and form. Its `name` is only a label. */
+export function stepTemplateNames(step: FlowStep): string[] {
+  return templateNames([step.path, step.headers, step.query, step.body, step.form]);
+}
+
 /** Every `{{…}}` name in a value (strings, arrays and objects, keys left alone). */
 export function templateNames(value: unknown): string[] {
   if (typeof value === "string") return [...value.matchAll(TEMPLATE)].map((m) => m[1]!);
@@ -177,7 +182,7 @@ function checkFlowFile(file: ApiFlowFile): string[] {
       for (const key of [...literalSecrets(step.body), ...literalSecrets(step.form), ...literalSecrets(step.query)]) {
         errors.push(`${where}: "${key}" holds a secret — write it as {{env.NAME}} and set NAME in the environment`);
       }
-      for (const n of templateNames([step.path, step.headers, step.query, step.body, step.form])) {
+      for (const n of stepTemplateNames(step)) {
         if (/^env\.[A-Za-z_][A-Za-z0-9_]*$/.test(n) || known.has(n)) continue;
         errors.push(`${where}: {{${n}}} names no value captured before it (nor env.NAME or uid)`);
       }
@@ -428,7 +433,7 @@ function fill(value: unknown, vars: Vars, encode = false): unknown {
  * for something never created, or never named, is left out.
  */
 const canFill = (step: Step, vars: Vars): boolean =>
-  [...JSON.stringify(step).matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || m[1]! in vars) &&
+  [...JSON.stringify([step.path, step.headers, step.query, step.body, step.form]).matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || m[1]! in vars) &&
   [...step.path.matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || !badSegment(vars[m[1]!]!));
 
 function at(body: unknown, pointer: string): unknown {
