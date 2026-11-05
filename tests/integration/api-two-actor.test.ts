@@ -1013,6 +1013,45 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
     });
   });
 
+  it("a template in a cleanup step's name is only its name: the step goes out", async () => {
+    const { fetch, calls } = fakeFetch();
+    const cleanup = [{ name: "delete {{nope}}", method: "DELETE", path: "/api/projects/{{projectId}}", expect: 204 }];
+    const { result } = await runFake(await writePlan({ flow: { cleanup } }), fetch);
+    expect(result.cleanupErrors).toEqual([]);
+    expect(calls.at(-1)).toMatchObject({ method: "DELETE", url: expect.stringMatching(/\/api\/projects\/3$/), who: "owner" });
+  });
+
+  it("a {{uid}} in the flow file's headers goes out filled, with one value for each check", async () => {
+    const { fetch } = fakeFetch();
+    const sent: { who: string; req: string | null; agent: string | null }[] = [];
+    const recording = (url: string, init: RequestInit): Promise<Response> => {
+      const h = new Headers(init.headers);
+      sent.push({ who: h.has("authorization") ? "owner" : "other", req: h.get("x-req"), agent: h.get("user-agent") });
+      return fetch(url, init);
+    };
+    const plan = {
+      flowHeaders: { "X-Req": "r-{{uid}}", "User-Agent": "c-{{uid}}" },
+      check: { probes: ["read"] },
+      extraChecks: [{ flow: "project", resource: "/api/projects/{{projectId}}", probes: ["read"] }],
+    };
+    const { report } = await runFake(await writePlan(plan), recording);
+    expect(report.checks.map((c) => c.error)).toEqual([undefined, undefined]);
+    const uids = (who: string, field: "req" | "agent"): string[] => sent.filter((s) => s.who === who).map((s) => s[field] ?? "");
+    expect(uids("owner", "req").every((v) => /^r-[a-z0-9]+$/.test(v))).toBe(true);
+    expect(uids("other", "agent").every((v) => /^c-[a-z0-9]+$/.test(v))).toBe(true);
+    expect(uids("other", "req")).toEqual(["", ""]); // the other actor takes only format headers from the flow file
+    expect(new Set(uids("owner", "req")).size).toBe(2);
+    expect(new Set(uids("other", "agent")).size).toBe(2);
+    // A check's own requests share its value: the first check's other actor went out with the first check's owner.
+    expect(uids("other", "agent")[0]!.slice(2)).toBe(uids("owner", "req")[0]!.slice(2));
+  });
+
+  it("any other template in an actor's headers is still refused, by name", async () => {
+    const { fetch } = fakeFetch();
+    const file = await writePlan({ owner: { headers: { Authorization: "Bearer {{env.ALICE_TOKEN}}", "X-Who": "{{nope}}" } } });
+    await expect(runFake(file, fetch)).rejects.toThrow('Header "X-Who": only {{env.NAME}} and {{uid}} may be used in an actor\'s headers');
+  });
+
   describe("a number JSON.parse may have rounded", () => {
     const created = (json: string) => (c: Call) => (c.method === "POST" ? new Response(json, { status: 201 }) : undefined);
     const urls = (calls: Call[]) => calls.map((c) => `${c.method} ${new URL(c.url).pathname}`);
@@ -1020,6 +1059,10 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
     it.each([
       ["above 2^53", "9007199254740993"],
       ["far above it", "1e21"],
+      ["below -2^53", "-9007199254740993"],
+      ["far below it", "-1e21"],
+      ["too large to hold (1e400 parses as Infinity)", "1e400"],
+      ["too far below zero to hold", "-1e400"],
     ])("stops the check on a captured number %s: no read and no delete can reach another record", async (_label, number) => {
       const { fetch, calls } = fakeFetch(created(`{"id":${number}}`));
       const { result, all } = await runFake(await writePlan(), fetch);
@@ -1039,9 +1082,47 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
 
     it("keeps the other captures of that answer, so the cleanup still goes to the created record", async () => {
       const { fetch, calls } = fakeFetch(created('{"id":3,"size":9007199254740993}'));
-      const { result } = await runFake(await writePlan({ flow: { steps: [createStep({ capture: { size: "/size", projectId: "/id" } })] } }), fetch);
+      const plan = { flow: { steps: [createStep({ capture: { size: "/size", projectId: "/id" } })] }, check: { change: { method: "PATCH", body: { size: "{{size}}" } } } };
+      const { result } = await runFake(await writePlan(plan), fetch);
       expect(result.error).toBe('flow "project" step "create": {{size}} is not a safe integer (the number may have been rounded), so it is not used');
       expect(urls(calls)).toEqual(["POST /api/projects", "DELETE /api/projects/3"]);
+    });
+
+    it.each([
+      ["a whole number past 2^53", "1730000000000000000"],
+      ["a number too large to hold", "1e400"],
+      ["no value", "null"],
+    ])("a capture nothing sends does not stop the check: %s", async (_label, ts) => {
+      const { fetch, calls } = fakeFetch(created(`{"id":3,"ts":${ts}}`));
+      const { result } = await runFake(await writePlan({ flow: { steps: [createStep({ capture: { ts: "/ts", projectId: "/id" } })] } }), fetch);
+      expect(result.error).toBeUndefined();
+      expect(urls(calls)).toContain("GET /api/projects/3");
+      expect(urls(calls).at(-1)).toBe("DELETE /api/projects/3");
+    });
+
+    it("a step whose captures nothing sends may answer anything", async () => {
+      const { fetch, calls } = fakeFetch((c) => (c.url.endsWith("/audit") ? new Response("plain text", { status: 200 }) : undefined));
+      const steps = [createStep(), { name: "audit", method: "POST", path: "/api/audit", capture: { entry: "/entry" } }];
+      const { result } = await runFake(await writePlan({ flow: { steps } }), fetch);
+      expect(result.error).toBeUndefined();
+      expect(urls(calls).at(-1)).toBe("DELETE /api/projects/3");
+    });
+
+    const captureTs = createStep({ capture: { ts: "/ts", projectId: "/id" } });
+    it.each<[string, Record<string, unknown>]>([
+      ["a later step's path", { flow: { steps: [captureTs, { name: "more", method: "GET", path: "/api/things/{{ts}}" }] } }],
+      ["a later step's query", { flow: { steps: [captureTs, { name: "more", method: "GET", path: "/api/things", query: { t: "{{ts}}" } }] } }],
+      ["a later step's header", { flow: { steps: [captureTs, { name: "more", method: "GET", path: "/api/things", headers: { "X-T": "{{ts}}" } }] } }],
+      ["a later step's body", { flow: { steps: [captureTs, { name: "more", method: "POST", path: "/api/things", body: { t: "{{ts}}" } }] } }],
+      ["a later step's form", { flow: { steps: [captureTs, { name: "more", method: "POST", path: "/api/things", form: { t: "{{ts}}" } }] } }],
+      ["the cleanup", { flow: { steps: [captureTs], cleanup: [{ name: "delete", method: "DELETE", path: "/api/projects/{{projectId}}", query: { t: "{{ts}}" } }] } }],
+      ["the resource", { flow: { steps: [captureTs] }, check: { resource: "/api/projects/{{projectId}}/{{ts}}" } }],
+      ["the change's body", { flow: { steps: [captureTs] }, check: { change: { method: "PATCH", body: { t: "{{ts}}" } } } }],
+    ])("a capture that %s sends does stop it", async (_label, plan) => {
+      const { fetch, calls } = fakeFetch(created('{"id":3,"ts":1730000000000000000}'));
+      const { result } = await runFake(await writePlan(plan), fetch);
+      expect(result.error).toBe('flow "project" step "create": {{ts}} is not a safe integer (the number may have been rounded), so it is not used');
+      expect(urls(calls).filter((u) => u.startsWith("GET"))).toEqual([]);
     });
 
     it("takes the largest safe integer as it is, and reads no neighbour past it", async () => {

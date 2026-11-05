@@ -252,6 +252,34 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     expect(byTitle["dots id"]?.status).toBe("passed");
   });
 
+  it("#251: a template in a cleanup step's name does not leave the step out", { timeout: 120000 }, async () => {
+    app.log.length = 0;
+    const named = parseApiFlows(
+      JSON.stringify({
+        version: 1,
+        flows: [
+          {
+            name: "named",
+            steps: [{ method: "POST", path: "/api/projects", body: { name: "Named {{uid}}" }, expect: 201, capture: { id: "/id" } }],
+            returns: ["id"],
+            cleanup: [{ name: "delete {{nope}}", method: "DELETE", path: "/api/projects/{{id}}", expect: [204, 404] }],
+          },
+        ],
+      }),
+    );
+    const run = await new ArtifactStore(ITEST_BASE).openRun("named-cleanup");
+    await run.writeSuite({
+      files: [
+        { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(named, { baseUrl: app.url, allowMutationsFor: app.url }) },
+        // It takes no `page`: the runner opens no browser.
+        { path: "named.spec.ts", content: spec(`test('named', async ({ named }) => { expect(named.id).toBeTruthy(); });`) },
+      ],
+    });
+    const results = await runSpecs(run.dir, { workers: 1 });
+    expect(results.map((r) => r.status)).toEqual(["passed"]);
+    expect(app.log.filter((l) => l.startsWith("DELETE"))).toHaveLength(1);
+  });
+
   it("a cleanup step that needs a value a failed step never captured is left out; the rest of the cleanup runs", { timeout: 120000 }, async (ctx) => {
     app.log.length = 0;
     const run = await new ArtifactStore(ITEST_BASE).openRun("pair");
