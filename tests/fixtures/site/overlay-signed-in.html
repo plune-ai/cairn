@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Signed in — Fixture</title>
+    <style>
+      [hidden] { display: none !important; }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; z-index: 20; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Account</h1>
+      <p id="pressed"></p>
+      <!-- Each trigger shows only when its store holds the session: an app that keeps it there is signed out without it. -->
+      <button type="button" id="session-open" aria-haspopup="dialog" hidden>Session settings</button>
+      <button type="button" id="local-open" aria-haspopup="dialog" hidden>Local settings</button>
+      <button type="button" id="idb-open" aria-haspopup="dialog" hidden>Database settings</button>
+      <button type="button" id="cookie-open" aria-haspopup="dialog" hidden>Cookie settings</button>
+    </main>
+    <div id="panel" class="dialog" role="dialog" aria-modal="true" aria-label="Settings" hidden>
+      <h2>Settings</h2>
+      <button type="button" id="close" aria-label="Close">×</button>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const db = () =>
+        new Promise((resolve, reject) => {
+          const r = indexedDB.open("auth", 1);
+          r.onupgradeneeded = () => r.result.createObjectStore("kv");
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+      const idbGet = async (key) => {
+        const d = await db();
+        return new Promise((resolve) => {
+          const g = d.transaction("kv").objectStore("kv").get(key);
+          g.onsuccess = () => resolve(g.result);
+          g.onerror = () => resolve(undefined);
+        });
+      };
+      const idbPut = async (key, value) => {
+        const d = await db();
+        return new Promise((resolve) => {
+          const t = d.transaction("kv", "readwrite");
+          t.objectStore("kv").put(value, key);
+          t.oncomplete = () => resolve();
+        });
+      };
+
+      async function main() {
+        if (new URLSearchParams(location.search).has("signin")) {
+          sessionStorage.setItem("token", "s");
+          localStorage.setItem("token", "l");
+          document.cookie = "token=c; path=/";
+          await idbPut("token", "i");
+        }
+        $("session-open").hidden = sessionStorage.getItem("token") !== "s";
+        $("local-open").hidden = localStorage.getItem("token") !== "l";
+        $("cookie-open").hidden = !document.cookie.includes("token=c");
+        $("idb-open").hidden = (await idbGet("token")) !== "i";
+        // Where an earlier press left its mark: this page can tell whether anything flowed back from the pressing.
+        const marks = [
+          sessionStorage.getItem("pressed") && "session",
+          localStorage.getItem("pressed") && "local",
+          document.cookie.includes("pressed=1") && "cookie",
+          (await idbGet("pressed")) && "database",
+        ].filter(Boolean);
+        $("pressed").textContent = "Pressed: " + (marks.join(", ") || "none");
+      }
+      void main();
+
+      for (const b of document.querySelectorAll("main button")) {
+        b.addEventListener("click", () => {
+          sessionStorage.setItem("pressed", "1");
+          localStorage.setItem("pressed", "1");
+          document.cookie = "pressed=1; path=/";
+          void idbPut("pressed", "1");
+          $("panel").hidden = false;
+        });
+      }
+      $("close").addEventListener("click", () => { $("panel").hidden = true; });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("panel").hidden = true; });
+    </script>
+  </body>
+</html>

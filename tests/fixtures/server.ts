@@ -25,13 +25,20 @@ export interface FixtureServer {
  * Starts a static HTTP server for the fixture site on a random port (real localhost origin). A write (POST, PUT,
  * PATCH, DELETE…) answers 204;
  * `?delay=<ms>` holds any answer that long; `/api/ok` answers "ok" (to any origin), `/api/long` never answers.
+ * With `basicAuth` ("user:password"), everything answers 401 to a request without it.
  */
-export async function startFixtureServer(): Promise<FixtureServer> {
+export async function startFixtureServer(opts: { basicAuth?: string } = {}): Promise<FixtureServer> {
   const posts: FixtureServer["posts"] = [];
   const writes: FixtureServer["writes"] = [];
   const server = createServer((req, res) => {
     void (async () => {
       const method = req.method ?? "GET";
+      if (opts.basicAuth && req.headers.authorization !== `Basic ${Buffer.from(opts.basicAuth).toString("base64")}`) {
+        res.statusCode = 401;
+        res.setHeader("www-authenticate", 'Basic realm="fixture"');
+        res.end();
+        return;
+      }
       if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
         writes.push({ method, url: req.url ?? "" });
         if (method === "POST") posts.push({ url: req.url ?? "", headers: req.headers });
