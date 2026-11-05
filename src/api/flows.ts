@@ -101,17 +101,17 @@ export function flowChangesData(flow: ApiFlow): boolean {
   return flow.kind === "data" && [...flow.steps, ...flow.cleanup].some((s) => !READ_ONLY_METHODS.has(s.method));
 }
 
+/** The `{{…}}` names a step sends: its path, headers, query, body and form. Its `name` is only a label. */
+export function stepTemplateNames(step: FlowStep): string[] {
+  return templateNames([step.path, step.headers, step.query, step.body, step.form]);
+}
+
 /** Every `{{…}}` name in a value (strings, arrays and objects, keys left alone). */
 export function templateNames(value: unknown): string[] {
   if (typeof value === "string") return [...value.matchAll(TEMPLATE)].map((m) => m[1]!);
   if (Array.isArray(value)) return value.flatMap(templateNames);
   if (value && typeof value === "object") return Object.values(value).flatMap(templateNames);
   return [];
-}
-
-/** The `{{…}}` names a step sends: its path, headers, query, body and form. Its `name` is only a label. */
-export function stepTemplateNames(step: FlowStep): string[] {
-  return templateNames([step.path, step.headers, step.query, step.body, step.form]);
 }
 
 /** Body / form / query fields that hold a literal secret, as `key` paths. */
