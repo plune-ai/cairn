@@ -1,4 +1,4 @@
-import type { ElementRef } from "../browser/types.js";
+import type { ElementRef, OverlayScope } from "../browser/types.js";
 
 /** Roles the user interacts with (priority for test cases). */
 const INTERACTIVE = new Set([
@@ -43,18 +43,37 @@ function rankFor(role: string, interactive: boolean): number {
   return 0;
 }
 
+/** #225: roles whose children are scoped to them in a locator. */
+const SCOPE_ROLES = new Set(["dialog", "alertdialog"]);
+/** #225: roles overlay detection groups elements by. */
+const CONTAINER_ROLES = new Set(["dialog", "alertdialog", "menu", "listbox", "complementary"]);
+
+export interface ParseOptions {
+  /** #225: dialogs (`role|name`) that are NOT modal; every other dialog and alertdialog is taken as modal. */
+  nonModal?: ReadonlySet<string>;
+}
+
+/** `role|name` — how a dialog is named in {@link ParseOptions.nonModal} and `Observation.nonModal`. */
+export const overlayKey = (role: string, name?: string): string => `${role}|${name ?? ""}`;
+
 /**
  * Parses the Playwright `ariaSnapshot()` output (YAML-like) into ranked `ElementRef[]`
  * in document order. Skips property lines (`/url`, `/checked`…) and text nodes (`text:`).
  * A pure function — fully testable without a browser.
  */
-export function parseAriaSnapshot(aria: string): ElementRef[] {
+export function parseAriaSnapshot(aria: string, opts: ParseOptions = {}): ElementRef[] {
   const out: ElementRef[] = [];
   let n = 0;
+  /** #225: the open ancestors of the line being read, by indentation. */
+  const open: { indent: number; role: string; name?: string; index: number }[] = [];
+  /** #225: for each output element, the output index of every dialog around it (itself last when it is one). */
+  const chains: number[][] = [];
+  const modals: number[] = [];
 
   for (const raw of aria.split(/\r?\n/)) {
     const line = raw.trimStart();
     if (!line.startsWith("- ")) continue;
+    const indent = raw.length - line.length;
 
     const content = unquoteKey(line.slice(2).trim());
     if (content.startsWith("/")) {
@@ -78,7 +97,35 @@ export function parseAriaSnapshot(aria: string): ElementRef[] {
     const nativeRef = content.match(/\[ref=([^\]\s]+)\]/)?.[1];
     const interactive = INTERACTIVE.has(role);
     n += 1;
-    out.push({ ref: nativeRef ?? `e${n}`, role, name, interactive, rank: rankFor(role, interactive) });
+    while (open.length > 0 && open[open.length - 1]!.indent >= indent) open.pop();
+    const scopeOf = (roles: Set<string>): OverlayScope | undefined => {
+      const a = [...open].reverse().find((x) => roles.has(x.role));
+      return a ? { role: a.role, ...(a.name !== undefined ? { name: a.name } : {}) } : undefined;
+    };
+    const scope = scopeOf(SCOPE_ROLES);
+    const inside = scopeOf(CONTAINER_ROLES);
+    const el: ElementRef = { ref: nativeRef ?? `e${n}`, role, name, interactive, rank: rankFor(role, interactive) };
+    if (scope) el.scope = scope;
+    if (inside) el.inside = inside;
+    // #225 review: a disabled control is never pressed (a disabled Next would only wait out the click timeout).
+    if (/\[disabled(?:=true)?\]/.test(content)) el.disabled = true;
+    out.push(el);
+    const index = out.length - 1;
+    const chain = open.filter((x) => SCOPE_ROLES.has(x.role)).map((x) => x.index);
+    if (SCOPE_ROLES.has(role)) {
+      chain.push(index);
+      if (!opts.nonModal?.has(overlayKey(role, name))) modals.push(index);
+    }
+    chains.push(chain);
+    open.push({ indent, role, name, index });
+  }
+
+  // #225: while a modal overlay is open, what is not in its top one lies under it.
+  const top = modals[modals.length - 1];
+  if (top !== undefined) {
+    out.forEach((el, i) => {
+      if (!chains[i]!.includes(top)) el.underOverlay = true;
+    });
   }
 
   return out;

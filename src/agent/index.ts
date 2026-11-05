@@ -570,6 +570,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         const watchesClicks = cfg.browser.backend === "lib";
         const deadClicks = watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined;
         if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        if (out.overlays) {
+          // #225 review 3: beside the states, whether the write guard was on and what it stopped
+          await runWriter.writeOverlays({ overlays: out.overlays, skipped: out.overlaySkipped ?? [], toasts: out.overlayToasts ?? [], ...(out.overlayGuard ?? {}) });
+        }
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -588,6 +592,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
           deadClicks, // #224: clicks Cairn saw no change after, [] when none, absent on cli
+          ...(out.overlays ? { overlays: out.overlays } : {}), // #225: dialogs, drawers, menus, wizards found as states
           history: {
             priorRuns: priorRuns.length,
             bestPriorGreen: bestPriorGreen ?? null,
@@ -615,6 +620,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
             coverage,
             gapCases,
             deadClicks,
+            overlays: out.overlays,
+            ...(out.overlayGuard ? { overlayGuard: out.overlayGuard } : {}),
             ...deciderReportKeys(decider, out.notRepaired, out.healed),
           }),
         );
@@ -926,6 +933,10 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
         const cost = router.ledger.report(); // L1-01: per-role cost + tokens for this run
         const watchesClicks = cfg.browser.backend === "lib"; // #224: the cli backend watches no click
         if (watchesClicks) await runWriter.writeRequests(out.clicks.flatMap((c) => c.requests));
+        if (out.overlays) {
+          // #225 review 3: beside the states, whether the write guard was on and what it stopped
+          await runWriter.writeOverlays({ overlays: out.overlays, skipped: out.overlaySkipped ?? [], toasts: out.overlayToasts ?? [], ...(out.overlayGuard ?? {}) });
+        }
         await runWriter.writeReport({
           schemaVersion: ARTIFACT_SCHEMA_VERSION,
           runId,
@@ -943,6 +954,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           coverage, // #61: covered vs observed-but-untested surface
           ...(gapCases.length ? { gapCases } : {}),
           deadClicks: watchesClicks ? deadClicksOf(out.clicks, out.flowGraph?.edges) : undefined, // #224: absent on cli
+          ...(out.overlays ? { overlays: out.overlays } : {}), // #225
           ...deciderReportKeys(decider), // ADR-0022: only on an opted-in run
         });
         await writeShadowFile(runWriter.dir, decider).catch(() => onProgress("decider — could not write decider-shadow.json"));

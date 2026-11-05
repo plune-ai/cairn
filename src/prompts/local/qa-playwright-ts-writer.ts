@@ -18,6 +18,8 @@ Test cases to cover:
 Observed state transitions (for state-transition assertions — use exactly these before→after):
 {{transitions}}
 
+{{overlays}}
+
 Rules (STRICT):
 - Each file is complete valid TypeScript: import { test, expect } from '@playwright/test';
 - At the start of each test: await page.goto('{{baseUrl}}');

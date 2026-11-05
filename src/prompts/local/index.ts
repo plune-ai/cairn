@@ -9,6 +9,7 @@ import { IDENTIFY_ELEMENTS } from "./identify-elements.js";
 import { JUDGE_TEST_CASES } from "./judge-test-cases.js";
 import { JUDGE_CHECKLIST_COVERAGE } from "./judge-checklist-coverage.js";
 import { PILOT_REVIEW } from "./pilot-review.js";
+import { NAME_OVERLAYS } from "./name-overlays.js";
 import { QA_API_FLOWS_DESIGN, QA_API_FLOWS_CODEGEN } from "./qa-api-flows.js";
 
 /** Local prompts (fallback, ADR-0004). Names match the Langfuse prompt names. */
@@ -24,6 +25,7 @@ export const LOCAL_PROMPTS: Record<string, string> = {
   "judge-test-cases": JUDGE_TEST_CASES,
   "judge-checklist-coverage": JUDGE_CHECKLIST_COVERAGE,
   "pilot-review": PILOT_REVIEW,
+  "name-overlays": NAME_OVERLAYS,
   "qa-api-flows-design": QA_API_FLOWS_DESIGN,
   "qa-api-flows-codegen": QA_API_FLOWS_CODEGEN,
 };

@@ -45,6 +45,12 @@ snapshots/    # screenshot.png, aria.yaml
 study.json    # PageStudy
 report.json   # ValidationReport + scores, deadClicks
 report.md     # the same for a person, with a Dead clicks section: clicks with no change seen, to check by hand
+overlays.json # dialogs, drawers, menus and wizards found as states: trigger, exits, elements, wizard steps; lib backend
+              # guard + blocked: the requests stopped while exploring them, by method (an app may also read through POST);
+              # note: why exploring did less than usual. Presses happen in a throwaway browser that lets out nothing but
+              # GET/HEAD/OPTIONS and is killed with the guard on, so nothing it did can reach the server later. One
+              # exception, on --channel: the browser's own Reporting API report, not the app's doing and not in blocked.
+              # Not seen: a WebSocket message, a GET that changes the server. Not checked: Network Error Logging
 requests.json # requests the clicks started: method, path, status (no bodies, headers or query values); lib backend
 ```
 + a Langfuse trace (link in stdout).

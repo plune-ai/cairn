@@ -14,6 +14,23 @@ export interface ElementRef {
   rank: number;
   /** Resolved href for links (from the ARIA `/url` property) — used to dedup crawl links (#102). */
   url?: string;
+  /**
+   * #225: the dialog / alertdialog the element sits in (the innermost one). Its locator is then
+   * `getByRole('dialog', { name }).getByRole(role, { name })`, so a same-named element on the page is not it.
+   */
+  scope?: OverlayScope;
+  /** #225: the innermost dialog, alertdialog, menu, listbox or complementary the element sits in (what overlay detection groups by). */
+  inside?: OverlayScope;
+  /** #225: a modal overlay is open and this element is not in its top one — never touched while it is open. */
+  underOverlay?: true;
+  /** #225: the snapshot marks it `[disabled]`. */
+  disabled?: true;
+}
+
+/** #225: a container an element is looked for in: its role and accessible name. */
+export interface OverlayScope {
+  role: string;
+  name?: string;
 }
 
 /** Observed element state (for act→observe grounding). */
@@ -22,6 +39,17 @@ export interface ElementState {
   enabled: boolean;
   /** For checkable elements (switch/checkbox/radio); otherwise undefined. */
   checked?: boolean;
+  /**
+   * #225: what the element says it opens — `aria-haspopup` (when not "false"), `aria-expanded`, `aria-controls`.
+   * The ARIA snapshot shows none of these but `[expanded]` when true, so the backend reads them from the element.
+   * Absent when it could not be read (cli backend, element gone).
+   */
+  popup?: { hasPopup?: string; expanded?: boolean; controls?: string };
+  /**
+   * #225 review 2: pressing it submits a form — a submit button (`type=submit`, or a `<button>` with no type) inside
+   * a form. Exploration never presses one, whatever it announces. Absent when it does not, or could not be read.
+   */
+  submitsForm?: true;
 }
 
 /** An element with a verified locator (verify-before-design, grounding). */
@@ -44,6 +72,11 @@ export interface Observation {
   consoleErrors?: string[];
   /** HTTP status of the navigation made by this observe() (only when `url` was given; lib backend only). */
   status?: number;
+  /**
+   * #225: the dialogs of the snapshot that the DOM says are NOT modal (`role|name`; no `aria-modal`, not `:modal`) —
+   * a cookie banner leaves the page live. Absent on the cli backend: every dialog is then taken as modal.
+   */
+  nonModal?: string[];
 }
 
 /** HTTP Basic Auth for the browser context (values come from environment variables, never from a file). */
@@ -73,7 +106,15 @@ export type Action =
    * `watch: false`: only click — nothing is watched or recorded (a probe's revert, a sign-in); watched by default.
    */
   | { kind: "click"; ref: string; timeoutMs?: number; watch?: boolean }
-  | { kind: "fill"; ref: string; value: string };
+  | { kind: "fill"; ref: string; value: string }
+  /** #225 (lib backend): press a key on the page, e.g. `Escape`. */
+  | { kind: "press"; key: string }
+  /**
+   * #225 (lib backend): click on the page outside the overlay `scope`, at a point checked first: the element there is
+   * outside the overlay and is nothing a click acts on (no link, button, field, click role or handler cursor). When no
+   * such point is found nothing is clicked and the result is not ok.
+   */
+  | { kind: "click-outside"; scope: OverlayScope };
 
 /**
  * What a click did (#224), most telling first: one name from a closed set. `no-effect` is a click after which Cairn
@@ -94,9 +135,10 @@ export type ClickEffectKind =
 
 /**
  * Why a click failed (#224). `intercepted`: another element takes the pointer — an overlay exploration does not know.
+ * `under-overlay` (#225): the element lies under a modal overlay that is open, so it was not clicked at all.
  * `not-found`: nothing matches the element observed a moment ago; `detached`: it was found, then left the page.
  */
-export type ClickFailure = "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
+export type ClickFailure = "under-overlay" | "intercepted" | "not-visible" | "not-enabled" | "detached" | "not-found" | "timeout";
 
 export type ClickOutcome = ClickEffectKind | ClickFailure;
 
@@ -107,6 +149,29 @@ export interface RecordedRequest {
   path: string;
   /** Absent when no answer came within the wait. */
   status?: number;
+}
+
+/**
+ * #225 review 3: a request the write guard stopped — any method but GET, HEAD or OPTIONS, sent while the guard was on.
+ * Written like a recorded request (no body, no header, no query value); `count` is how often the same one was stopped.
+ */
+export interface BlockedRequest {
+  method: string;
+  /** {@link RecordedRequest.path}; prefixed with its origin when that is not the page's. */
+  path: string;
+  /** The element pressed last before the request was sent (absent when nothing had been pressed yet). */
+  pressed?: { role: string; name?: string };
+  count: number;
+}
+
+/**
+ * #225 review 3: the network guard of a backend. While it is on, everything the backend does happens in a throwaway
+ * browser, where every request whose method is not GET, HEAD or OPTIONS (a form post, a fetch or XHR write, a beacon)
+ * is aborted before it leaves the browser.
+ */
+export interface WriteGuard {
+  /** Discards that browser with the guard still on and returns what it stopped, in the order first seen. */
+  release(): Promise<BlockedRequest[]>;
 }
 
 /** What one click changed (#224) — recorded by the lib backend after every click it watches. */

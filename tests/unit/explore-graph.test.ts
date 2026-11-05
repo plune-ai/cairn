@@ -76,6 +76,7 @@ const fakeRunWriter = (): RunWriter => ({
   writeReportMd: async () => undefined,
   writeLog: async () => undefined,
   writeTestCases: async () => [],
+  writeOverlays: async () => undefined,
 });
 
 function makeDeps(over: Partial<ExploreDeps> & Pick<ExploreDeps, "gateway" | "validate">): ExploreDeps {
@@ -87,6 +88,7 @@ function makeDeps(over: Partial<ExploreDeps> & Pick<ExploreDeps, "gateway" | "va
     useVision: false,
     runWriter: fakeRunWriter(),
     maxRepair: 5,
+    overlays: false, // #225: these tests count clicks and observes of the page-level graph; overlays have their own tests
     ...over,
   };
 }
@@ -428,5 +430,99 @@ describe("runExploreGraph — what each click did (#224)", () => {
       "Dark mode: no-effect",
     ]);
     expect(out.transitions[0]?.outcome).toBe("no-effect");
+  });
+});
+
+describe("runExploreGraph — overlays as states (#225)", () => {
+  const PAGE = '- main:\n  - button "Open settings"\n  - button "Save"';
+  const DIALOG = '\n- dialog "Settings":\n  - textbox "Name"\n  - button "Save"\n  - button "Cancel"';
+
+  /** A page whose "Open settings" opens a dialog (and says so: aria-haspopup); Escape closes it, a click outside does not. */
+  function dialogPage(): { gateway: BrowserGateway; acts: Action[] } {
+    let open = false;
+    const acts: Action[] = [];
+    const { gateway } = fakeGateway(() => obs(PAGE));
+    const els = (aria: string) => aria.split("\n").filter((l) => l.trim().startsWith("- "));
+    return {
+      acts,
+      gateway: {
+        ...gateway,
+        // #225 review 3: overlays are pressed only under a write guard; this one stops nothing
+        guardWrites: async () => ({ release: async () => [] }),
+        getState: async (el) => ({ visible: true, enabled: true, ...(el.name === "Open settings" ? { popup: { hasPopup: "dialog" } } : {}) }),
+        observe: async (opts) => {
+          if (opts.url) open = false;
+          return obs(open ? PAGE + DIALOG : PAGE);
+        },
+        act: async (action: Action) => {
+          acts.push(action);
+          if (action.kind === "press" && action.key === "Escape") open = false;
+          if (action.kind === "click") {
+            // refs are e1.. over the lines of the current snapshot; "Open settings" is the second line
+            const line = els(open ? PAGE + DIALOG : PAGE)[Number(action.ref.slice(1)) - 1] ?? "";
+            if (line.includes('"Open settings"') && !open) open = true;
+          }
+          return { ok: true, ref: "ref" in action ? action.ref : undefined };
+        },
+      },
+    };
+  }
+
+  it("the overlays found go to the outcome, to design and to codegen; the page's Save is never pressed", async () => {
+    const { gateway, acts } = dialogPage();
+    const prompts: string[] = [];
+    const spy = (value: unknown): StructuredInvoke =>
+      (async (_schema: unknown, messages: unknown) => {
+        prompts.push(JSON.stringify(messages));
+        return value;
+      }) as unknown as StructuredInvoke;
+    const out = await runExploreGraph(
+      makeDeps({
+        gateway,
+        overlays: true,
+        designInvoke: spy({ testCases: [sampleCase] }),
+        codegenInvoke: spy({ files: [{ path: "a.spec.ts", content: "// generated" }] }),
+        validate: async () => ({ results: [{ test: "A", status: "passed" }], greenRatio: 1, flakyCount: 0 }),
+      }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+
+    expect(out.overlays).toHaveLength(1);
+    expect(out.overlays![0]).toMatchObject({ kind: "dialog", name: "Settings", trigger: { role: "button", name: "Open settings" } });
+    expect(out.overlays![0]!.exits.find((x) => x.kind === "escape")).toMatchObject({ verified: true });
+    expect(out.overlays![0]!.exits.find((x) => x.kind === "click-outside")).toMatchObject({ verified: false });
+    expect(out.overlaySkipped).toEqual([{ role: "button", name: "Save", reason: "completes the form; not pressed" }]);
+    // #225 review 3: the guard passes through the click-recording gateway and is reported
+    expect(out.overlayGuard).toEqual({ guard: "network", blocked: [] });
+    // the design prompt carries the overlay and asks for the state-transition set
+    const design = prompts.find((p) => p.includes("Overlays found on the page") && p.includes("state-transition"));
+    expect(design).toBeTruthy();
+    expect(design).toContain('dialog \\"Settings\\"');
+    expect(design).toContain("Esc: it closes on Escape");
+    // codegen: a dialog is its own component object
+    expect(prompts.some((p) => p.includes("its OWN component object in the page-object model"))).toBe(true);
+    // no click landed on the page's Save (e3)
+    expect(acts.filter((a) => a.kind === "click" && a.ref === "e3")).toEqual([]);
+  });
+
+  it("overlays: false → the step does not run: no overlay in the outcome, no extra clicks", async () => {
+    const { gateway, acts } = dialogPage();
+    const out = await runExploreGraph(
+      makeDeps({ gateway, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }), codeless: true }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(out.overlays).toBeUndefined();
+    expect(acts).toEqual([]);
+  });
+
+  it("a failure in the step keeps the page-level run (best effort)", async () => {
+    const { gateway } = dialogPage();
+    const broken: BrowserGateway = { ...gateway, act: async () => { throw new Error("boom"); } };
+    const out = await runExploreGraph(
+      makeDeps({ gateway: broken, overlays: true, codeless: true, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(out.testCases.length).toBeGreaterThan(0);
+    expect(out.overlays).toEqual([]);
   });
 });

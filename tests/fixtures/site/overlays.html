@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Overlays — Fixture</title>
+    <style>
+      .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+      .backdrop[hidden], [hidden] { display: none; }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; }
+      .drawer { position: fixed; top: 0; right: 0; width: 280px; height: 100%; background: #eee; padding: 1rem; }
+      .menu { position: absolute; background: #fff; border: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Projects</h1>
+      <p>Page saves: <span id="page-saves">0</span> · deleted: <span id="deleted">no</span></p>
+      <button type="button" id="page-save">Save</button>
+      <button type="button" id="new" aria-haspopup="dialog">New project</button>
+      <button type="button" id="details" aria-expanded="false" aria-controls="drawer">Details</button>
+      <button type="button" id="actions" aria-haspopup="menu" aria-controls="menu">Actions</button>
+      <button type="button" id="wizard-open" aria-haspopup="dialog">Start wizard</button>
+      <button type="button" id="delete-project">Delete project</button>
+      <div id="menu" class="menu" role="menu" aria-label="Project actions" hidden>
+        <button type="button" role="menuitem">Rename</button>
+        <button type="button" role="menuitem">Duplicate</button>
+        <button type="button" role="menuitem">Archive</button>
+      </div>
+      <aside id="drawer" class="drawer" aria-label="Details panel" hidden>
+        <h2>Project details</h2>
+        <p>Created today</p>
+        <button type="button" id="drawer-close">Close details</button>
+      </aside>
+      <div id="toast" role="status"></div>
+    </main>
+
+    <div id="backdrop" class="backdrop" hidden></div>
+
+    <div id="modal" class="dialog" role="dialog" aria-modal="true" aria-label="New project" hidden>
+      <h2>New project</h2>
+      <label>Project name <input id="name" type="text" /></label>
+      <div id="name-error" role="alert"></div>
+      <button type="button" id="modal-save">Save</button>
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button type="button" id="modal-close" aria-label="Close">×</button>
+      <button type="button" id="discard" aria-haspopup="dialog">Discard changes</button>
+    </div>
+
+    <div id="confirm" class="dialog" role="alertdialog" aria-modal="true" aria-label="Are you sure?" hidden>
+      <h2>Are you sure?</h2>
+      <button type="button" id="keep">Keep editing</button>
+      <button type="button" id="confirm-yes">Yes, discard</button>
+    </div>
+
+    <div id="wizard" class="dialog" role="dialog" aria-modal="true" aria-label="Setup wizard" hidden>
+      <h2 id="wizard-title">Step 1 of 3</h2>
+      <div id="step1"><label>Company <input id="company" type="text" /></label></div>
+      <div id="step2" hidden><label>Team size <input id="team" type="text" /></label></div>
+      <div id="step3" hidden><p>Review your answers</p></div>
+      <div id="wizard-error" role="alert"></div>
+      <button type="button" id="wizard-back" hidden>Back</button>
+      <button type="button" id="wizard-next">Next</button>
+      <button type="button" id="wizard-finish" hidden>Finish</button>
+      <button type="button" id="wizard-cancel">Cancel</button>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const show = (id) => $(id).removeAttribute("hidden");
+      const hide = (id) => $(id).setAttribute("hidden", "");
+      const open = [];
+      function openOverlay(id, backdrop) {
+        open.push(id);
+        if (backdrop) show("backdrop");
+        show(id);
+      }
+      function closeOverlay(id) {
+        hide(id);
+        const i = open.indexOf(id);
+        if (i >= 0) open.splice(i, 1);
+        if (!open.some((o) => o === "modal" || o === "confirm" || o === "wizard")) hide("backdrop");
+      }
+      $("page-save").addEventListener("click", () => {
+        $("page-saves").textContent = String(Number($("page-saves").textContent) + 1);
+      });
+      $("delete-project").addEventListener("click", () => { $("deleted").textContent = "YES"; });
+      $("new").addEventListener("click", () => openOverlay("modal", true));
+      $("details").addEventListener("click", () => openOverlay("drawer", false));
+      $("drawer-close").addEventListener("click", () => closeOverlay("drawer"));
+      $("actions").addEventListener("click", () => openOverlay("menu", false));
+      $("wizard-open").addEventListener("click", () => openOverlay("wizard", true));
+      $("modal-cancel").addEventListener("click", () => closeOverlay("modal"));
+      $("modal-close").addEventListener("click", () => closeOverlay("modal"));
+      $("modal-save").addEventListener("click", () => {
+        if (!$("name").value.trim()) { $("name-error").textContent = "Name is required"; return; }
+        $("name-error").textContent = "";
+        $("toast").textContent = "Project saved";
+        closeOverlay("modal");
+      });
+      $("discard").addEventListener("click", () => openOverlay("confirm", false));
+      $("keep").addEventListener("click", () => closeOverlay("confirm"));
+      $("confirm-yes").addEventListener("click", () => { closeOverlay("confirm"); closeOverlay("modal"); });
+      $("backdrop").addEventListener("click", () => {
+        const top = open[open.length - 1];
+        if (top === "modal" || top === "wizard") closeOverlay(top);
+      });
+      document.addEventListener("click", (e) => {
+        if (open.includes("menu") && !$("menu").contains(e.target) && e.target !== $("actions")) closeOverlay("menu");
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && open.length) closeOverlay(open[open.length - 1]);
+      });
+      let step = 1;
+      function showStep(n) {
+        step = n;
+        for (const i of [1, 2, 3]) i === n ? show("step" + i) : hide("step" + i);
+        $("wizard-title").textContent = "Step " + n + " of 3";
+        n > 1 ? show("wizard-back") : hide("wizard-back");
+        n < 3 ? show("wizard-next") : hide("wizard-next");
+        n === 3 ? show("wizard-finish") : hide("wizard-finish");
+        $("wizard-error").textContent = "";
+      }
+      $("wizard-next").addEventListener("click", () => {
+        if (step === 1 && !$("company").value.trim()) { $("wizard-error").textContent = "Company is required"; return; }
+        showStep(step + 1);
+      });
+      $("wizard-back").addEventListener("click", () => showStep(step - 1));
+      $("wizard-cancel").addEventListener("click", () => { closeOverlay("wizard"); showStep(1); });
+      $("wizard-finish").addEventListener("click", () => { $("toast").textContent = "Setup done"; closeOverlay("wizard"); });
+    </script>
+  </body>
+</html>

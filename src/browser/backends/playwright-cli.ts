@@ -97,6 +97,9 @@ export class PlaywrightCliBackend implements BrowserBackend {
         await this.ensureUrl(action.url);
         return { ok: true };
       }
+      if (action.kind === "press" || action.kind === "click-outside") {
+        return { ok: false, error: `'${action.kind}' needs the lib backend (overlay exits are probed there).` };
+      }
       if (action.kind === "click") await this.run(["click", action.ref]);
       else await this.run(["fill", action.ref, action.value]);
       return { ok: true, ref: action.ref };

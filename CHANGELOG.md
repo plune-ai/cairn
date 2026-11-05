@@ -104,7 +104,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes the fixture module beside the specs. Neither command sends a request for a flow, and without `--flows` the
   prompts are unchanged. See `docs/api-flows.md`.
 
+- **Overlays are explore states: dialogs, drawers, menus and wizards (#225).** `explore` and `design` now press a
+  button that says it opens something (`aria-haspopup`, `aria-expanded` or `aria-controls`, read from the element);
+  every other button is listed in `skipped` with the reason and never pressed. The invariant: exploring overlays
+  changes nothing on the server, whatever the button is called, not while it runs and not after it ends. The lib
+  backend holds it on the network: exploration presses in a throwaway browser made from the crawler's storage, which
+  aborts every request whose method is not GET, HEAD or OPTIONS — form posts, fetch and XHR writes, beacons — and lists
+  each one it stopped, with the element pressed before it, in `overlays.json` (`guard`, `blocked`) and `report.md`. At
+  the end, also on an error, that browser is killed with the guard on, so nothing it did can reach the server later,
+  and nothing flows back: the crawler's own page never saw a press. One exception, on `--channel` (full Chromium) over
+  HTTPS: with `Reporting-Endpoints` and a CSP `report-to`, the browser's own Reporting API report goes out as a POST. It
+  is not the app's doing, and it is not in `blocked`. Not seen: a WebSocket message, a GET that changes the server. Not
+  checked: Network Error Logging. A backend that cannot guard the network (cli), or a guard that did not start, presses
+  no trigger and no wizard step there; it reads the overlays already open and says why (`note`). With nothing to press,
+  no second browser is started. On top
+  of the guard, for every press (triggers, nested probes, a wizard's Next and Back): no element that submits a form (a
+  submit button or a `<button>` with no type inside a form or joined to it by `form=`), nothing disabled. Names are
+  kept only where the guard cannot see: a deletion or a sign-out, which is often a GET link («Close account», «Sign
+  out», «Delete»), and a completion (Save, Submit…). There is no list of payment or order names: the guard stops
+  what such a button sends, and «Sort order» or «Purchase history» are explored like any trigger. A wizard's Next and Back are whole names: «Next», «Next ›»,
+  «Далі», «Назад»; «Next: place order» is no step. Each overlay found is recorded, in
+  stack order (page → overlay → nested overlay), in `overlays.json` and `report.json` (`overlays`) and as an *Overlays*
+  section of `report.md`: its kind (`dialog`, `alertdialog`, `drawer`, `menu`, `listbox`), what opened it, its
+  elements, its exits and the wizard steps in it. Detection is deterministic and reads the ARIA snapshot only: a
+  `dialog` or `alertdialog` is an overlay; a `menu`, `listbox` or `complementary` is one when it was not on the page
+  before the click; `status` and `alert` texts (toasts, validation messages) are recorded, never states. Exits are
+  read from the buttons (a close button and Cancel only by their whole name — «Close», «×», «Cancel», «Not now»,
+  never «Close account» or «Cancel subscription»; Submit is marked destructive when the existing filters refuse its
+  name) and probed for Escape and a click outside (`verified`). The click outside is made only at a point checked
+  first: the element there lies outside the overlay and is no link, button, field or other control; when there is no
+  such point it is recorded as not tried (`notTried`). A dialog is a wizard only when it has a Next and a Back or a
+  step indicator («Step 1 of 3», a progressbar); an `alertdialog` never is, and «Continue» is no Next. Its Next and
+  Back are pressed, each only when enabled, passing the filters and not submitting a form, to list its steps; Back is
+  read from the step that shows it and pressed once to check it returns to the step before; where Next is blocked the
+  page's message is recorded, the empty fields are filled once and Next tried again. Nothing is submitted. Elements inside a dialog now carry its scope, so their locator is
+  `getByRole('dialog', { name }).getByRole(role, { name })` (in `act`, `verify`, `getState`, `report.md`, the
+  interaction map and the codegen prompt), and a same-named element on the page is not confused with them. While a
+  modal overlay is open (`aria-modal`, a native `showModal()` dialog, an `alertdialog`), `act()` does not click an
+  element under it: it answers `ok: false, outcome: "under-overlay"` instead of waiting out a 30 s timeout; a dialog
+  the DOM says is not modal (a cookie banner) leaves the page live. The lib backend gains two actions, `press` and
+  `click-outside`; the cli backend refuses them. The design prompt asks for the state-transition set per overlay
+  (open, cancel, Esc, save valid, save invalid, nested confirmation, wizard steps), the codegen prompt makes each
+  overlay its own component object. One worker-tier LLM call gives each overlay a short purpose for cases and docs; it
+  never decides what an overlay is. On by default; `ExploreDeps.overlays: false` turns the step off. A page-level
+  wizard (not inside an overlay) and a side panel that stays on the page from the start are not found yet.
+
 ### Fixed
+
+- **A pull request that mentions `playwright install` no longer reads as a missing browser.** On GitHub Actions the
+  Playwright report holds the pull request's title and diff, and the check for a missing browser read the whole report:
+  a title or a changed line with `playwright install` or `Executable doesn't exist` stopped the run with
+  `BrowsersNotInstalledError`, every browser in place. Now it reads what the run said (stderr, the report's errors, the
+  tests' errors).
 
 - **`cairn api --spec <url>` reads a spec on a local or private address, and a refusal says what happened (#234).**
   The address is no longer handed to the parser's own downloader, which refused `127.0.0.1`, `localhost` and private

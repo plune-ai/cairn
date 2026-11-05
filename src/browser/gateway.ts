@@ -8,6 +8,7 @@ import type {
   SessionApi,
   TestRunReport,
   VerifiedElement,
+  WriteGuard,
 } from "./types.js";
 
 /**
@@ -21,6 +22,8 @@ export interface BrowserBackend {
   verify?(elements: ElementRef[]): Promise<VerifiedElement[]>;
   /** Current element state (visible/enabled/checked) — for act→observe. */
   getState?(element: ElementRef): Promise<ElementState>;
+  /** #225 review 3: abort every request but GET, HEAD and OPTIONS until released (lib only; the cli cannot). */
+  guardWrites?(): Promise<WriteGuard>;
   session?(): SessionApi;
   runTests?(globs: string[]): Promise<TestRunReport>;
   close(): Promise<void>;
@@ -37,6 +40,12 @@ export interface BrowserGateway {
   verify(elements: ElementRef[]): Promise<VerifiedElement[]>;
   /** Element state (visible/enabled/checked) — for act→observe grounding. */
   getState(element: ElementRef): Promise<ElementState>;
+  /**
+   * #225 review 3: the network guard of the observe/act backend — on until released. Absent, or undefined, when that
+   * backend cannot guard the network (the cli backend): a caller that needs the guard then presses nothing. Rejects when
+   * it could not start, with a `code` in fixed words; its message is not for a report.
+   */
+  guardWrites?(): Promise<WriteGuard | undefined>;
   session(): SessionApi;
   runTests(globs: string[]): Promise<TestRunReport>;
   close(): Promise<void>;

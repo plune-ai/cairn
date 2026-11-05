@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Late writes — Fixture</title>
+    <style>
+      [hidden] { display: none !important; }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; z-index: 20; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Late writes</h1>
+      <p id="stamp"></p>
+      <button type="button" id="open" aria-haspopup="dialog">Open panel</button>
+    </main>
+    <div id="panel" class="dialog" role="dialog" aria-modal="true" aria-label="Panel" hidden>
+      <h2>Panel</h2>
+      <button type="button" id="close" aria-label="Close">×</button>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const post = (path, init) => fetch(path, { method: "POST", ...init }).catch(() => undefined);
+      const kind = new URLSearchParams(location.search).get("case");
+
+      // ?case= says how a press writes to the server. Nothing writes before the press, except the two on load below.
+      const press = {
+        immediate: () => post("/w/immediate"),
+        // Leaving the page after a press: the requests are made while the document goes away. Several, because which of
+        // them the browser parks is a race; with this many some are parked on every run.
+        pagehide: () =>
+          addEventListener("pagehide", () => {
+            for (let i = 0; i < 8; i++) post("/w/pagehide", { keepalive: true });
+          }),
+        // A popup made in the opener's script: the writes run in its realm, before anything loads in it.
+        "popup-realm": () => {
+          const w = window.open("", "_blank");
+          w.fetch("/w/popup-realm", { method: "POST" }).catch(() => undefined);
+          w.navigator.sendBeacon("/w/popup-realm-beacon", "x");
+        },
+        // An outbox: the press only queues; a later load of the page sends it, and empties it when the server took it.
+        outbox: () => localStorage.setItem("outbox", "1"),
+        "popup-page": () => window.open("/overlay-late-writes.html?case=on-load", "_blank"),
+        srcdoc: () => {
+          const f = document.createElement("iframe");
+          f.srcdoc = "<script>fetch('/w/srcdoc', { method: 'POST' });<\/script>";
+          document.body.append(f);
+        },
+        "cross-origin-frame": () => {
+          const f = document.createElement("iframe");
+          f.src = location.href.replace("127.0.0.1", "localhost").replace(/case=[^&]*/, "case=on-load");
+          document.body.append(f);
+        },
+        "service-worker": () => {
+          navigator.serviceWorker.register("/overlay-late-writes-sw.js").then(async () => {
+            const ready = await navigator.serviceWorker.ready;
+            ready.active.postMessage("write");
+          });
+        },
+        // A popup that closes itself, and a cross-origin frame removed: what they send on the way out goes when they go.
+        "self-closing-popup": () => window.open("/overlay-late-writes.html?case=self-closing", "_blank"),
+        "removed-frame": () => {
+          const f = document.createElement("iframe");
+          f.src = location.href.replace("127.0.0.1", "localhost").replace(/case=[^&]*/, "case=hide-only");
+          f.onload = () => setTimeout(() => f.remove(), 100);
+          document.body.append(f);
+        },
+        // These send where no interception of a page sees them.
+        "shared-worker": () => {
+          const script = 'fetch("' + location.origin + '/w/shared-worker", { method: "POST" });';
+          new SharedWorker(URL.createObjectURL(new Blob([script], { type: "text/javascript" })));
+        },
+        "fetch-later": () => fetchLater("/w/fetch-later", { method: "POST", activateAfter: 0 }),
+        "background-fetch": () => {
+          navigator.serviceWorker.register("/overlay-late-writes-sw.js").then(async () => {
+            const ready = await navigator.serviceWorker.ready;
+            await ready.backgroundFetch.fetch("id" + Math.random(), new Request("/w/background-fetch", { method: "POST", body: "x" }));
+          }).catch(() => undefined);
+        },
+        // Writes that never stop, in the page and a popup, every way there is: some are on their way at any moment.
+        storm: () => {
+          const burst = (w) => {
+            for (let i = 0; i < 4; i++) w.fetch("/w/storm", { method: "POST", keepalive: true }).catch(() => undefined);
+            w.navigator.sendBeacon("/w/storm", "x");
+            w.fetch("/w/storm", { method: "POST" }).catch(() => undefined);
+          };
+          const popup = window.open("", "_blank");
+          setInterval(() => burst(window), 20);
+          popup.setInterval(() => burst(popup), 20);
+          addEventListener("pagehide", () => burst(window));
+        },
+      }[kind];
+
+      // A number new with every load, in the accessibility tree: it tells one document from the next.
+      $("stamp").textContent = "Load " + Math.random();
+      if (kind === "on-load") post("/w/on-load");
+      // An app that reads through POST (GraphQL): the trigger is there only once the answer is.
+      if (kind === "read-by-post") {
+        $("open").hidden = true;
+        post("/w/graphql").then((r) => {
+          if (r && r.ok) $("open").hidden = false;
+        });
+      }
+      // IndexedDB that the browser which presses cannot be given: a record under the key 0, which does not restore…
+      if (kind === "key-zero") {
+        const open = indexedDB.open("session", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("kv");
+        open.onsuccess = () => open.result.transaction("kv", "readwrite").objectStore("kv").put("token-of-the-session", 0);
+      }
+      // …or that cannot be read: an upgrade waiting on a connection this page keeps open.
+      if (kind === "blocked-upgrade") {
+        const open = indexedDB.open("stuck", 1);
+        open.onsuccess = () => {
+          window.kept = open.result;
+          indexedDB.open("stuck", 2);
+        };
+      }
+      if (kind === "self-closing" || kind === "hide-only") {
+        addEventListener("pagehide", () => {
+          for (let i = 0; i < 8; i++) post("/w/on-the-way-out", { keepalive: true });
+          navigator.sendBeacon("/w/on-the-way-out", "x");
+        });
+      }
+      if (kind === "self-closing") setTimeout(() => window.close(), 100);
+      if (localStorage.getItem("outbox")) {
+        post("/w/outbox").then((r) => {
+          if (r && r.ok) localStorage.removeItem("outbox");
+        });
+      }
+
+      $("open").addEventListener("click", () => {
+        $("panel").hidden = false; // first: a press whose API is gone throws, and the panel still opens
+        if (press) press();
+      });
+      $("close").addEventListener("click", () => { $("panel").hidden = true; });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("panel").hidden = true; });
+    </script>
+  </body>
+</html>

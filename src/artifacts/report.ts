@@ -1,4 +1,5 @@
-import type { ClickEffect, ElementRef } from "../browser/types.js";
+import type { BlockedRequest, ClickEffect, ElementRef } from "../browser/types.js";
+import { scopedLocator, formatOverlays, type OverlayState } from "../observe/overlays.js";
 import { DEAD_CLICK_RECHECK_MS, REQUEST_ANSWER_MS, recordedUrl } from "../browser/click-effect.js";
 import { norm, type FlowEdge } from "../flow/crawl.js";
 import type { TestCase } from "../design/index.js";
@@ -44,6 +45,7 @@ export function deadClicksOf(clicks: ClickEffect[], edges: FlowEdge[] = []): Dea
 
 /** Generate a Playwright locator for an element (ref → getByRole). */
 export function locatorFor(el: ElementRef): string {
+  if (el.scope) return scopedLocator(el.scope, el.role, el.name); // #225: inside a dialog, found through it
   const name = el.name ? `, { name: '${el.name.replace(/'/g, "\\'")}' }` : "";
   return `page.getByRole('${el.role}'${name})`;
 }
@@ -79,6 +81,10 @@ export interface ReportInput {
   decider?: DeciderSummary;
   /** #224: clicks Cairn saw no change after — the section is always there, empty when there are none (lib backend). */
   deadClicks?: DeadClick[];
+  /** #225: the overlays found as states — the section is rendered only when there are some. */
+  overlays?: OverlayState[];
+  /** #225 review 3: the write guard of overlay exploration and what it stopped; a note when there was none. */
+  overlayGuard?: { guard: "network" | "none"; blocked: BlockedRequest[]; note?: string };
 }
 
 /** A pipe in an element's name or a URL must not split a table row. */
@@ -208,6 +214,27 @@ export function renderReportMd(r: ReportInput): string {
       "|---|---|",
     );
     for (const d of dead) lines.push(`| ${cell(d.page)} | ${cell(`${d.role}${d.name !== undefined ? ` "${d.name}"` : ""}`)} |`);
+    lines.push("");
+  }
+
+  if (r.overlays && r.overlays.length > 0) {
+    lines.push(`## Overlays (${r.overlays.length})`, "", "Dialogs, drawers, menus and wizards found as states: what opens each, what is in it, how it closes.", "");
+    lines.push("```", formatOverlays(r.overlays), "```", "");
+  }
+  if (r.overlayGuard?.note) lines.push(`Overlay exploration: ${r.overlayGuard.note}.`, "");
+  if (r.overlayGuard && r.overlayGuard.blocked.length > 0) {
+    // #225 review 3: what the write guard stopped while overlays were explored — nothing of it reached the server.
+    // #225 review 5: it goes by the method alone, so this does not say each one was a write.
+    lines.push(`### Requests stopped while exploring overlays (${r.overlayGuard.blocked.length})`, "");
+    lines.push(
+      "Each request below was stopped before it left the browser that presses, because its method is not GET, HEAD or OPTIONS. A stopped request is not necessarily a write: an app may also read through POST, and what depends on the answer was then not there to explore.",
+      "",
+    );
+    lines.push("| method | path | pressed before it | times |", "|---|---|---|---|");
+    for (const b of r.overlayGuard.blocked) {
+      const pressed = b.pressed ? `${b.pressed.role}${b.pressed.name ? ` "${b.pressed.name}"` : ""}` : "—";
+      lines.push(`| ${b.method} | ${cell(b.path)} | ${cell(pressed)} | ${b.count} |`);
+    }
     lines.push("");
   }
 

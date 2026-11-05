@@ -27,6 +27,8 @@ export interface DesignInput {
   elements?: VerifiedElement[];
   /** Observed state transitions (act→observe, Stage B). */
   transitions?: Transition[];
+  /** #225: the overlays found by exploration ({@link formatOverlays}); "" → none. */
+  overlays?: string;
   /** Domain knowledge (credentials, validation rules) — URL-matched knowledge files. */
   knowledge?: string;
   /** Few-shot from experience: previously stable cases (experience-tracker). */
@@ -38,6 +40,17 @@ export interface DesignInput {
   /** #230: the available API flows (`formatFlowsForPrompt`); absent or "" → the prompt is unchanged. */
   apiFlows?: string;
 }
+
+/** #225: heads the overlay block of the design prompt; the cases it asks for are the state-transition set for an overlay. */
+export const OVERLAY_HEADER = `Overlays found on the page (dialogs, drawers, menus, wizards) — each is a STATE with a trigger and exits. For EACH overlay apply the state-transition technique and write these cases (technique "state-transition"), each one a separate case:
+- open: the trigger opens it (check its name / heading is visible);
+- cancel: it closes with its Cancel / close button and the page is as before;
+- Esc: it closes on Escape — only when the exits below do not say "does not close it";
+- save valid: the submit with valid data completes it and closes it (execution "manual" when the submit is marked destructive);
+- save invalid: the submit with empty or invalid data keeps it open and shows the validation message;
+- nested confirmation: an overlay opened from another one (parent) is confirmed or cancelled, and the parent is still there after cancel;
+- wizard: Next moves one step on, Back returns, Next is blocked when the step's validation says so.
+Only write the cases an overlay's exits and elements make possible. Name the overlay's elements by their labels in the steps; never click anything that lies under an open modal overlay.`;
 
 export interface DesignDeps {
   invoke: StructuredInvoke;
@@ -56,7 +69,7 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
     .filter((e) => e.interactive)
     .map(
       (e) =>
-        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${e.count > 1 ? ` (×${e.count} — repeated, .first())` : ""}${e.viaSwitcher ? ` [behind tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
+        `${e.ref} · ${e.role}${e.name ? ` "${e.name}"` : ""}${e.count > 1 ? ` (×${e.count} — repeated, .first())` : ""}${e.scope ? ` [inside ${e.scope.role}${e.scope.name ? ` "${e.scope.name}"` : ""}]` : ""}${e.viaSwitcher ? ` [behind tab "${e.viaSwitcher.name ?? ""}"]` : ""}`,
     )
     .join("\n");
 
@@ -67,6 +80,7 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
     goal: input.goalText ?? "",
     checklist: input.checklistText ?? "",
     transitions: formatTransitions(input.transitions ?? []),
+    overlays: input.overlays ? `${OVERLAY_HEADER}\n${input.overlays}` : "",
     language: input.language ?? "English",
     knowledge: input.knowledge ?? "",
     experience: input.experience ?? "",
