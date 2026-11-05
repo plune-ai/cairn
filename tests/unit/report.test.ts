@@ -250,6 +250,15 @@ describe("renderReportMd — dead clicks (#224)", () => {
     expect(md).toContain("Not recorded on the cli backend.");
     expect(md).not.toContain("None:");
   });
+
+  it("a request the guard stopped is not called a write for certain: an app may read through POST (#225 review 5)", () => {
+    const md = renderReportMd({ ...base, overlayGuard: { guard: "network", blocked: [{ method: "POST", path: "/graphql", count: 1 }] } });
+    expect(md).toContain("### Requests stopped while exploring overlays (1)");
+    expect(md).toMatch(/method is not GET, HEAD or OPTIONS/);
+    expect(md).toMatch(/not necessarily a write/);
+    expect(md).not.toMatch(/Writes stopped/);
+    expect(md).toContain("| POST | /graphql | — | 1 |");
+  });
 });
 
 describe("renderApiReportMd (C1-04 / API-4, #134)", () => {

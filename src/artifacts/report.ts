@@ -223,8 +223,13 @@ export function renderReportMd(r: ReportInput): string {
   }
   if (r.overlayGuard?.note) lines.push(`Overlay exploration: ${r.overlayGuard.note}.`, "");
   if (r.overlayGuard && r.overlayGuard.blocked.length > 0) {
-    // #225 review 3: what the write guard stopped while overlays were explored — nothing of it reached the server
-    lines.push(`### Writes stopped while exploring overlays (${r.overlayGuard.blocked.length})`, "");
+    // #225 review 3: what the write guard stopped while overlays were explored — nothing of it reached the server.
+    // #225 review 5: it goes by the method alone, so this does not say each one was a write.
+    lines.push(`### Requests stopped while exploring overlays (${r.overlayGuard.blocked.length})`, "");
+    lines.push(
+      "Each request below was stopped before it left the browser that presses, because its method is not GET, HEAD or OPTIONS. A stopped request is not necessarily a write: an app may also read through POST, and what depends on the answer was then not there to explore.",
+      "",
+    );
     lines.push("| method | path | pressed before it | times |", "|---|---|---|---|");
     for (const b of r.overlayGuard.blocked) {
       const pressed = b.pressed ? `${b.pressed.role}${b.pressed.name ? ` "${b.pressed.name}"` : ""}` : "—";

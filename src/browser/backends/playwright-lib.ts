@@ -101,6 +101,21 @@ const BLINK_OFF = "AutomationControlled";
  */
 const SENDS_PAST_FETCH = "BackgroundFetch";
 
+/**
+ * #225 review 5: how long reading the crawler's session for the write guard may take. `storageState()` with IndexedDB has
+ * no limit of its own, and a page with a blocked IndexedDB upgrade held it past 240 s. Measured on a laptop: 300 MB read in
+ * 2.4 s, and 200 MB is already more than the browser that presses can be given. Ten seconds leave a machine four times
+ * slower room for more than could ever be used.
+ */
+const SESSION_READ_TIMEOUT_MS = 10_000;
+
+/**
+ * #225 review 5: why the write guard did not start, in fixed words. What the failing call said stays behind on purpose: it
+ * can quote what the session holds (`Unable to restore IndexedDB…`), and this reason goes into the report.
+ */
+type GuardFailure = "SESSION_READ_FAILED" | "BROWSER_START_FAILED" | "SESSION_RESTORE_FAILED";
+const guardFailure = (code: GuardFailure): Error => Object.assign(new Error(`The write guard did not start: ${code}`), { code });
+
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** `p`, or `fallback` when it fails or takes longer than `ms`. */
 const within = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
@@ -658,19 +673,26 @@ export class PlaywrightLibBackend implements BrowserBackend {
    * goes when they go. What it holds is then let go: POSTs reached a probe server with the route on from a popup closing
    * itself, a cross-origin frame removed, a context closing (in full Chromium and Chrome), and also from a SharedWorker
    * and fetchLater, which it never saw. The browser's own interception saw them all, and a killed process runs no teardown.
-   * Not covered: WebSocket messages, and a GET that changes the server against HTTP's rule.
+   * Not covered: WebSocket messages, a GET that changes the server against HTTP's rule, and one POST the app has no hand in:
+   * on a configured channel (full Chromium) over HTTPS, the browser's own Reporting API report (`Reporting-Endpoints` and
+   * a CSP `report-to`) reaches the server and is not in `blocked`. It stays on: `--disable-features` would replace the list
+   * Playwright passes there itself, and that list is no public API. Network Error Logging was not checked.
    */
   async guardWrites(): Promise<WriteGuard> {
     if (this.pressing) throw new Error("The write guard is already on.");
     const page = await this.ensurePage();
     // A plain storageState leaves out IndexedDB and the tab's sessionStorage, where an app may keep its session.
     // ponytail: IndexedDB is copied whole, however large; sessionStorage only of the origin the crawler's page is on.
-    const state = await this.context!.storageState({ indexedDB: true });
+    const state = await within<PwStorageState | undefined>(this.context!.storageState({ indexedDB: true }), SESSION_READ_TIMEOUT_MS, undefined);
+    if (!state) throw guardFailure("SESSION_READ_FAILED");
     const tab = await within<{ origin: string; items: [string, string][] } | undefined>(page.evaluate(readTabStorage), STATE_READ_TIMEOUT_MS, undefined);
-    const server = await chromium.launchServer(this.launchOptions(`${BLINK_OFF},${SENDS_PAST_FETCH}`));
+    const server = await chromium.launchServer(this.launchOptions(`${BLINK_OFF},${SENDS_PAST_FETCH}`)).catch(() => {
+      throw guardFailure("BROWSER_START_FAILED");
+    });
     const pressing = new PlaywrightLibBackend(this.opts);
     pressing.server = server;
     const blocked: BlockedRequest[] = [];
+    let step: GuardFailure = "BROWSER_START_FAILED";
     try {
       pressing.browser = await chromium.connect(server.wsEndpoint());
       const cdp = await pressing.browser.newBrowserCDPSession();
@@ -689,11 +711,12 @@ export class PlaywrightLibBackend implements BrowserBackend {
         void cdp.send("Fetch.failRequest", { requestId, errorReason: "Aborted" }).catch(() => undefined);
       });
       await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
+      step = "SESSION_RESTORE_FAILED";
       pressing.context = await pressing.newContext(state);
       if (tab) await pressing.context.addInitScript(seedTabStorage, tab);
-    } catch (e) {
+    } catch {
       await server.kill().catch(() => undefined);
-      throw e;
+      throw guardFailure(step);
     }
     this.pressing = pressing;
     return {

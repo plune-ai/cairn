@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { makeGateway } from "../../src/browser/index.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
 import {
   overlayStack,
@@ -244,5 +245,129 @@ describe("a backend that cannot guard the network (#225 review 3)", () => {
     expect(out.note).toMatch(/cannot guard the network/);
     expect(out.states.map((s) => [s.kind, s.name])).toEqual([["dialog", "Cookies"]]);
     expect(out.states[0]!.exits).toContainEqual({ kind: "close-button", name: "Close" });
+    // no guard to ask for: its buttons are not read either (a cli backend answers every one "not visible")
+    if (!("guardWrites" in noGuard)) expect(states).toEqual([]);
+  });
+
+  it("the cli gateway has no guard at all, the lib gateway has one", () => {
+    expect(makeGateway({ backend: "cli" }).guardWrites).toBeUndefined();
+    expect(makeGateway({ backend: "lib" }).guardWrites).toBeTypeOf("function");
+  });
+});
+
+describe("what exploring says when it did less than usual (#225 review 5)", () => {
+  const ONE_TRIGGER = `- main:
+  - button "Open panel"`;
+  const FALSE_REASON = /does not say it opens anything/;
+
+  function fake(over: Record<string, unknown> = {}) {
+    const log: string[] = [];
+    const gateway = {
+      observe: async () => ({ url: "https://app.test/", screenshotB64: "", ariaSnapshot: ONE_TRIGGER, capturedBy: "lib" as const }),
+      act: async () => (log.push("press"), { ok: true }),
+      verify: async () => [],
+      getState: async () => (log.push("read"), { visible: true, enabled: true, popup: { hasPopup: "dialog" } }),
+      guardWrites: async () => (log.push("guard"), { release: async () => (log.push("release"), []) }),
+      session: () => {
+        throw new Error("no session");
+      },
+      runTests: async () => {
+        throw new Error("no tests");
+      },
+      close: async () => undefined,
+      ...over,
+    };
+    return { gateway, log };
+  }
+  const explore = async (gateway: ReturnType<typeof fake>["gateway"], aria = ONE_TRIGGER) => {
+    const { exploreOverlays } = await import("../../src/agent/overlays.js");
+    // the cookie dialog leaves the page live: its buttons stay candidates
+    const elements = parseAriaSnapshot(aria, { nonModal: new Set(["dialog|Cookies"]) });
+    const study = { url: "https://app.test/", screenshotB64: "", ariaYaml: aria, elements, capturedBy: "lib" as const };
+    return exploreOverlays({ gateway, url: study.url, study });
+  };
+
+  it("reads what a button announces before the guard is on, once, and presses after it", async () => {
+    const { gateway, log } = fake();
+    await explore(gateway);
+    expect(log.slice(0, 3)).toEqual(["read", "guard", "press"]);
+    expect(log.filter((l) => l === "read")).toEqual(["read"]);
+    expect(log.at(-1)).toBe("release");
+  });
+
+  it.each([
+    { what: "no button at all", aria: `- main:\n  - heading "Projects" [level=1]`, skipped: [] },
+    { what: "only a button nothing announces", aria: `- main:\n  - button "Sort"`, state: { visible: true, enabled: true }, skipped: ["Sort"] },
+  ])("$what: no second browser is started, and the result says nothing was pressed", async ({ aria, state, skipped }) => {
+    const { gateway, log } = fake(state ? { getState: async () => state } : {});
+    const out = await explore(gateway, aria);
+    expect(log).not.toContain("guard");
+    expect(out.guard).toBe("none");
+    expect(out.note).toMatch(/nothing was pressed/);
+    expect(out.skipped.map((s) => s.name)).toEqual(skipped);
+  });
+
+  it("a trigger announced on the page but missing where it is pressed gets its own reason", async () => {
+    // the app reads what it shows through POST /graphql: stopped there, so the button never appears
+    const blocked = [{ method: "POST", path: "/graphql", count: 1 }];
+    const { gateway, log } = fake({
+      observe: async () => ({ url: "https://app.test/", screenshotB64: "", ariaSnapshot: `- main:\n  - heading "Loading" [level=1]`, capturedBy: "lib" as const }),
+      guardWrites: async () => ({ release: async () => blocked }),
+    });
+    const out = await explore(gateway);
+    expect(log).not.toContain("press");
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringMatching(/announces .*not there/) }]);
+    expect(out.skipped[0]!.reason).not.toMatch(FALSE_REASON);
+    expect(out.guard).toBe("network");
+    expect(out.blocked).toEqual(blocked);
+    expect(out.note).toMatch(/not there/);
+  });
+
+  it.each([
+    { how: "the read fails", getState: async () => Promise.reject(new Error("browser gone")) },
+    { how: "the read says it is not visible, as a dead browser's does", getState: async () => ({ visible: false, enabled: false }) },
+  ])("$how: an honest reason and a note, not a button that announces nothing; no second browser", async ({ getState }) => {
+    const { gateway, log } = fake({ getState });
+    const out = await explore(gateway);
+    expect(log).not.toContain("guard");
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("could not be read") }]);
+    expect(out.skipped[0]!.reason).not.toMatch(FALSE_REASON);
+    expect(out.guard).toBe("none");
+    expect(out.note).toMatch(/could not be read/);
+  });
+
+  it.each([
+    { how: "the page does not load there", over: { observe: async () => Promise.reject(new Error("browser gone")) } },
+    { how: "the press answers not ok", over: { act: async () => ({ ok: false, error: "browser gone" }) } },
+    { how: "the press throws", over: { act: async () => Promise.reject(new Error("browser gone")) } },
+  ])("$how: an empty result does not stay without an explanation", async ({ over }) => {
+    const { gateway, log } = fake(over);
+    const out = await explore(gateway);
+    expect(out.guard).toBe("network");
+    expect(out.states).toEqual([]);
+    expect(out.blocked).toEqual([]);
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("could not be pressed") }]);
+    expect(out.note).toMatch(/could not be pressed/);
+    expect(log.at(-1)).toBe("release");
+  });
+
+  it.each([
+    { how: "a coded error", error: Object.assign(new Error("spawn failed, token=s3cret"), { code: "ENOMEM" }), says: "ENOMEM" },
+    { how: "an error with only a message", error: new Error("Unable to restore IndexedDB: token=s3cret"), says: "Error" },
+    { how: "a named error", error: new TypeError("token=s3cret"), says: "TypeError" },
+    { how: "a code off the pattern", error: Object.assign(new Error("x"), { code: "token=s3cret" }), says: "Error" },
+    { how: "a name off the pattern", error: Object.assign(new Error("x"), { name: "token=s3cret" }), says: "unknown error" },
+    { how: "a thrown string", error: "token=s3cret", says: "unknown error" },
+  ])("a guard that failed to start is not a backend without one, and says only its category: $how", async ({ error, says }) => {
+    const { gateway, log } = fake({ guardWrites: async () => Promise.reject(error) });
+    const aria = `${ONE_TRIGGER}\n- dialog "Cookies":\n  - button "Close"`;
+    const out = await explore(gateway, aria);
+    expect(log).not.toContain("press");
+    expect(out.guard).toBe("none");
+    expect(out.note).toContain(`did not start (${says})`);
+    expect(out.note).not.toMatch(/cannot guard the network/);
+    expect(JSON.stringify(out)).not.toContain("s3cret");
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("did not start") }]);
+    expect(out.states.map((s) => s.name)).toEqual(["Cookies"]); // what is already open is still read
   });
 });
