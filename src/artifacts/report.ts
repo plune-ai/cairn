@@ -1,4 +1,4 @@
-import type { AmbiguousFinding, ClickEffect, ElementRef, OverlayScope } from "../browser/types.js";
+import type { AmbiguousFinding, BlockedRequest, ClickEffect, ElementRef, OverlayScope } from "../browser/types.js";
 import { scopedLocator, formatOverlays, type OverlayState } from "../observe/overlays.js";
 import { DEAD_CLICK_RECHECK_MS, REQUEST_ANSWER_MS, recordedUrl } from "../browser/click-effect.js";
 import { norm, type FlowEdge } from "../flow/crawl.js";
@@ -86,6 +86,8 @@ export interface ReportInput {
   overlays?: OverlayState[];
   /** #226: elements nothing told apart from others like it, not clicked — the section is rendered only when there are some. */
   ambiguous?: AmbiguousFinding[];
+  /** #225 review 3: the write guard of overlay exploration and what it stopped; a note when there was none. */
+  overlayGuard?: { guard: "network" | "none"; blocked: BlockedRequest[]; note?: string };
 }
 
 /** A pipe in an element's name or a URL must not split a table row. */
@@ -237,6 +239,17 @@ export function renderReportMd(r: ReportInput): string {
   if (r.overlays && r.overlays.length > 0) {
     lines.push(`## Overlays (${r.overlays.length})`, "", "Dialogs, drawers, menus and wizards found as states: what opens each, what is in it, how it closes.", "");
     lines.push("```", formatOverlays(r.overlays), "```", "");
+  }
+  if (r.overlayGuard?.note) lines.push(`Overlay exploration: ${r.overlayGuard.note}.`, "");
+  if (r.overlayGuard && r.overlayGuard.blocked.length > 0) {
+    // #225 review 3: what the write guard stopped while overlays were explored — nothing of it reached the server
+    lines.push(`### Writes stopped while exploring overlays (${r.overlayGuard.blocked.length})`, "");
+    lines.push("| method | path | pressed before it | times |", "|---|---|---|---|");
+    for (const b of r.overlayGuard.blocked) {
+      const pressed = b.pressed ? `${b.pressed.role}${b.pressed.name ? ` "${b.pressed.name}"` : ""}` : "—";
+      lines.push(`| ${b.method} | ${cell(b.path)} | ${cell(pressed)} | ${b.count} |`);
+    }
+    lines.push("");
   }
 
   const interactive = r.elements.filter((e) => e.interactive);

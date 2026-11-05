@@ -1,6 +1,6 @@
 import type { ElementRef, OverlayScope } from "../browser/types.js";
 import { DESTRUCTIVE } from "../flow/crawl.js";
-import { isDeletionIntent, wholeWords } from "../safety/guardrails.js";
+import { isDeletionIntent } from "../safety/guardrails.js";
 import { overlayKey, parseAriaSnapshot } from "./parse-aria.js";
 
 /**
@@ -60,6 +60,8 @@ const SUBMIT_NAME =
 
 /** Next / Back: the steps of a wizard, not ways out of it. */
 export const isStepName = (name: string | undefined): boolean => NEXT_NAME.test(name ?? "") || BACK_NAME.test(name ?? "");
+/** Back of a wizard (the whole name, one arrow before it). */
+export const isBackName = (name: string | undefined): boolean => BACK_NAME.test(name ?? "");
 
 /**
  * A name that completes a form or confirms a choice (Save, Submit, OK, Yes…). Exploration never presses one; it also
@@ -148,19 +150,14 @@ export function topModalScope(aria: string, nonModal?: ReadonlySet<string>): Ove
 }
 
 /**
- * A name that pays or orders (#225 review 2): «Buy plan», «Pay», «Checkout», «Купити»… Whole words, so «Payments» and
- * «Orders» are other words. Kept apart from the crawl's DESTRUCTIVE so the crawl still follows a link to the orders page.
+ * A name that passes the destructive-action filters: pressing it is no deletion and no sign-out. These two stay because
+ * they are what the write guard cannot see (#225 review 3): a sign-out or a deletion link is often a plain GET.
+ * There is no list of payment or order names: every one of those writes, and the guard stops every write whatever
+ * the button is called, while a list of names both missed some («Complete payment», «Book now») and refused safe
+ * ones («Sort order», «Purchase history»).
  */
-export const PAYMENT = new RegExp(
-  wholeWords(
-    String.raw`buy|pay|purchase|order|checkout|check\s+out|subscribe|upgrade|купити|купіть|оплатити|оплатіть|замовити|замовте|підписатися|підпишіться`,
-  ),
-  "iu",
-);
-
-/** A name that passes the destructive-action filters: pressing it is no deletion, no sign-out, no payment or order. */
 export function passesSafetyFilters(name: string | undefined): boolean {
-  return !DESTRUCTIVE.test(name ?? "") && !isDeletionIntent(name ?? "") && !PAYMENT.test(name ?? "");
+  return !DESTRUCTIVE.test(name ?? "") && !isDeletionIntent(name ?? "");
 }
 
 /**
@@ -266,7 +263,9 @@ export function formatOverlays(states: OverlayState[]): string {
       const head = `- ${s.id} · ${s.kind}${s.name ? ` "${s.name}"` : ""}${s.purpose ? ` — ${s.purpose}` : ""}${s.modal ? " [modal]" : ""}`;
       const lines = [head];
       lines.push(
-        `    opened by: ${s.trigger.role}${s.trigger.name ? ` "${s.trigger.name}"` : ""}${s.parent ? ` inside ${s.parent}` : " on the page"}`,
+        s.trigger.role === "page"
+          ? "    opened by: nothing — it was open when the page was read"
+          : `    opened by: ${s.trigger.role}${s.trigger.name ? ` "${s.trigger.name}"` : ""}${s.parent ? ` inside ${s.parent}` : " on the page"}`,
       );
       if (s.exits.length > 0) {
         lines.push(

@@ -3,12 +3,13 @@ import { z } from "zod";
 import type { StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { BrowserGateway } from "../browser/gateway.js";
-import type { ElementRef, ElementState, Observation, OverlayScope } from "../browser/types.js";
+import type { BlockedRequest, ElementRef, ElementState, Observation, OverlayScope } from "../browser/types.js";
 import type { PageStudy } from "../observe/index.js";
 import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import {
   EXIT_ORDER,
   formatOverlays,
+  isBackName,
   isCompletionName,
   isStepName,
   overlayExits,
@@ -28,11 +29,17 @@ import {
  * #225: overlays as explore states. From the page, press what could open a dialog, a drawer or a menu; for each one
  * found, record what opened it, what is in it, its exits (Esc and a click outside are probed, the buttons are read),
  * the nested overlays it opens, and the steps of a wizard. Detection is the ARIA snapshot's (`observe/overlays.ts`);
- * no LLM here. Nothing is submitted. A button is pressed to look for an overlay only when it says it opens one
- * (`aria-haspopup`, `aria-expanded` or `aria-controls`) — an allow-list (#225 review: a deny-list let «Pay now»,
- * «Archive» and «Continue» through) — and it must also pass the destructive-action filters and not be a completion
- * (Save, Submit…) nor submit its form (#225 review 2). Everything else is recorded as skipped, with the reason, and
- * left alone.
+ * no LLM here.
+ *
+ * The invariant (#225 review 3): while overlays are explored, nothing cairn presses can change the server, whatever
+ * the button is called. The backend's write guard aborts every request but GET, HEAD and OPTIONS from the first press
+ * to the last, and lifts it in `finally`; what it stopped is in the result. A backend that cannot guard the network
+ * (cli) presses no trigger and no wizard step: it reads the overlays already open and says so.
+ *
+ * On top of the guard, checks that do not depend on a name, for every press (triggers, nested probes, Next, Back): an
+ * element that submits a form is not pressed, nor a disabled one. A trigger must say it opens something
+ * (`aria-haspopup`, `aria-expanded` or `aria-controls`). Names keep only the deletion and sign-out deny-list — a
+ * sign-out or a deletion link is often a GET, which the guard lets through — and the completions (Save, Submit…).
  */
 
 export interface ExploreOverlaysInput {
@@ -52,7 +59,16 @@ export interface ExploreOverlaysResult {
   skipped: { role: string; name?: string; reason: string }[];
   /** Toast and validation texts seen anywhere, in order, once each. */
   toasts: string[];
+  /** `network`: the write guard was on for every press. `none`: the backend has none, so nothing was pressed. */
+  guard: "network" | "none";
+  /** The writes the guard stopped, each with the element pressed before it (`[]` when none, or no guard). */
+  blocked: BlockedRequest[];
+  /** Why exploration did less than usual (no guard), for a person to read. */
+  note?: string;
 }
+
+export const NO_GUARD_NOTE =
+  "the browser backend cannot guard the network, so no trigger and no wizard step was pressed; only overlays already open were read";
 
 const MAX_TRIGGERS = 8;
 /** Nested overlays are followed this deep (page → overlay → nested overlay → one more). */
@@ -155,11 +171,14 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     return { ok: true, outcome, before, snap: s };
   }
 
+  /** #225 review 3: pressing `e` would submit a form — read from the element, never from its name. */
+  const submitsForm = async (e: ElementRef): Promise<boolean> => (await gateway.getState(e).catch(() => undefined))?.submitsForm === true;
+
   const signature = (els: ElementRef[]): string => els.filter((e) => e.interactive || e.role === "heading").map((e) => `${e.role}:${e.name ?? ""}`).join("|");
 
   /**
    * The steps of a wizard in the overlay `scope`, from the state `s` it is open in. Only Next and Back are pressed,
-   * each only when enabled and passing the destructive-action filters.
+   * each only when enabled, passing the destructive-action filters and not submitting a form (#225 review 3).
    */
   async function walkWizard(s: Snap, scope: OverlayScope): Promise<WizardInfo | undefined> {
     const inScope = (x: Snap): ElementRef[] => x.els.filter((e) => e.inside && sameScope(e.inside, scope) && !e.underOverlay);
@@ -178,11 +197,17 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
         headings: els.filter((e) => e.role === "heading" && e.name).map((e) => e.name!),
         fields: els.filter((e) => /^(textbox|combobox|checkbox|radio|switch|searchbox|spinbutton)$/.test(e.role)).map((e) => e.name ?? e.role),
       });
+      // #225 review 3: Back is read from the step that shows it — in a two-step wizard only the last one does
+      back ??= els.find((e) => e.role === "button" && !e.underOverlay && isBackName(e.name))?.name;
       const wiz = wizardButtons(els, scope.role);
       if (!wiz) break; // the last step has no Next
-      back ??= wiz.back?.name;
       if (!passesSafetyFilters(wiz.next.name)) {
         skip(wiz.next, DESTRUCTIVE_REASON);
+        break;
+      }
+      // #225 review 3: a Next that submits its form (a <button> with no type inside <form method=post>) posts it
+      if (!wiz.next.disabled && (await submitsForm(wiz.next))) {
+        skip(wiz.next, SUBMITS_FORM_REASON);
         break;
       }
       const pressed = wiz.next.disabled ? undefined : await gateway.act({ kind: "click", ref: wiz.next.ref, timeoutMs: PRESS_TIMEOUT_MS });
@@ -196,6 +221,10 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
         for (const f of empties) await gateway.act({ kind: "fill", ref: f.ref, value: FILLER }).catch(() => undefined);
         const retry = wizardButtons(inScope(await snap()), scope.role);
         if (!pressableStep(retry?.next)) break; // still disabled after filling: the steps beyond are not reachable here
+        if (await submitsForm(retry.next)) {
+          skip(retry.next, SUBMITS_FORM_REASON);
+          break;
+        }
         await gateway.act({ kind: "click", ref: retry.next.ref, timeoutMs: PRESS_TIMEOUT_MS });
         next = await snap();
         if (signature(inScope(next)) === sigs[i]) break; // still blocked: the steps beyond are not reachable here
@@ -205,7 +234,8 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     if (steps.length > 1) {
       // Back from the last step reached must land on the step before it.
       const backEl = inScope(cur).find((e) => e.role === "button" && e.name === back);
-      if (pressableStep(backEl) && (await gateway.act({ kind: "click", ref: backEl.ref, timeoutMs: PRESS_TIMEOUT_MS })).ok) {
+      if (pressableStep(backEl) && (await submitsForm(backEl))) skip(backEl, SUBMITS_FORM_REASON);
+      else if (pressableStep(backEl) && (await gateway.act({ kind: "click", ref: backEl.ref, timeoutMs: PRESS_TIMEOUT_MS })).ok) {
         backWorks = signature(inScope(await snap())) === sigs[sigs.length - 2];
       }
     }
@@ -297,34 +327,68 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
     state.exits.sort((a, b) => EXIT_ORDER.indexOf(a.kind) - EXIT_ORDER.indexOf(b.kind));
   }
 
-  // ── the page's own triggers ────────────────────────────────────────────────
-  // Only a button that says it opens something is pressed (allow-list), read on the page as it is with nothing open.
-  const candidates: ElementRef[] = [];
-  const pageButtons = study.elements.filter((e) => e.role === "button" && e.interactive && !e.underOverlay && !e.scope && !e.inside);
-  if (pageButtons.length > 0) await gateway.observe({ url }).catch(() => undefined);
-  for (const e of pageButtons) {
-    if (candidates.some((c) => c.name === e.name)) continue;
-    const vetted = passesSafetyFilters(e.name) && !isCompletionName(e.name) && !e.disabled;
-    const state = vetted ? await gateway.getState(e).catch(() => undefined) : undefined;
-    const reason = refusal(e, state?.popup, state?.submitsForm);
-    if (reason) skip(e, reason);
-    else candidates.push(e);
-  }
-  const maxTriggers = input.maxTriggers ?? MAX_TRIGGERS;
-  for (const c of candidates.slice(maxTriggers)) skip(c, `over the limit of ${maxTriggers} triggers`);
-  for (const c of candidates.slice(0, maxTriggers)) {
-    try {
-      const step: Step = { role: c.role, name: c.name };
-      const re = await replay([step]);
-      if (!re.ok || re.snap.stack.length <= re.before) continue; // it opened nothing: not a trigger
-      await inspect([step], { snap: re.snap, before: re.before }, undefined, 0);
-    } catch {
-      // one trigger that fails to open must not end the exploration of the others
+  // ── the write guard (#225 review 3) ────────────────────────────────────────
+  // On before the first press, off after the last, also on an error. Without one nothing is pressed at all.
+  const guard = gateway.guardWrites ? await gateway.guardWrites().catch(() => undefined) : undefined;
+  if (!guard) {
+    for (const top of overlayStack(baseline)) {
+      states.push({
+        id: `overlay-${states.length + 1}`,
+        kind: top.kind,
+        role: top.role,
+        ...(top.name !== undefined ? { name: top.name } : {}),
+        modal: top.modal,
+        trigger: { role: "page" }, // open when the page was read: nothing opened it
+        exits: overlayExits(top),
+        elements: top.elements.map((e) => ({ role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), locator: scopedLocator(e.scope, e.role, e.name) })),
+        toasts: [],
+        skipped: [],
+      });
     }
+    say(`exploreOverlays — ${NO_GUARD_NOTE}`);
+    return { states, skipped, toasts, guard: "none", blocked: [], note: NO_GUARD_NOTE };
   }
-  await gateway.observe({ url }).catch(() => undefined); // leave the page as it was found
+  let blocked: BlockedRequest[] = [];
+  let candidates: ElementRef[] = [];
+  let maxTriggers = input.maxTriggers ?? MAX_TRIGGERS;
+  try {
+    ({ candidates, maxTriggers } = await pressTriggers());
+  } finally {
+    blocked = await guard.release().catch(() => []);
+  }
+  for (const b of blocked) say(`exploreOverlays — stopped ${b.method} ${b.path}${b.pressed ? ` after "${b.pressed.name ?? b.pressed.role}"` : ""}`);
   say(`exploreOverlays — ${states.length} overlay state(s) from ${Math.min(candidates.length, maxTriggers)} triggers`);
-  return { states, skipped, toasts };
+  return { states, skipped, toasts, guard: "network", blocked };
+
+  /** The page's own triggers, pressed while the write guard is on. */
+  async function pressTriggers(): Promise<{ candidates: ElementRef[]; maxTriggers: number }> {
+    // Only a button that says it opens something is pressed (allow-list), read on the page as it is with nothing open.
+    const found: ElementRef[] = [];
+    const pageButtons = study.elements.filter((e) => e.role === "button" && e.interactive && !e.underOverlay && !e.scope && !e.inside);
+    if (pageButtons.length > 0) await gateway.observe({ url }).catch(() => undefined);
+    for (const e of pageButtons) {
+      if (found.some((c) => c.name === e.name)) continue;
+      const vetted = passesSafetyFilters(e.name) && !isCompletionName(e.name) && !e.disabled;
+      const state = vetted ? await gateway.getState(e).catch(() => undefined) : undefined;
+      const reason = refusal(e, state?.popup, state?.submitsForm);
+      if (reason) skip(e, reason);
+      else found.push(e);
+    }
+    const limit = input.maxTriggers ?? MAX_TRIGGERS;
+    for (const c of found.slice(limit)) skip(c, `over the limit of ${limit} triggers`);
+    for (const c of found.slice(0, limit)) {
+      try {
+        const step: Step = { role: c.role, name: c.name };
+        const re = await replay([step]);
+        if (!re.ok || re.snap.stack.length <= re.before) continue; // it opened nothing: not a trigger
+        await inspect([step], { snap: re.snap, before: re.before }, undefined, 0);
+      } catch {
+        // one trigger that fails to open must not end the exploration of the others
+      }
+    }
+    await gateway.observe({ url }).catch(() => undefined); // leave the page as it was found
+    return { candidates: found, maxTriggers: limit };
+  }
 }
 
 function pushExit(exits: OverlayExit[], x: OverlayExit): void {

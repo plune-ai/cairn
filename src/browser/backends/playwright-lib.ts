@@ -30,6 +30,8 @@ import type {
   StorageState,
   TestRunReport,
   VerifiedElement,
+  BlockedRequest,
+  WriteGuard,
 } from "../types.js";
 import { overlayKey, parseAriaSnapshot } from "../../observe/parse-aria.js";
 
@@ -126,6 +128,10 @@ const WAITED_REQUESTS = new Set(["document", "fetch", "xhr", "script"]);
 /** …of which the page's own navigations and API calls are recorded — not scripts, images, fonts or beacons. */
 const RECORDED_REQUESTS = new Set(["document", "fetch", "xhr"]);
 
+/** #225 review 3: the methods the write guard lets through: by HTTP's own rule they read and change nothing. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+type PwRoute = Parameters<Parameters<BrowserContext["route"]>[1]>[0];
+
 const pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** `p`, or `fallback` when it fails or takes longer than `ms`. */
 const within = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
@@ -174,6 +180,10 @@ export class PlaywrightLibBackend implements BrowserBackend {
   private acting = false;
   /** #224: when each endpoint was requested outside any action, to tell a poll from a click's request. */
   private readonly background = new Map<string, number[]>();
+  /** #225 review 3: the write guard while it is on: its route handler and what it stopped. */
+  private guard?: { handler: (route: PwRoute) => Promise<void>; blocked: BlockedRequest[] };
+  /** #225 review 3: the element (or key) pressed last, named beside each request the guard stops. */
+  private lastPressed?: { role: string; name?: string };
 
   constructor(private readonly opts: PlaywrightLibOptions = {}) {}
 
@@ -327,12 +337,14 @@ export class PlaywrightLibBackend implements BrowserBackend {
         return { ok: true };
       }
       if (action.kind === "press") {
+        this.lastPressed = { role: "key", name: action.key };
         await page.keyboard.press(action.key);
         return { ok: true };
       }
       if (action.kind === "click-outside") {
         const point = await this.safePointOutside(page, action.scope);
         if (!point) return { ok: false, error: "no point outside the overlay that is safe to click; click outside not tried" };
+        this.lastPressed = { role: "click-outside", ...(action.scope.name !== undefined ? { name: action.scope.name } : {}) };
         await page.mouse.click(point.x, point.y);
         return { ok: true };
       }
@@ -365,6 +377,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
         await locator.fill(action.value);
         return { ok: true, ref: action.ref };
       }
+      this.lastPressed = { role: target.role, ...(target.name !== undefined ? { name: target.name } : {}) };
       if (action.watch === false) {
         await locator.click(action.timeoutMs === undefined ? undefined : { timeout: action.timeoutMs });
         return { ok: true, ref: action.ref };
@@ -656,6 +669,56 @@ export class PlaywrightLibBackend implements BrowserBackend {
     };
   }
 
+  /**
+   * #225 review 3: the write guard. While it is on, every request of the browser context — the page, the tabs it
+   * opens, its frames — whose method is not GET, HEAD or OPTIONS is aborted before it leaves the browser: a form post,
+   * a fetch or XHR write, a beacon, whatever the button that sent it was called. Each one stopped is recorded with the
+   * element pressed last before it. `release` lifts it (the caller does so in `finally`, so an error lifts it too).
+   * Not covered: WebSocket messages, and a GET that changes the server against HTTP's rule.
+   */
+  async guardWrites(): Promise<WriteGuard> {
+    await this.ensurePage();
+    if (this.guard) throw new Error("The write guard is already on.");
+    const blocked: BlockedRequest[] = [];
+    this.lastPressed = undefined;
+    const handler = async (route: PwRoute): Promise<void> => {
+      const req = route.request();
+      const method = req.method().toUpperCase();
+      if (SAFE_METHODS.has(method)) {
+        await route.fallback().catch(() => undefined);
+        return;
+      }
+      const path = this.blockedPath(req.url());
+      const pressed = this.lastPressed;
+      const same = blocked.find((b) => b.method === method && b.path === path && b.pressed?.role === pressed?.role && b.pressed?.name === pressed?.name);
+      if (same) same.count++;
+      else blocked.push({ method, path, ...(pressed ? { pressed: { ...pressed } } : {}), count: 1 });
+      // "aborted" (net::ERR_ABORTED): a stopped form post leaves the page where it was, with no error page over it
+      await route.abort("aborted").catch(() => undefined);
+    };
+    await this.context!.route("**/*", handler);
+    this.guard = { handler, blocked };
+    return {
+      release: async () => {
+        if (this.guard?.handler === handler) {
+          await this.context?.unroute("**/*", handler).catch(() => undefined);
+          this.guard = undefined;
+        }
+        return blocked.map((b) => ({ ...b }));
+      },
+    };
+  }
+
+  /** A stopped request's path, written like a recorded one; with its origin when that is not the page's. */
+  private blockedPath(url: string): string {
+    try {
+      const own = this.page ? new URL(this.page.url()).origin : undefined;
+      return new URL(url).origin === own ? recordedPath(url) : recordedUrl(url);
+    } catch {
+      return recordedUrl(url);
+    }
+  }
+
   session(): SessionApi {
     return {
       load: async (state: StorageState) => {
@@ -667,6 +730,8 @@ export class PlaywrightLibBackend implements BrowserBackend {
           storageState: state as unknown as PwStorageState,
           ...(this.opts.httpCredentials ? { httpCredentials: this.opts.httpCredentials } : {}),
         });
+        // #225 review 3: a session loaded while the write guard is on keeps it on in the new context
+        if (this.guard) await this.context.route("**/*", this.guard.handler);
         this.page = await this.context.newPage();
       },
       save: async (): Promise<StorageState> => {
@@ -689,5 +754,6 @@ export class PlaywrightLibBackend implements BrowserBackend {
     this.page = undefined;
     this.context = undefined;
     this.browser = undefined;
+    this.guard = undefined;
   }
 }

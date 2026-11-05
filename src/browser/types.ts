@@ -182,6 +182,28 @@ export interface RecordedRequest {
   status?: number;
 }
 
+/**
+ * #225 review 3: a request the write guard stopped — any method but GET, HEAD or OPTIONS, sent while the guard was on.
+ * Written like a recorded request (no body, no header, no query value); `count` is how often the same one was stopped.
+ */
+export interface BlockedRequest {
+  method: string;
+  /** {@link RecordedRequest.path}; prefixed with its origin when that is not the page's. */
+  path: string;
+  /** The element pressed last before the request was sent (absent when nothing had been pressed yet). */
+  pressed?: { role: string; name?: string };
+  count: number;
+}
+
+/**
+ * #225 review 3: the network guard of a backend. While it is on, every request of the browser context whose method is
+ * not GET, HEAD or OPTIONS (a form post, a fetch or XHR write, a beacon) is aborted before it leaves the browser.
+ */
+export interface WriteGuard {
+  /** Lifts the guard and returns what it stopped, in the order first seen. */
+  release(): Promise<BlockedRequest[]>;
+}
+
 /** What one click changed (#224) — recorded by the lib backend after every click it watches. */
 export interface ClickEffect {
   outcome: ClickEffectKind;

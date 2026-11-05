@@ -50,6 +50,37 @@
       <button type="button" id="buy-open" aria-haspopup="dialog">Buy plan</button>
       <button type="button" id="upgrade-open" aria-expanded="false">Upgrade</button>
       <button type="button" id="kupyty-open" aria-haspopup="dialog">Купити</button>
+
+      <!--
+        Review 3: names no list keeps up with. Each announces a popup and writes to the server, each in another way
+        (fetch, XHR, a form sent from script, a beacon, a link). Only the network guard stops them.
+      -->
+      <button type="button" id="pay-open" aria-haspopup="dialog">Pay</button>
+      <button type="button" id="order-open" aria-haspopup="dialog">Order</button>
+      <button type="button" id="checkout-open" aria-haspopup="dialog">Checkout</button>
+      <button type="button" id="subscribe-open" aria-expanded="false">Subscribe</button>
+      <button type="button" id="complete-open" aria-haspopup="dialog">Complete payment</button>
+      <a href="#" role="button" id="paylink-open" aria-haspopup="dialog">Pay with card</a>
+      <form id="checkout-form" method="post" action="/api/checkout"></form>
+
+      <!-- Review 3: a submit button outside its form, joined to it by the form attribute. -->
+      <form id="plan-form" method="post" action="/api/plan-form"></form>
+      <button type="submit" form="plan-form" id="plan-open" aria-haspopup="dialog">Pick a plan</button>
+
+      <!-- Review 3, the blocker: a wizard whose Next has no type, inside <form method=post>. -->
+      <button type="button" id="billing-open" aria-haspopup="dialog">Set up billing</button>
+
+      <!-- Review 3: safe menu triggers whose names hold "order"; they must still be explored as menus. -->
+      <button type="button" id="sort-open" aria-haspopup="menu">Sort order</button>
+      <div id="sort" class="menu" role="menu" aria-label="Sort options" hidden>
+        <button type="button" role="menuitem">Newest first</button>
+        <button type="button" role="menuitem">Oldest first</button>
+      </div>
+      <button type="button" id="bydate-open" aria-haspopup="menu">Order by date</button>
+      <div id="bydate" class="menu" role="menu" aria-label="Date order" hidden>
+        <button type="button" role="menuitem">Ascending</button>
+        <button type="button" role="menuitem">Descending</button>
+      </div>
     </main>
 
     <div id="backdrop" class="backdrop" hidden></div>
@@ -93,6 +124,15 @@
       <p>2 items, 40 EUR</p>
       <button type="button" data-close>Back</button>
       <button type="button" id="place-order">Next: place order</button>
+    </div>
+
+    <div id="billing" class="dialog" role="dialog" aria-modal="true" aria-label="Billing wizard" hidden>
+      <form method="post" action="/api/wizard-submit">
+        <h2>Step 1 of 2</h2>
+        <label>Card holder <input type="text" /></label>
+        <button id="billing-next">Next</button>
+        <button type="button" data-close>Cancel</button>
+      </form>
     </div>
 
     <script>
@@ -142,6 +182,22 @@
       $("buy-open").addEventListener("click", () => { post("/api/buy"); show("shortcuts"); });
       $("upgrade-open").addEventListener("click", () => { post("/api/upgrade"); show("shortcuts"); });
       $("kupyty-open").addEventListener("click", () => { post("/api/kupyty"); show("shortcuts"); });
+      $("pay-open").addEventListener("click", () => post("/api/pay"));
+      $("order-open").addEventListener("click", () => {
+        const x = new XMLHttpRequest();
+        x.open("PUT", "/api/order");
+        x.send("1");
+      });
+      $("checkout-open").addEventListener("click", () => $("checkout-form").submit());
+      $("subscribe-open").addEventListener("click", () => navigator.sendBeacon("/api/subscribe", "plan=pro"));
+      $("complete-open").addEventListener("click", () => fetch("/api/complete-payment", { method: "PATCH" }));
+      $("paylink-open").addEventListener("click", (e) => { e.preventDefault(); post("/api/pay-link"); });
+      $("billing-open").addEventListener("click", () => show("billing"));
+      $("sort-open").addEventListener("click", () => { $("sort").hidden = !$("sort").hidden; });
+      $("bydate-open").addEventListener("click", () => { $("bydate").hidden = !$("bydate").hidden; });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { $("sort").hidden = true; $("bydate").hidden = true; }
+      });
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") { $("more").hidden = true; $("filters").hidden = true; $("filters-open").setAttribute("aria-expanded", "false"); }
       });

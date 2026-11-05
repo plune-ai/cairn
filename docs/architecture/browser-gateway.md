@@ -99,11 +99,32 @@ Detection and the explorer sit above the gateway: `src/observe/overlays.ts` read
 `status` / `alert` texts are recorded as toasts, never as states), `src/agent/overlays.ts` presses what could open one,
 records the trigger, the elements, the exits (Escape and a click outside probed, the buttons read), the nested
 overlays and the steps of a wizard. To look for an overlay it presses only a button whose `popup` says it opens
-something (an allow-list); every other one is recorded as skipped with the reason. On top of that it presses nothing
-that the destructive-action filters refuse (`DESTRUCTIVE` in `src/flow/crawl.ts`, `isDeletionIntent` in
-`src/safety/guardrails.ts`), nothing that completes a form (Save, Submit, OK…) and nothing disabled. A wizard is a
-dialog with a Next and a Back or a step indicator, never an `alertdialog`; its Next and Back go through the same
-filters. The result goes to `overlays.json`, `report.json` (`overlays`) and `report.md` (*Overlays*).
+something (an allow-list); every other one is recorded as skipped with the reason. A wizard is a dialog with a Next
+and a Back or a step indicator, never an `alertdialog`. The result goes to `overlays.json`, `report.json`
+(`overlays`) and `report.md` (*Overlays*).
+
+#### The invariant: exploring overlays changes nothing on the server
+
+While overlays are explored, nothing Cairn presses can change the server, whatever the button is called. This rests
+on the network, not on names:
+
+- **The write guard** (`guardWrites()`, lib backend). From before the first press to after the last — lifted in
+  `finally`, so also on an error — the browser context routes every request and aborts each one whose method is not
+  GET, HEAD or OPTIONS: a form post, a fetch or XHR write, a beacon, a form sent from script, from the page, its
+  frames and the tabs it opens. Each one stopped is recorded (method, path written like a recorded request, the
+  element pressed last before it, how often) and reported: `overlays.json` (`guard`, `blocked`) and a table in
+  `report.md`. It does not see a WebSocket message, nor a GET that changes the server against HTTP's rule.
+- **No guard, no press.** A backend that cannot guard the network (the cli backend: the gateway's `guardWrites()`
+  answers undefined) presses no trigger and no wizard step while exploring overlays. It reads the overlays already
+  open and says so (`guard: "none"`, `note`).
+- **Checks that do not depend on a name**, for every press — triggers, nested probes, a wizard's Next and Back alike:
+  an element whose `getState()` says `submitsForm` is not pressed (a `type=submit` button or a `<button>` with no type
+  inside a form, or joined to one by the `form` attribute), nor a disabled one; a trigger must announce a popup.
+- **Names**, kept only in forms the guard cannot see: a deletion or a sign-out (`DESTRUCTIVE` in
+  `src/flow/crawl.ts`, `isDeletionIntent` in `src/safety/guardrails.ts`), which is often a plain GET link; and a
+  completion (Save, Submit, OK…), which is never a trigger. There is no list of payment or order names: every such
+  button writes, and the guard stops every write; a list both missed names («Complete payment», «Book now») and
+  refused safe ones («Sort order», «Purchase history»).
 
 ### Visible and unique in its scope (#226)
 

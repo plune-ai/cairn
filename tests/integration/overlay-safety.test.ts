@@ -27,9 +27,28 @@ describe("overlay exploration changes nothing (integration, real Chromium)", () 
     const gateway = backend as unknown as BrowserGateway;
     const study = await capture(gateway, url());
     // every trigger of the page is tried: none of the risky ones may hide behind the trigger limit
-    const out = await exploreOverlays({ gateway, url: url(), study, maxTriggers: 20 });
+    const out = await exploreOverlays({ gateway, url: url(), study, maxTriggers: 40 });
 
+    // #225 review 3, the invariant: whatever cairn pressed, no request but GET, HEAD or OPTIONS reached the server
+    expect(server.writes).toEqual([]);
     expect(server.posts.map((p) => p.url)).toEqual([]);
+    expect(out.guard).toBe("network");
+
+    // what the guard stopped is reported, with the element pressed before it
+    const blocked = new Map((out.blocked ?? []).map((b) => [b.path, b]));
+    for (const [path, method, name] of [
+      ["/api/buy", "POST", "Buy plan"],
+      ["/api/upgrade", "POST", "Upgrade"],
+      ["/api/kupyty", "POST", "Купити"],
+      ["/api/pay", "POST", "Pay"],
+      ["/api/order", "PUT", "Order"],
+      ["/api/checkout", "POST", "Checkout"],
+      ["/api/subscribe", "POST", "Subscribe"],
+      ["/api/complete-payment", "PATCH", "Complete payment"],
+      ["/api/pay-link", "POST", "Pay with card"],
+    ] as const) {
+      expect(blocked.get(path), path).toMatchObject({ method, pressed: { name } });
+    }
 
     const shortcuts = out.states.find((s) => s.name === "Keyboard shortcuts");
     expect(shortcuts).toMatchObject({ kind: "dialog", trigger: { role: "button", name: "Keyboard shortcuts" } });
@@ -53,14 +72,21 @@ describe("overlay exploration changes nothing (integration, real Chromium)", () 
     const reasonOf = (name: string): string | undefined => out.skipped.find((s) => s.name === name)?.reason;
     expect(reasonOf("Choose options")).toBe("submits a form");
     expect(reasonOf("Show extras")).toBe("submits a form");
-    // review 2: a trigger whose name pays or orders is not pressed
-    for (const name of ["Buy plan", "Upgrade", "Купити"]) expect(reasonOf(name)).toBe("destructive");
+    // review 3: a submit button joined to its form by the form attribute submits it too
+    expect(reasonOf("Pick a plan")).toBe("submits a form");
+    // review 3, the blocker: a wizard Next with no type inside a post form is a submitter; it is not pressed, even once
+    const billing = out.states.find((s) => s.name === "Billing wizard");
+    expect(billing!.wizard!.steps).toHaveLength(1);
+    expect(out.skipped).toContainEqual({ role: "button", name: "Next", reason: "submits a form" });
 
     // the genuine overlays of the page are still found
     expect(out.states.find((s) => s.name === "Filters panel")).toMatchObject({ kind: "drawer", trigger: { name: "Filters" } });
     expect(out.states.find((s) => s.name === "More actions")).toMatchObject({ kind: "menu", trigger: { name: "More" } });
+    // review 3: names that hold "order" and open a menu are menus, not payments
+    expect(out.states.find((s) => s.name === "Sort options")).toMatchObject({ kind: "menu", trigger: { name: "Sort order" } });
+    expect(out.states.find((s) => s.name === "Date order")).toMatchObject({ kind: "menu", trigger: { name: "Order by date" } });
     const profile = out.states.find((s) => s.name === "Profile wizard");
-    expect(profile!.wizard).toMatchObject({ next: "Next" });
+    expect(profile!.wizard).toMatchObject({ next: "Next", back: "Back", backWorks: true });
     expect(profile!.wizard!.steps).toHaveLength(2);
   }, 180_000);
 
