@@ -253,6 +253,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fast`; `backend`: `lib`, `cli`). An unknown `routing` used to print a warning and run without a preset; it is now a
   validation error, as is a `decider` in upper case, and the call does no work. The CLI and the environment variables
   are unchanged.
+- **`cairn mcp` serves both protocol eras.** A client that opens with `initialize` gets the revision it asks for
+  (2025-11-25 down to 2024-10-07), as before; a 2026-07-28 client, which sends no handshake and may probe with
+  `server/discover`, now gets 2026-07-28 instead of «Method not found». The first message picks the era for the
+  connection. The tools, their hints, closed values and structured results are unchanged; their schemas now name the
+  JSON Schema 2020-12 dialect instead of draft-07, and `execution.taskSupport: "forbidden"` (the default) is no longer
+  listed. The optional package is now `@modelcontextprotocol/server` (`npm i @modelcontextprotocol/server`) instead of
+  `@modelcontextprotocol/sdk`; without it `cairn mcp` says what to install on stderr and exits with code 1.
 
 ### Fixed
 

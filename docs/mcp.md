@@ -11,12 +11,28 @@ cairn mcp
 ```
 
 This starts an MCP server over **stdio** (the transport MCP clients launch as a child process). The
-`@modelcontextprotocol/sdk` package is an **optional dependency** (like Ink for the TUI) — install it
+`@modelcontextprotocol/server` package is an **optional dependency** (like Ink for the TUI) — install it
 once if you haven't:
 
 ```bash
-npm i @modelcontextprotocol/sdk
+npm i @modelcontextprotocol/server
 ```
+
+Without it `cairn mcp` says so on stderr, prints nothing on stdout and exits with code 1; every other command works.
+
+### Protocol revisions
+
+The server speaks both eras of the protocol, and the first message a client sends picks the era for the whole
+connection:
+
+| Client opens with | Revision served |
+|-------------------|-----------------|
+| `initialize` | the client's revision (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07), or 2025-11-25 when it asks for one the server does not know |
+| `server/discover`, or any request with the 2026-07-28 `_meta` (no handshake) | 2026-07-28 |
+
+The tools, their input and output schemas and their hints are the same in both. Their schemas use the JSON Schema
+2020-12 dialect (`$schema`), also for clients of the older revisions. Stdout carries protocol only, one message per
+line; anything else goes to stderr. The server exits when the client closes stdin.
 
 ## Tools
 

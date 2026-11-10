@@ -602,8 +602,22 @@ export function buildProgram(): Command {
     .command("mcp")
     .description("run an MCP server (stdio) exposing explore/design as tools for Claude Code / Cursor")
     .action(async () => {
-      // Lazy: @modelcontextprotocol/sdk is an OPTIONAL dependency — keep it off every other code path.
-      const { startMcpServer } = await import("../mcp/server.js");
+      // Lazy: @modelcontextprotocol/server is an OPTIONAL dependency — keep it off every other code path.
+      let startMcpServer: typeof import("../mcp/server.js")["startMcpServer"];
+      try {
+        ({ startMcpServer } = await import("../mcp/server.js"));
+      } catch (e) {
+        const { code, message } = e as { code?: string; message?: string };
+        // The package name quoted as Node names a missing package, not a path into an installed one whose own import failed.
+        if (code !== "ERR_MODULE_NOT_FOUND" || !/['"]@modelcontextprotocol\/(server|core)\b/.test(message ?? "")) throw e;
+        // Nothing on stdout: an MCP client reads it as protocol.
+        process.stderr.write(
+          "[cairn] `cairn mcp` needs the optional MCP server package, which is not installed.\n" +
+            "  Install:  npm i @modelcontextprotocol/server\n",
+        );
+        process.exitCode = 1;
+        return;
+      }
       await startMcpServer();
     });
 
