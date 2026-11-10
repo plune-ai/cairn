@@ -114,6 +114,37 @@ export function templateNames(value: unknown): string[] {
   return [];
 }
 
+/** #253: every `{{…}}` name in a key of a value. A key goes out as written, so a template there is filled by nothing. */
+function keyTemplates(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(keyTemplates);
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([k, v]) => [...templateNames(k), ...keyTemplates(v)]);
+}
+
+/**
+ * #253: a JSON answer with every number kept as the text the server wrote, where JSON.parse would make a double of
+ * it. Only numbers outside strings are matched: a string is matched first, whole, and left as it is.
+ */
+export const numbersAsWritten = (text: string): unknown =>
+  JSON.parse(text.replace(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (t) => (t.startsWith('"') ? t : `"${t}"`)));
+
+/** A number's text as its sign, its digits with no zero at either end and its exponent: `3.50`, `35e-1` → `35e-1`. */
+const digitsOf = (n: string): string => {
+  const m = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(n);
+  if (!m) return n; // Infinity
+  const all = `${m[2]}${m[3] ?? ""}`.replace(/^0+/, "");
+  const digits = all.replace(/0+$/, "");
+  return digits ? `${m[1]}${digits}e${Number(m[4] ?? 0) - (m[3] ?? "").length + all.length - digits.length}` : "0";
+};
+
+/**
+ * #251, #253: whether a captured number `v` may go into a request. Not a whole number past 2^53, which JSON.parse may
+ * have rounded to another record's id, and only the number the server wrote (`written`, from {@link numbersAsWritten}):
+ * `1e400` reads as Infinity, `9007199254740991.4` and `3.0000000000000000001` read as safe integers.
+ */
+export const isExactNumber = (v: number, written: string): boolean =>
+  !(Number.isInteger(v) && !Number.isSafeInteger(v)) && digitsOf(String(v)) === digitsOf(written);
+
 /**
  * #250: what a run's output must not repeat: the value of every `{{env.NAME}}` the file names, as written and as it goes
  * on the wire (encoded in a path, a query or a form, escaped in a JSON body). What is worth masking is decided as for a
@@ -163,6 +194,7 @@ function checkFlowFile(file: ApiFlowFile): string[] {
   for (const n of templateNames(file.headers)) {
     if (n !== "uid" && !/^env\.[A-Za-z_][A-Za-z0-9_]*$/.test(n)) errors.push(`headers: {{${n}}} — file headers may use only {{env.NAME}} and {{uid}}`);
   }
+  for (const n of keyTemplates(file.headers)) errors.push(`headers: {{${n}}} is in a key; only values are filled, so write the key as it goes out`);
   const seen = new Set<string>();
   const typeNames = new Map<string, string>();
   for (const flow of file.flows) {
@@ -181,6 +213,9 @@ function checkFlowFile(file: ApiFlowFile): string[] {
       checkHeaders(step.headers, where, errors);
       for (const key of [...literalSecrets(step.body), ...literalSecrets(step.form), ...literalSecrets(step.query)]) {
         errors.push(`${where}: "${key}" holds a secret — write it as {{env.NAME}} and set NAME in the environment`);
+      }
+      for (const n of keyTemplates([step.headers, step.query, step.body, step.form])) {
+        errors.push(`${where}: {{${n}}} is in a key; only values are filled, so write the key as it goes out`);
       }
       for (const n of stepTemplateNames(step)) {
         if (/^env\.[A-Za-z_][A-Za-z0-9_]*$/.test(n) || known.has(n)) continue;
@@ -428,12 +463,16 @@ function fill(value: unknown, vars: Vars, encode = false): unknown {
   return value;
 }
 
+/** Every {{name}} in a value's strings. A key is sent as written, so it names nothing (as when the file is read). */
+const namesIn = (value: unknown): string[] =>
+  typeof value === 'string' ? [...value.matchAll(TEMPLATE)].map((m) => m[1]!) : value && typeof value === 'object' ? Object.values(value).flatMap(namesIn) : [];
+
 /**
  * Whether every value a step names was captured (and those in its path can stand as a path segment) — a cleanup step
  * for something never created, or never named, is left out.
  */
 const canFill = (step: Step, vars: Vars): boolean =>
-  [...JSON.stringify([step.path, step.headers, step.query, step.body, step.form]).matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || m[1]! in vars) &&
+  namesIn([step.path, step.headers, step.query, step.body, step.form]).every((n) => n.startsWith('env.') || n in vars) &&
   [...step.path.matchAll(TEMPLATE)].every((m) => m[1]!.startsWith('env.') || !badSegment(vars[m[1]!]!));
 
 function at(body: unknown, pointer: string): unknown {
@@ -445,6 +484,26 @@ function at(body: unknown, pointer: string): unknown {
   }
   return cur;
 }
+
+/** The answer with every number kept as the text the server wrote: JSON.parse makes a double of it. */
+const numbersAsWritten = (text: string): unknown =>
+  JSON.parse(text.replace(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (t) => (t.startsWith('"') ? t : '"' + t + '"')));
+
+/** A number's text as its sign, its digits with no zero at either end and its exponent: '3.50', '35e-1' → '35e-1'. */
+const digitsOf = (n: string): string => {
+  const m = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(n);
+  if (!m) return n; // Infinity
+  const all = (m[2]! + (m[3] ?? '')).replace(/^0+/, '');
+  const digits = all.replace(/0+$/, '');
+  return digits ? m[1] + digits + 'e' + (Number(m[4] ?? 0) - (m[3] ?? '').length + all.length - digits.length) : '0';
+};
+
+/**
+ * Whether a captured number may go into a request: not a whole number past 2^53, which JSON.parse may have rounded to
+ * another record's id, and only the number the server wrote ('1e400' reads as Infinity, '3.0000000000000000001' as 3).
+ */
+const isExactNumber = (v: number, written: string): boolean =>
+  !(Number.isInteger(v) && !Number.isSafeInteger(v)) && digitsOf(String(v)) === digitsOf(written);
 
 const pick = (vars: Vars, names: string[]): Vars => Object.fromEntries(names.map((n) => [n, vars[n]!]));
 
@@ -475,20 +534,26 @@ async function runStep(ctx: APIRequestContext, base: string, flow: string, step:
   const ok = want ? want.includes(res.status()) : res.status() >= 200 && res.status() < 400;
   if (!ok) throw new Error(label + ' answered ' + res.status() + ' (want ' + (want ? want.join(' or ') : '2xx or 3xx') + ')');
   if (!step.capture) return;
+  let text: string;
   let body: unknown;
   try {
-    body = await res.json();
+    text = await res.text();
+    body = JSON.parse(text);
   } catch {
     throw new Error(label + ': the answer is not JSON, so nothing can be captured from it');
   }
   // An empty value counts as not captured: nothing can be found or deleted by it.
   const missing: string[] = [];
+  const inexact: string[] = [];
   for (const [name, pointer] of Object.entries(step.capture)) {
     const v = at(body, pointer);
     if (v === undefined || v === null || typeof v === 'object' || String(v) === '') missing.push(pointer + ' for ' + name);
+    // A number JSON.parse rounded may be another record's id: it is never kept, as in the two-actor check.
+    else if (typeof v === 'number' && !isExactNumber(v, String(at(numbersAsWritten(text), pointer)))) inexact.push('{{' + name + '}}');
     else vars[name] = String(v);
   }
   if (missing.length) throw new Error(label + ': the answer has no value at ' + missing.join(', '));
+  if (inexact.length) throw new Error(label + ': ' + inexact.join(', ') + ' is not a safe integer (the number may have been rounded), so it is not used');
 }
 
 /** Run a data flow, hand its values to the test, and clean up afterwards — after a failed test too. */

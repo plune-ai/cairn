@@ -272,6 +272,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run's ambiguous elements too. An overlay's elements that repeat are written through their row, card or section. In
   validation, a test's error counts as a missing browser only when it starts with the launch's own error, so a page
   titled «playwright install | Docs» no longer stops the run; every project and every retry of a test is read.
+- **A captured number that `JSON.parse` changed is no longer sent, by the fixture or the two-actor check (#253).**
+  `9007199254740991.4` and `3.0000000000000000001` read as safe integers, so `cairn api --actors` sent another number in
+  the path than the server answered, and a read or a cleanup could reach another record. The check now compares each
+  captured number with the text the server wrote and stops, naming the capture, when they differ. The written
+  API-flow fixture kept every captured number as it was read, `1e400` and numbers past 2^53 too; it now refuses them by
+  the same rule, failing the step and keeping the answer's other captures, so the cleanup still goes to the created
+  record. A whole number written another way (`3.0`, `30e-1`) is still taken as the number it is.
+- **A template in a key of a flow file is refused when the file is read (#253).** Only values are filled, so a key
+  such as `query: {"{{nope}}": "1"}` went out as written from the two-actor check, while the written fixture read it as
+  a missing value and silently left that cleanup step out, leaving the record. The fixture now reads values only.
 - **A failed test's request log no longer stays on disk after validation (#256).** Playwright writes each failed
   test's error into `error-context.md`, and for a request the test sent itself that error is the whole call log:
   the URL, `Authorization`, `cookie`, `set-cookie`. Validation now gives Playwright an output folder inside the run
