@@ -24,8 +24,14 @@ test('shop', async ({ page }) => {
   });
   await test.step('see it added', async () => {
     await expect(page.locator('#n')).toHaveText('1');
-    // A frame reaches the trace only once the page paints: a scenario of a few ms ends before it, keeping estimates.
-    await page.waitForTimeout(500);
+    // #261: the trace has a frame only once the browser sends its first, which took 0.7 to 2.5 s after the page painted;
+    // a scenario of a few ms ends before it and keeps estimates. A second screencast client gets the frame the trace
+    // got (the last one, replayed) or the next one, so the step ends only after the trace has one.
+    let framed;
+    const frame = new Promise((resolve) => { framed = resolve; });
+    await page.screencast.start({ onFrame: () => framed() });
+    await frame;
+    await page.screencast.stop();
   });
 });`,
 };
