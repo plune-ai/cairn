@@ -137,7 +137,7 @@ interface PwResult {
 }
 interface PwSpec {
   title: string;
-  tests?: { results?: PwResult[] }[];
+  tests?: { projectName?: string; results?: PwResult[] }[];
 }
 interface PwSuite {
   specs?: PwSpec[];
@@ -299,14 +299,22 @@ function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
     for (const spec of s.specs ?? []) {
-      const result = spec.tests?.[0]?.results?.[0];
-      const status = (result?.status ?? "failed") as TestStatus;
-      // Every error, once each: on a test timeout `error` is the timeout alone, and the action's own error — the call
-      // log that names the locator — is a later entry of `errors`. Those entries come formatted (message, code
-      // frame, `at <absolute path>`); without the frame, `errors[0]` is `error` again.
-      const messages = [result?.error?.message, ...(result?.errors ?? []).map((e) => e.message)].map((m) => withoutRequestLog(withoutFrame(m)));
-      const error = [...new Set(messages.filter(Boolean))].join("\n\n");
-      out.push({ title: spec.title, status, ...(error ? { error } : {}) });
+      // #252: every test of the spec (one per project) and every attempt of it (retries), not only the first of each.
+      // The status is the last attempt's, which is the one Playwright counts; the errors are every attempt's.
+      const tests = spec.tests?.length ? spec.tests : [{}];
+      for (const test of tests) {
+        const results = test.results ?? [];
+        const status = (results.at(-1)?.status ?? "failed") as TestStatus;
+        // Every error, once each: on a test timeout `error` is the timeout alone, and the action's own error — the call
+        // log that names the locator — is a later entry of `errors`. Those entries come formatted (message, code
+        // frame, `at <absolute path>`); without the frame, `errors[0]` is `error` again.
+        const messages = results
+          .flatMap((r) => [r.error?.message, ...(r.errors ?? []).map((e) => e.message)])
+          .map((m) => withoutRequestLog(withoutFrame(m)));
+        const error = [...new Set(messages.filter(Boolean))].join("\n\n");
+        const title = tests.length > 1 && test.projectName ? `${spec.title} [${test.projectName}]` : spec.title;
+        out.push({ title, status, ...(error ? { error } : {}) });
+      }
     }
     for (const child of s.suites ?? []) walk(child);
   };
@@ -368,6 +376,13 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
 }
 
 /**
+ * #252: a test's error says a browser is missing only when it is the launch's own error, at the start of one of its
+ * errors. Elsewhere in it the words can be the page's: an assertion quotes what it found, and a page titled
+ * «playwright install | Docs» said them with every browser in place.
+ */
+const LAUNCH_FAILED = /(?:^|\n\n)(?:Error: )?(?:browserType\.\w+: )?(?:Executable doesn't exist at|Chromium distribution '[^']*' is not found)/;
+
+/**
  * Turn the runner's stdout/stderr into per-test results — or, when the output shows the browser
  * binary was missing, throw ONE actionable error instead of silently reporting every test "failed".
  * Pure (no process/IO) so the failure-surfacing logic is unit-tested without spawning a runner.
@@ -383,8 +398,8 @@ export function resultsFromRunnerOutput(stdout: string, stderr: string): RawTest
   const results = report ? extract(report) : [];
   // A report is read for what the run said, not whole: on CI its metadata holds the pull request's title and diff,
   // and those may well say "playwright install" with every browser in place.
-  const said = report ? [stdout.slice(0, start), ...(report.errors ?? []).map((e) => e.message), ...results.map((r) => r.error)].join("\n") : stdout;
-  if (isMissingBrowserError(stderr) || isMissingBrowserError(said)) {
+  const said = report ? [stdout.slice(0, start), ...(report.errors ?? []).map((e) => e.message)].join("\n") : stdout;
+  if (isMissingBrowserError(stderr) || isMissingBrowserError(said) || results.some((r) => LAUNCH_FAILED.test(r.error ?? ""))) {
     throw missingBrowsersError("Playwright could not launch a browser to run the generated tests.");
   }
   return results;

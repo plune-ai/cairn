@@ -551,6 +551,39 @@ describe("runExploreGraph — ambiguous elements are a finding (#226)", () => {
     expect(out.ambiguous).toEqual([{ page: "https://app.test/page", role: "button", name: "Delete", count: 2 }]);
   });
 
+  it("#252: two buttons inside a dialog that nothing tells apart are a finding too, though they are only read", async () => {
+    const PAGE1 = '- main:\n  - button "Open settings"';
+    const DIALOG = '\n- dialog "Settings":\n  - button "Actions"\n  - button "Actions"\n  - button "Close"';
+    let open = false;
+    const calls: string[] = [];
+    const { gateway } = fakeGateway(() => obs(PAGE1));
+    const dialogGateway: BrowserGateway = {
+      ...gateway,
+      guardWrites: async () => ({ release: async () => (calls.push("release"), []) }),
+      getState: async (el) =>
+        el.name === "Actions" ? { visible: false, enabled: false, ambiguous: 2 } : { visible: true, enabled: true, popup: { hasPopup: "dialog" } },
+      observe: async (opts) => {
+        calls.push(opts.url ? `observe ${opts.url}` : "observe");
+        if (opts.url) open = false;
+        return obs(open ? PAGE1 + DIALOG : PAGE1);
+      },
+      act: async (action) => {
+        calls.push("act");
+        if (action.kind === "click" && !open) open = true;
+        if (action.kind === "press") open = false;
+        return { ok: true, ref: "ref" in action ? action.ref : undefined };
+      },
+    };
+    const out = await runExploreGraph(
+      makeDeps({ gateway: dialogGateway, overlays: true, codeless: true, validate: async () => ({ results: [], greenRatio: 0, flakyCount: 0 }) }),
+      { url: "https://app.test/page", runId: "r" },
+    );
+    expect(out.ambiguous).toEqual([{ page: "https://app.test/page", role: "button", name: "Actions", count: 2, scope: { role: "dialog", name: "Settings" } }]);
+    expect(out.overlaySkipped).toContainEqual({ role: "button", name: "Actions", reason: expect.stringMatching(/^2 visible elements .*nothing tells them apart/) });
+    // the page is loaded again right after: what reading the session left open in the crawler's document goes with it
+    expect(calls[calls.indexOf("release") + 1]).toBe("observe https://app.test/page");
+  });
+
   it("nothing ambiguous → an empty list", async () => {
     const { gateway } = fakeGateway(() => obs('- button "Go"'));
     const out = await runExploreGraph(

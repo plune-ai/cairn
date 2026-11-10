@@ -81,6 +81,20 @@ export function scopedLocator(scope: OverlayScope | undefined, role: string, nam
   return ["page", ...(scope ? [by(scope.role, scope.name)] : []), ...(within ? [by(within.role, within.name)] : []), by(role, name)].join(".");
 }
 
+/**
+ * #252: the interactive elements of an overlay as locators are written for them. One that shares its role and name with
+ * another one there goes through its row, card or section: the first of its own that holds no other one like it, as a
+ * click narrows it (#226). With none, it stays as it is, and the run's ambiguous elements say why.
+ */
+export function overlayElements(elements: ElementRef[]): OverlayState["elements"] {
+  const same = (a?: OverlayScope, b?: OverlayScope): boolean => a?.role === b?.role && a?.name === b?.name;
+  return elements.map((e) => {
+    const twins = elements.filter((o) => o.role === e.role && o.name === e.name);
+    const within = twins.length > 1 ? e.context?.find((c) => twins.filter((o) => o.context?.some((x) => same(x, c))).length === 1) : undefined;
+    return { role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), locator: scopedLocator(e.scope, e.role, e.name, within) };
+  });
+}
+
 /** The lines of an ARIA snapshot as `role "name"` keys, for "was it there before?". */
 function containerKeys(aria: string): Map<string, number> {
   const counts = new Map<string, number>();

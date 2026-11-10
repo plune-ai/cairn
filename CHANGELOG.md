@@ -263,6 +263,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Overlay exploration reports what happened, not more and not less (#252).** A press whose request the write guard
+  stopped is no longer a dead click: its outcome is `unknown`, since what the page would have done with the answer is
+  not known, and the stopped request is in `blocked` only, not in `requests.json`. A site that replaced a session cookie
+  (`httpOnly`) the crawler holds while the pressing browser read its pages now says so in `note`: on a site that ends
+  the old session, the rest of the run is signed out. A button that shares its role and name with another one nothing
+  tells apart is skipped for that reason (it was `could not be read as visible`), and inside an overlay it is in the
+  run's ambiguous elements too. An overlay's elements that repeat are written through their row, card or section. In
+  validation, a test's error counts as a missing browser only when it starts with the launch's own error, so a page
+  titled «playwright install | Docs» no longer stops the run; every project and every retry of a test is read.
 - **A failed test's request log no longer stays on disk after validation (#256).** Playwright writes each failed
   test's error into `error-context.md`, and for a request the test sent itself that error is the whole call log:
   the URL, `Authorization`, `cookie`, `set-cookie`. Validation now gives Playwright an output folder inside the run

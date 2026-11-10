@@ -589,6 +589,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
           after,
           requests: traffic.recorded(),
           navigating,
+          stopped: traffic.stopped(),
         });
         // A link into another tab is given as long as a request: the browser can take more than a second to open it.
         if (effect.outcome !== "no-effect" || Date.now() - clicked >= (watched?.newTab ? REQUEST_ANSWER_MS : DEAD_CLICK_RECHECK_MS)) {
@@ -627,12 +628,15 @@ export class PlaywrightLibBackend implements BrowserBackend {
 
   /** The requests a click starts (polls left out), the tab it opens and the file it downloads; the tab is closed again. */
   private watchTraffic(page: Page, from: string) {
-    const started: { r: Request; done: boolean; status?: number; recorded: boolean }[] = [];
+    const started: { r: Request; done: boolean; status?: number; recorded: boolean; stopped: boolean }[] = [];
     let tab: string | undefined;
     let download: string | undefined;
     const onRequest = (r: Request): void => {
       if (!WAITED_REQUESTS.has(r.resourceType()) || this.isPoll(r)) return;
-      const entry: (typeof started)[number] = { r, done: false, recorded: RECORDED_REQUESTS.has(r.resourceType()) && sameOrigin(r.url(), from) };
+      // #252: in the browser that presses, the write guard stops every such request: it never reached the server, so it
+      // is no request of the run (it is in `blocked`), and the click it followed cannot be judged without its answer.
+      const stopped = this.server !== undefined && !SAFE_METHODS.has(r.method().toUpperCase());
+      const entry: (typeof started)[number] = { r, done: false, recorded: !stopped && RECORDED_REQUESTS.has(r.resourceType()) && sameOrigin(r.url(), from), stopped };
       started.push(entry);
       void r
         .response()
@@ -670,6 +674,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
           .filter((e) => e.recorded)
           .map((e) => ({ method: e.r.method(), path: recordedPath(e.r.url()), ...(e.status !== undefined ? { status: e.status } : {}) })),
       navigating: (): boolean => started.some((e) => !e.done && e.r.isNavigationRequest() && e.r.frame() === page.mainFrame()),
+      stopped: (): boolean => started.some((e) => e.stopped),
       stop: (): void => {
         page.off("request", onRequest);
         page.off("popup", onPopup);
@@ -706,7 +711,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
     if (this.pressing) return this.pressing.getState(el);
     const page = await this.ensurePage();
     const found = await findOne(page, el);
-    if (found.ambiguous) return { visible: false, enabled: false }; // not told apart: nothing is read from a blind first one
+    if (found.ambiguous) return { visible: false, enabled: false, ambiguous: found.count }; // not told apart: nothing is read from a blind first one
     const loc = found.locator;
     const visible = await loc.isVisible().catch(() => false);
     // #213: an element of another view (exploreStates) is not on the page, and isEnabled/isChecked wait for it
@@ -815,10 +820,19 @@ export class PlaywrightLibBackend implements BrowserBackend {
       throw guardFailure(step);
     }
     this.pressing = pressing;
+    // #252: a cookie set by script cannot be httpOnly, so an analytics cookie that changes on every page view is no session.
+    // Known limit: a session cookie a site leaves readable by script is not looked at.
+    const held = state.cookies.filter((c) => c.httpOnly);
     return {
       release: async () => {
         if (this.pressing === pressing) await this.discardPressing();
         return blocked.map((b) => ({ ...b }));
+      },
+      sessionReplaced: async () => {
+        if (this.pressing !== pressing || held.length === 0) return 0;
+        const now = await within(pressing.context!.cookies(), STATE_READ_TIMEOUT_MS, undefined);
+        if (!now) return 0;
+        return held.filter((c) => !now.some((n) => n.name === c.name && n.domain === c.domain && n.path === c.path && n.value === c.value)).length;
       },
     };
   }

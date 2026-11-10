@@ -179,7 +179,14 @@ function recordingClicks(gateway: BrowserGateway, clicks: ClickEffect[], ambiguo
       }
       return verified;
     },
-    getState: (element) => gateway.getState(element),
+    getState: async (element) => {
+      const state = await gateway.getState(element);
+      // #252: an overlay's buttons are only read, never verified: one nothing tells apart is a finding all the same
+      if (state.ambiguous !== undefined && element.interactive) {
+        note({ role: element.role, ...(element.name !== undefined ? { name: element.name } : {}), count: state.ambiguous, ...(element.scope ? { scope: element.scope } : {}) });
+      }
+      return state;
+    },
     // #225 review 3: the network guard passes through, or exploreOverlays would think the backend has none
     ...(gateway.guardWrites ? { guardWrites: () => gateway.guardWrites!() } : {}),
     session: () => gateway.session(),
@@ -342,7 +349,10 @@ export async function runExploreGraph(
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       deps.onProgress?.(`exploreOverlays — skipped (${msg})`);
     }
-    await deps.gateway.observe({ url }).catch(() => undefined); // back to state-0
+    // back to state-0. #252: also a new document for the crawler: reading the session for the write guard
+    // (storageState with IndexedDB) left Playwright's database connections open in the old one, where they would
+    // block an upgrade the app makes. No way to close them from here; a load ends them.
+    await deps.gateway.observe({ url }).catch(() => undefined);
   }
   const overlayText = formatOverlays(overlays ?? []);
 

@@ -370,4 +370,55 @@ describe("what exploring says when it did less than usual (#225 review 5)", () =
     expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringContaining("did not start") }]);
     expect(out.states.map((s) => s.name)).toEqual(["Cookies"]); // what is already open is still read
   });
+
+  it("#252: a button nothing tells apart from another like it says so: it was read, and it is not pressed", async () => {
+    const { gateway, log } = fake({ getState: async () => ({ visible: false, enabled: false, ambiguous: 2 }) });
+    const out = await explore(gateway);
+    expect(log).not.toContain("press");
+    expect(out.skipped).toEqual([{ role: "button", name: "Open panel", reason: expect.stringMatching(/^2 visible elements .*nothing tells them apart/) }]);
+    expect(out.skipped[0]!.reason).not.toMatch(/could not be read|does not say/);
+    expect(out.note ?? "").not.toMatch(/could not be read/);
+  });
+
+  it("#252: the site replaced the session while pressing: the result says the rest of the run may be signed out", async () => {
+    const { gateway, log } = fake({
+      guardWrites: async () => ({ release: async () => (log.push("release"), []), sessionReplaced: async () => (log.push("session"), 1) }),
+    });
+    const out = await explore(gateway);
+    expect(out.guard).toBe("network");
+    expect(out.note).toMatch(/replaced 1 session cookie\(s\).*signed out/);
+    expect(log.slice(-2)).toEqual(["session", "release"]); // read while that browser is still there
+  });
+
+  it("#252: a session left as it was, or one that cannot be read, adds nothing to the result", async () => {
+    for (const sessionReplaced of [async () => 0, async () => Promise.reject(new Error("browser gone"))]) {
+      const { gateway } = fake({ guardWrites: async () => ({ release: async () => [], sessionReplaced }) });
+      expect((await explore(gateway)).note).toBeUndefined();
+    }
+  });
+});
+
+describe("#252: an overlay's elements that repeat are written through their row", () => {
+  it("two «Remove» in named list items: each locator goes through its own; a unique one stays as it is", async () => {
+    const { overlayStack, overlayElements } = await import("../../src/observe/overlays.js");
+    const aria = `- dialog "Members":
+  - list:
+    - listitem "John Doe":
+      - button "Remove"
+    - listitem "Jane Roe":
+      - button "Remove"
+  - button "Invite"
+  - button "Copy"
+  - button "Copy"`;
+    const [top] = overlayStack(aria);
+    const byName = overlayElements(top!.elements).map((e) => e.locator);
+    expect(byName).toEqual([
+      "page.getByRole('dialog', { name: 'Members', exact: true }).getByRole('listitem', { name: 'John Doe', exact: true }).getByRole('button', { name: 'Remove', exact: true })",
+      "page.getByRole('dialog', { name: 'Members', exact: true }).getByRole('listitem', { name: 'Jane Roe', exact: true }).getByRole('button', { name: 'Remove', exact: true })",
+      "page.getByRole('dialog', { name: 'Members', exact: true }).getByRole('button', { name: 'Invite', exact: true })",
+      // nothing tells these two apart: no row to go through, and no blind first one either
+      "page.getByRole('dialog', { name: 'Members', exact: true }).getByRole('button', { name: 'Copy', exact: true })",
+      "page.getByRole('dialog', { name: 'Members', exact: true }).getByRole('button', { name: 'Copy', exact: true })",
+    ]);
+  });
 });

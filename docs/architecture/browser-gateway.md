@@ -139,6 +139,14 @@ ends. No write sent because of a press may ever arrive. This rests on the networ
   there itself, and that list is no public API. Network Error Logging was not checked.
 - **What it does not see.** A WebSocket message, and a GET that changes the server against HTTP's rule. A cookie set
   while pressing stays there too: on a site that rotates its session on every GET, the crawler is signed out afterwards.
+  The result says so (#252): when the site replaced or removed an `httpOnly` cookie the crawler holds, `note` counts
+  them and says the rest of the run may be signed out. A session cookie readable by script is not looked at, so an
+  analytics cookie that changes on every page view raises no note.
+- **What a stopped request leaves behind.** A press whose request the guard stopped is not a dead click: its outcome
+  is `unknown` (a dialog that opens only once the server answers never opens there), and the request is in `blocked`
+  only, not in the run's `requests.json`. Reading the crawler's session with IndexedDB leaves Playwright's database
+  connections open in the crawler's document, so an upgrade the app makes there waits; the run loads the page again
+  right after exploring overlays, which ends them.
 - **No guard, no press.** A backend that cannot guard the network (the cli backend: the gateway has no `guardWrites()`)
   presses no trigger and no wizard step while exploring overlays. It reads the overlays already open and says so
   (`guard: "none"`, `note`). A guard that did not start does the same, and says that instead: `the write guard did not
