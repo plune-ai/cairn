@@ -56,6 +56,11 @@ export interface ElementState {
    * a form. Exploration never presses one, whatever it announces. Absent when it does not, or could not be read.
    */
   submitsForm?: true;
+  /**
+   * #252: how many visible elements share its role and name in its scope, when nothing tells them apart (#226). Nothing
+   * else is read then (`visible` is false): what a blind first one says is not this element's.
+   */
+  ambiguous?: number;
 }
 
 /** An element with a verified locator (verify-before-design, grounding). */
@@ -203,6 +208,12 @@ export interface BlockedRequest {
 export interface WriteGuard {
   /** Discards that browser with the guard still on and returns what it stopped, in the order first seen. */
   release(): Promise<BlockedRequest[]>;
+  /**
+   * #252: before `release`: how many of the session cookies (`httpOnly`) the crawler holds the site replaced or removed
+   * in that browser. Nothing flows back, so the crawler still holds the old ones; a site that ends a session it replaced
+   * (one that rotates it on every GET) has signed the crawler out. 0 when they cannot be read.
+   */
+  sessionReplaced?(): Promise<number>;
 }
 
 /** What one click changed (#224) — recorded by the lib backend after every click it watches. */

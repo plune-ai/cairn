@@ -85,6 +85,48 @@ describe("resultsFromRunnerOutput — surfaces a missing browser instead of a fa
     expect(resultsFromRunnerOutput("some noise without json", "warning: slow test")).toEqual([]);
   });
 
+  it("#252: a test's error that quotes the page is no missing browser, whatever the page says", () => {
+    // An assertion on the title of a docs page about installing browsers, every browser in place.
+    const message = 'Error: expect(page).toHaveTitle(expected) failed\n\nExpected: "Sign in"\nReceived: "playwright install | Docs"';
+    const json = JSON.stringify({ suites: [{ specs: [{ title: "docs", tests: [{ results: [{ status: "failed", error: { message } }] }] }] }] });
+    expect(resultsFromRunnerOutput(json, "")).toEqual([{ title: "docs", status: "failed", error: message }]);
+    // the page may even quote the launch error itself: only an error that starts with it is one
+    const quoted = `Error: expect(locator).toHaveText(expected) failed\n\nReceived: "${MISSING_BROWSER_STDERR}"`;
+    const json2 = JSON.stringify({ suites: [{ specs: [{ title: "faq", tests: [{ results: [{ status: "failed", error: { message: quoted } }] }] }] }] });
+    expect(resultsFromRunnerOutput(json2, "")).toHaveLength(1);
+  });
+
+  it("#252: every project and every retry is read: a browser missing in the second one still throws", () => {
+    const launch = { status: "failed", error: { message: MISSING_BROWSER_STDERR } };
+    const passed = { status: "passed" };
+    const retried = { suites: [{ specs: [{ title: "t", tests: [{ results: [{ status: "failed", error: { message: "Error: flaked" } }, launch] }] }] }] };
+    const projects = { suites: [{ specs: [{ title: "t", tests: [{ projectName: "a", results: [passed] }, { projectName: "b", results: [launch] }] }] }] };
+    expect(() => resultsFromRunnerOutput(JSON.stringify(retried), "")).toThrow(/cairn install-browsers/);
+    expect(() => resultsFromRunnerOutput(JSON.stringify(projects), "")).toThrow(/cairn install-browsers/);
+  });
+
+  it("#252: a test per project, named by it; its status is its last attempt's, its errors every attempt's", () => {
+    const json = {
+      suites: [
+        {
+          specs: [
+            {
+              title: "t",
+              tests: [
+                { projectName: "desktop", results: [{ status: "failed", error: { message: "Error: first try" } }, { status: "passed" }] },
+                { projectName: "mobile", results: [{ status: "failed", error: { message: "Error: too narrow" } }] },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    expect(resultsFromRunnerOutput(JSON.stringify(json), "")).toEqual([
+      { title: "t [desktop]", status: "passed", error: "Error: first try" },
+      { title: "t [mobile]", status: "failed", error: "Error: too narrow" },
+    ]);
+  });
+
 });
 
 // Shapes captured from a Playwright 1.61 JSON report (#184): `error` is the raw first error; every `errors` entry is

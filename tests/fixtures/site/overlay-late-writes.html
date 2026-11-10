@@ -26,6 +26,10 @@
       // ?case= says how a press writes to the server. Nothing writes before the press, except the two on load below.
       const press = {
         immediate: () => post("/w/immediate"),
+        // The panel opens only once the server has answered the press (#252).
+        "open-after-post": () => post("/w/open").then((r) => {
+          if (r && r.ok) $("panel").hidden = false;
+        }),
         // Leaving the page after a press: the requests are made while the document goes away. Several, because which of
         // them the browser parks is a race; with this many some are parked on every run.
         pagehide: () =>
@@ -115,6 +119,16 @@
           indexedDB.open("stuck", 2);
         };
       }
+      // #252: a database of the app's own, closed once written: an upgrade then waits only on a connection kept by someone else.
+      if (kind === "idb") {
+        const open = indexedDB.open("app", 1);
+        open.onupgradeneeded = () => open.result.createObjectStore("kv");
+        open.onsuccess = () => {
+          const t = open.result.transaction("kv", "readwrite");
+          t.objectStore("kv").put("x", "k");
+          t.oncomplete = () => open.result.close();
+        };
+      }
       if (kind === "self-closing" || kind === "hide-only") {
         addEventListener("pagehide", () => {
           for (let i = 0; i < 8; i++) post("/w/on-the-way-out", { keepalive: true });
@@ -129,7 +143,7 @@
       }
 
       $("open").addEventListener("click", () => {
-        $("panel").hidden = false; // first: a press whose API is gone throws, and the panel still opens
+        if (kind !== "open-after-post") $("panel").hidden = false; // first: a press whose API is gone throws, and the panel still opens
         if (press) press();
       });
       $("close").addEventListener("click", () => { $("panel").hidden = true; });

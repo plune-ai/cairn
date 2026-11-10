@@ -25,11 +25,14 @@ export interface FixtureServer {
  * Starts a static HTTP server for the fixture site on a random port (real localhost origin). A write (POST, PUT,
  * PATCH, DELETE…) answers 204;
  * `?delay=<ms>` holds any answer that long; `/api/ok` answers "ok" (to any origin), `/api/long` never answers.
+ * `/rotating` is a site that replaces its session cookie (`sid`, httpOnly) on every load and ends the old one (#252):
+ * `?signin=1` signs in; with the current `sid` it serves `overlay-late-writes.html`, with any other a sign-in page.
  * With `basicAuth` ("user:password"), everything answers 401 to a request without it.
  */
 export async function startFixtureServer(opts: { basicAuth?: string } = {}): Promise<FixtureServer> {
   const posts: FixtureServer["posts"] = [];
   const writes: FixtureServer["writes"] = [];
+  let sid = ""; // the one session `/rotating` accepts
   const server = createServer((req, res) => {
     void (async () => {
       const method = req.method ?? "GET";
@@ -56,6 +59,18 @@ export async function startFixtureServer(opts: { basicAuth?: string } = {}): Pro
           return;
         }
         if (urlPath === "/api/long") return; // a long poll: the answer never comes while the test runs
+        if (urlPath === "/rotating") {
+          const sent = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie ?? "")?.[1];
+          res.setHeader("content-type", MIME[".html"]!);
+          if (query.has("signin") || (sid !== "" && sent === sid)) {
+            sid = String(Math.random()).slice(2);
+            res.setHeader("set-cookie", `sid=${sid}; Path=/; HttpOnly`);
+            res.end(await readFile(join(root, "overlay-late-writes.html")));
+          } else {
+            res.end('<!doctype html><title>Sign in</title><main><a href="/rotating?signin=1">Sign in</a></main>');
+          }
+          return;
+        }
         const rel = urlPath === "/" ? "/login.html" : urlPath;
         const filePath = normalize(join(root, rel));
         if (!filePath.startsWith(root)) {

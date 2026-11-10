@@ -12,10 +12,10 @@ import {
   isBackName,
   isCompletionName,
   isStepName,
+  overlayElements,
   overlayExits,
   overlayStack,
   passesSafetyFilters,
-  scopedLocator,
   toastTexts,
   wizardButtons,
   type OverlayExit,
@@ -91,6 +91,9 @@ const SUBMITS_FORM_REASON = "submits a form";
 const UNREAD_REASON = "could not be read as visible on the page, so what it announces is not known; not pressed";
 const NOT_THERE_REASON = "announces a popup on the page, but was not there in the browser that presses (a stopped request can be why); not pressed";
 const PRESS_FAILED_REASON = "could not be pressed, or what it opened could not be read to the end";
+/** #252: the same words as a click refused for it (#226), with the count. */
+const ambiguousReason = (count: number): string =>
+  `${count} visible elements with this role and name, and nothing tells them apart (no named row, card or section); not pressed`;
 
 /**
  * #225 review 5: what a failed start of the guard may say of its error: the code or the name, each only in the shape a
@@ -155,6 +158,7 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
   let unread = 0;
   let notThere = 0;
   let pressFailed = 0;
+  let replaced = 0;
   const skip = (e: { role: string; name?: string }, reason: string): void => {
     if (!skipped.some((s) => s.role === e.role && s.name === e.name && s.reason === reason)) {
       skipped.push({ role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), reason });
@@ -277,11 +281,7 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
       ...(parent ? { parent: parent.id } : {}),
       trigger: { role: last.role, ...(last.name !== undefined ? { name: last.name } : {}), ...(last.scope ? { scope: last.scope } : {}) },
       exits: overlayExits(top),
-      elements: top.elements.map((e) => ({
-        role: e.role,
-        ...(e.name !== undefined ? { name: e.name } : {}),
-        locator: scopedLocator(e.scope, e.role, e.name),
-      })),
+      elements: overlayElements(top.elements),
       toasts: note(toastTexts(s.obs.ariaSnapshot)),
       skipped: [],
     };
@@ -386,6 +386,9 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
   try {
     await pressTriggers();
   } finally {
+    // #252: read before the release: that browser is gone after it. Said, not undone: carrying the new cookie back to
+    // the crawler would break "nothing flows back", and whether the site ended the old session is not known here.
+    replaced = (await guard.sessionReplaced?.().catch(() => 0)) ?? 0;
     blocked = await guard.release().catch(() => []);
   }
   for (const b of blocked) say(`exploreOverlays — stopped ${b.method} ${b.path}${b.pressed ? ` after "${b.pressed.name ?? b.pressed.role}"` : ""}`);
@@ -398,6 +401,8 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
   async function refusalOf(e: ElementRef): Promise<string | undefined> {
     if (!passesSafetyFilters(e.name) || isCompletionName(e.name) || e.disabled) return refusal(e, undefined);
     const state = await gateway.getState(e).catch(() => undefined);
+    // #252: visible, and several like it: it is not pressed for that, not for being unread
+    if (state?.ambiguous !== undefined) return ambiguousReason(state.ambiguous);
     if (!state?.visible) {
       unread++;
       return UNREAD_REASON; // what it announces is not known, which is not the same as announcing nothing
@@ -411,6 +416,9 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
       unread > 0 ? `${unread} button(s) could not be read` : "",
       notThere > 0 ? `${notThere} trigger(s) announced on the page were not there in the browser that presses` : "",
       pressFailed > 0 ? `${pressFailed} trigger(s) could not be pressed, or what they opened could not be read to the end` : "",
+      replaced > 0
+        ? `the site replaced ${replaced} session cookie(s) while the pressing browser read its pages, and the crawler still holds the old ones: on a site that ends a replaced session, the rest of this run is signed out`
+        : "",
     ]
       .filter(Boolean)
       .join("; ");
@@ -427,7 +435,7 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
         modal: top.modal,
         trigger: { role: "page" }, // open when the page was read: nothing opened it
         exits: overlayExits(top),
-        elements: top.elements.map((e) => ({ role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), locator: scopedLocator(e.scope, e.role, e.name) })),
+        elements: overlayElements(top.elements),
         toasts: [],
         skipped: [],
       });

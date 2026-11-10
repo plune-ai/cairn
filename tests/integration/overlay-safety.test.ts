@@ -1,12 +1,18 @@
-import type { ChildProcess } from "node:child_process";
+import { execFileSync, type ChildProcess } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createServer as createHttpsServer } from "node:https";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, onTestFinished, vi } from "vitest";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { startFixtureServer, type FixtureServer } from "../fixtures/server.js";
 import { PlaywrightLibBackend } from "../../src/browser/backends/playwright-lib.js";
 import { capture } from "../../src/observe/index.js";
 import { parseAriaSnapshot } from "../../src/observe/parse-aria.js";
 import { exploreOverlays } from "../../src/agent/overlays.js";
 import type { BrowserGateway } from "../../src/browser/gateway.js";
+import type { ClickEffect } from "../../src/browser/types.js";
+import { deadClicksOf } from "../../src/artifacts/report.js";
 
 /**
  * #225 review: overlay exploration must never press a button that changes data. Every risky control on the fixture
@@ -117,6 +123,30 @@ describe("overlay exploration changes nothing (integration, real Chromium)", () 
     const help = out.states.find((s) => s.name === "Help");
     expect(help!.exits.find((x) => x.kind === "click-outside")).toMatchObject({ notTried: expect.stringContaining("not tried") });
     expect(help!.exits.find((x) => x.kind === "escape")).toMatchObject({ verified: true });
+  }, 180_000);
+
+  it("#252: repeats — rows named anew on every load, buttons nothing tells apart, list items that do", async () => {
+    const page = `${server.url}/overlay-repeats.html`;
+    const gateway = backend as unknown as BrowserGateway;
+    const out = await exploreOverlays({ gateway, url: page, study: await capture(gateway, page) });
+
+    // the row of «Options» is named anew in the browser that presses: it is still found there, and its panel opens
+    const panel = out.states.find((s) => s.name === "Order details");
+    expect(panel).toMatchObject({ kind: "dialog", trigger: { role: "button", name: "Options" } });
+    expect(out.skipped.filter((s) => s.name === "Options")).toEqual([]);
+
+    // two «Actions» on the page, and two in the panel: the reason is that nothing tells them apart, not that they are unseen
+    const ambiguous = /^2 visible elements .*nothing tells them apart/;
+    expect(out.skipped).toContainEqual({ role: "button", name: "Actions", reason: expect.stringMatching(ambiguous) });
+    expect(panel!.skipped).toContainEqual({ role: "button", name: "Actions", reason: expect.stringMatching(ambiguous) });
+    expect([...out.skipped, ...panel!.skipped].filter((s) => s.name === "Actions").every((s) => ambiguous.test(s.reason))).toBe(true);
+    expect(out.note).toBeUndefined(); // nothing went unread
+
+    // the two «Remove» of the panel are written through their list items
+    expect(panel!.elements.filter((e) => e.name === "Remove").map((e) => e.locator)).toEqual([
+      "page.getByRole('dialog', { name: 'Order details', exact: true }).getByRole('listitem', { name: 'John Doe', exact: true }).getByRole('button', { name: 'Remove', exact: true })",
+      "page.getByRole('dialog', { name: 'Order details', exact: true }).getByRole('listitem', { name: 'Jane Roe', exact: true }).getByRole('button', { name: 'Remove', exact: true })",
+    ]);
   }, 180_000);
 });
 
@@ -277,6 +307,112 @@ describe("what a press did never reaches the server later (integration, real Chr
     expect(out.states.map((s) => s.trigger.name).sort()).toEqual(["Cookie settings", "Database settings", "Local settings", "Session settings"]);
     // every press marked all four stores, and the crawler's page, loaded again, finds no mark in any
     expect((await gateway.observe({ url: page })).ariaSnapshot).toContain("Pressed: none");
+  }, 180_000);
+
+  it("#252: a dialog that opens only once its POST answers: the stopped POST makes no dead click, and is no request of the run", async () => {
+    const page = lateWrites("open-after-post");
+    const study = await capture(gateway, page);
+    const clicks: ClickEffect[] = [];
+    const act = backend.act.bind(backend);
+    vi.spyOn(backend, "act").mockImplementation(async (a) => {
+      const res = await act(a);
+      if (res.effect) clicks.push(res.effect); // what the run's click recording keeps
+      return res;
+    });
+    const out = await exploreOverlays({ gateway, url: page, study });
+    await arrival();
+    expect(server.writes).toEqual([]);
+    expect(out.blocked).toContainEqual(expect.objectContaining({ method: "POST", path: "/w/open", pressed: { role: "button", name: "Open panel" } }));
+
+    expect(clicks.filter((c) => c.name === "Open panel").map((c) => c.outcome)).toEqual(["unknown"]);
+    expect(deadClicksOf(clicks)).toEqual([]);
+    expect(clicks.flatMap((c) => c.requests).map((r) => r.path)).not.toContain("/w/open");
+    await theWriteIsReal(page, "/w/open");
+  }, 180_000);
+
+  it("#252: a site that replaces its session on every load: the result says the rest of the run may be signed out", async () => {
+    const page = `${server.url}/rotating`;
+    await gateway.observe({ url: `${page}?signin=1` });
+    const study = await capture(gateway, page);
+    expect(study.elements.map((e) => e.name)).toContain("Open panel"); // signed in on the crawler's page
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(out.guard).toBe("network");
+    expect(out.states.map((s) => s.name)).toContain("Panel");
+    expect(out.note).toMatch(/replaced 1 session cookie\(s\).*signed out/);
+    // and so it is: the crawler's next load is the sign-in page
+    expect((await gateway.observe({ url: page })).ariaSnapshot).toContain("Sign in");
+  }, 180_000);
+
+  it("#252: reading the session for the guard leaves IndexedDB connections open on the crawler's page; the graph's next load lets them go", async () => {
+    const page = lateWrites("idb");
+    const study = await capture(gateway, page);
+    const crawler = (backend as unknown as { page: Page }).page;
+    const UPGRADE = `(async () => {
+      const v = (await indexedDB.databases()).find((d) => d.name === "app")?.version ?? 0;
+      return new Promise((resolve) => {
+        const q = indexedDB.open("app", v + 1);
+        q.onsuccess = () => { q.result.close(); resolve("upgraded"); };
+        q.onblocked = () => resolve("blocked");
+      });
+    })()`;
+    const upgrade = (): Promise<unknown> => crawler.evaluate(UPGRADE);
+    expect(await upgrade()).toBe("upgraded"); // the app's own connection is closed: nothing holds it
+    await exploreOverlays({ gateway, url: page, study });
+    // Known limit: Playwright's storageState({ indexedDB: true }) opens each database in this document and keeps it open
+    expect(await upgrade()).toBe("blocked");
+    await gateway.observe({ url: page }); // what runExploreGraph does right after exploring overlays
+    expect(await upgrade()).toBe("upgraded");
+  }, 180_000);
+
+  it("#252: the one POST that passes the guard: the browser's own Reporting API report, on full Chromium over HTTPS", async () => {
+    // A certificate made for this test alone and thrown away after it: no key is kept in the repository.
+    const dir = mkdtempSync(join(tmpdir(), "cairn-252-"));
+    onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+    execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(dir, "key.pem"), "-out", join(dir, "cert.pem"), "-days", "1", "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1"], { stdio: "ignore" });
+    const reports: { method: string; url: string; type?: string }[] = [];
+    const https = createHttpsServer({ key: readFileSync(join(dir, "key.pem")), cert: readFileSync(join(dir, "cert.pem")) }, (req, res) => {
+      if (req.method !== "GET") {
+        reports.push({ method: req.method ?? "", url: req.url ?? "", type: req.headers["content-type"] });
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+      // the press loads an image the policy forbids: a violation, which the browser reports to the endpoint
+      res.setHeader("content-type", "text/html");
+      res.setHeader("reporting-endpoints", `main="https://127.0.0.1:${(https.address() as { port: number }).port}/reports"`);
+      res.setHeader("content-security-policy", "img-src 'none'; report-to main");
+      res.end(
+        `<!doctype html><main><button type="button" aria-haspopup="dialog" onclick="d.hidden=false;const i=new Image();i.src='/x.png';document.body.append(i)">Open panel</button></main>` +
+          `<div id="d" role="dialog" aria-modal="true" aria-label="Panel" hidden><button type="button" aria-label="Close" onclick="d.hidden=true">×</button></div>`,
+      );
+    });
+    await new Promise<void>((resolve) => https.listen(0, "127.0.0.1", () => resolve()));
+    onTestFinished(() => void https.close());
+    // the certificate is the test's own: both browsers are told to take it
+    const withCert = <T extends { args?: string[] }>(o?: T): T => ({ ...(o as T), args: [...(o?.args ?? []), "--ignore-certificate-errors"] });
+    const launch = chromium.launch.bind(chromium);
+    const launchServer = chromium.launchServer.bind(chromium);
+    vi.spyOn(chromium, "launch").mockImplementation((o) => launch(withCert(o)));
+    vi.spyOn(chromium, "launchServer").mockImplementation((o) => launchServer(withCert(o)));
+    const page = `https://127.0.0.1:${(https.address() as { port: number }).port}/`;
+
+    for (const channel of [undefined, "chromium"]) {
+      reports.length = 0;
+      await backend.close();
+      backend = new PlaywrightLibBackend({ headless: true, ...(channel ? { channel } : {}) });
+      gateway = backend as unknown as BrowserGateway;
+      const out = await exploreOverlays({ gateway, url: page, study: await capture(gateway, page) });
+      expect(out.states.map((s) => s.name)).toContain("Panel"); // it was pressed
+      await arrival();
+      if (channel) {
+        // full Chromium: the report reaches the server, and the guard never saw it
+        await expect.poll(() => reports.length, { timeout: 10_000 }).toBeGreaterThan(0);
+        expect(reports.every((r) => r.method === "POST" && r.url === "/reports" && r.type === "application/reports+json")).toBe(true);
+      } else {
+        expect(reports).toEqual([]); // the headless shell sends none
+      }
+      expect(out.blocked).toEqual([]);
+    }
   }, 180_000);
 
   it("a site behind HTTP Basic Auth is explored with the same credentials, and its writes are stopped too", async () => {

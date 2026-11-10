@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Repeats — Fixture</title>
+    <style>
+      [hidden] { display: none !important; }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; z-index: 20; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Orders</h1>
+      <!-- #252: two triggers that nothing tells apart -->
+      <button type="button" aria-haspopup="menu">Actions</button>
+      <button type="button" aria-haspopup="menu">Actions</button>
+      <!-- #252: rows whose names are new with every load, each with the same trigger: only the row tells them apart -->
+      <table>
+        <tbody>
+          <tr><td class="order"></td><td><button type="button" class="options" aria-haspopup="dialog">Options</button></td></tr>
+          <tr><td class="order"></td><td><button type="button" class="options" aria-haspopup="dialog">Options</button></td></tr>
+        </tbody>
+      </table>
+    </main>
+    <div id="panel" class="dialog" role="dialog" aria-modal="true" aria-label="Order details" hidden>
+      <h2>Order details</h2>
+      <!-- #252: inside the dialog too, two that nothing tells apart, and two that their list items do -->
+      <button type="button" aria-haspopup="menu">Actions</button>
+      <button type="button" aria-haspopup="menu">Actions</button>
+      <ul>
+        <li aria-label="John Doe">John Doe <button type="button">Remove</button></li>
+        <li aria-label="Jane Roe">Jane Roe <button type="button">Remove</button></li>
+      </ul>
+      <button type="button" id="close" aria-label="Close">×</button>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      for (const cell of document.querySelectorAll(".order")) cell.textContent = "Order " + Math.random();
+      for (const b of document.querySelectorAll(".options")) b.addEventListener("click", () => { $("panel").hidden = false; });
+      $("close").addEventListener("click", () => { $("panel").hidden = true; });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("panel").hidden = true; });
+    </script>
+  </body>
+</html>

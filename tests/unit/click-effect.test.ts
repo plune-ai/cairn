@@ -76,6 +76,12 @@ describe("clickEffect — what a click changed, as one name from a closed set (#
     expect(clickEffect({ ...changed(page(), page()), before: undefined }).outcome).toBe("unknown");
     expect(clickEffect({ ...base, navigating: true }).outcome).toBe("unknown");
   });
+
+  it("#252: a request the write guard stopped: what its answer would have done is not known, so it is no dead click", () => {
+    expect(clickEffect({ ...base, stopped: true }).outcome).toBe("unknown");
+    // what was seen still names the click
+    expect(clickEffect({ ...changed(page(), page('  - dialog "Edit order":')), stopped: true }).outcome).toBe("overlay-opened");
+  });
 });
 
 /** Call logs as Playwright 1.61 writes them (one with its terminal colour codes left in). */

@@ -64,6 +64,11 @@ export interface ClickEffectInput {
   requests: RecordedRequest[];
   /** A navigation of the page the click started has not answered yet. */
   navigating?: boolean;
+  /**
+   * #252: the write guard stopped a request the click started. What the page would have done with its answer is not
+   * known, so the click is never a dead one.
+   */
+  stopped?: boolean;
 }
 
 export function clickEffect(i: ClickEffectInput): ClickEffect {
@@ -102,7 +107,7 @@ function outcomeOf(e: Omit<ClickEffect, "outcome">, i: ClickEffectInput): ClickE
   if (e.state.length > 0) return "state-changed";
   if (e.added.length > 0 || e.removed.length > 0 || e.appeared.length > 0) return "content-changed";
   if (e.requests.some((r) => r.status !== undefined && r.status >= 200 && r.status < 300)) return "network-only";
-  if (i.navigating) return "unknown";
+  if (i.navigating || i.stopped) return "unknown";
   return "no-effect";
 }
 
