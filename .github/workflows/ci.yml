@@ -32,7 +32,7 @@ jobs:
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/mcp-reports"
-          npx -y @plune-ai/cli@0.34.5 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
+          npx -y @plune-ai/cli@0.34.6 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
             -- node dist/cli/index.js mcp
       - name: MCP — lint report
         if: ${{ !cancelled() }}

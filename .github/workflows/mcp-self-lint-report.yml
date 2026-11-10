@@ -58,7 +58,7 @@ jobs:
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/mcp-reports"
-          npx -y @plune-ai/cli@0.34.5 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
+          npx -y @plune-ai/cli@0.34.6 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
             -- node dist/cli/index.js mcp
       - name: MCP — lint report
         if: ${{ !cancelled() && steps.token.outputs.present == 'true' }}
@@ -80,6 +80,6 @@ jobs:
             echo "No JUnit report was written, so nothing was imported: see the steps above." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          npx -y @plune-ai/cli@0.34.5 run import "$report" --name "MCP self-lint" \
+          npx -y @plune-ai/cli@0.34.6 run import "$report" --name "MCP self-lint" \
             --key "mcp-self-lint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             --fail-on-failures
