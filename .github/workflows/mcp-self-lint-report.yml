@@ -1,0 +1,84 @@
+name: MCP self-lint — report
+
+# The record of the MCP lint that CI runs as a gate (ci.yml, "MCP — lint the built server"): the same command,
+# nightly and by hand, its JUnit imported into Plune. Never on a push or a pull request: the gate does not need the
+# platform, and a fork has no secret.
+#
+# PLUNE_DOGFOOD_TOKEN (a repository secret) is a token of the project the results go to; the project is the token's,
+# so it is named nowhere here. PLUNE_DOGFOOD_API_URL (a repository variable) points at another deployment. Without
+# the secret the workflow says so in its summary and passes.
+
+on:
+  schedule:
+    - cron: "47 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-self-lint-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Lint the built server, import the JUnit into Plune
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Reporting token
+        id: token
+        env:
+          PLUNE_DOGFOOD_TOKEN: ${{ secrets.PLUNE_DOGFOOD_TOKEN }}
+        run: |
+          if [ -z "$PLUNE_DOGFOOD_TOKEN" ]; then
+            echo "no PLUNE_DOGFOOD_TOKEN, nothing reported" >> "$GITHUB_STEP_SUMMARY"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+      - uses: actions/setup-node@v7
+        if: steps.token.outputs.present == 'true'
+        with:
+          node-version: "20"
+          cache: npm
+      - if: steps.token.outputs.present == 'true'
+        run: npm ci
+      - if: steps.token.outputs.present == 'true'
+        run: npm run build
+      # The same command as the CI step.
+      - name: MCP — lint the built server
+        if: steps.token.outputs.present == 'true'
+        run: |
+          if env | grep -qE '^[A-Z0-9_]*_API_KEY='; then
+            echo "A model provider key is set in this step: this check must not reach a model." >&2
+            env | grep -oE '^[A-Z0-9_]*_API_KEY' >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/mcp-reports"
+          npx -y @plune-ai/cli@0.34.5 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
+            -- node dist/cli/index.js mcp
+      - name: MCP — lint report
+        if: ${{ !cancelled() && steps.token.outputs.present == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcp-self-lint-junit
+          path: ${{ runner.temp }}/mcp-reports/
+          if-no-files-found: warn
+      # A red lint is reported too: that is what the record is for. Without --create: a check the project has no case
+      # for is not offered to the review queue on every night.
+      - name: Import into Plune
+        if: ${{ !cancelled() && steps.token.outputs.present == 'true' }}
+        env:
+          PLUNE_TOKEN: ${{ secrets.PLUNE_DOGFOOD_TOKEN }}
+          PLUNE_API_URL: ${{ vars.PLUNE_DOGFOOD_API_URL || 'https://beta-api.plune.ai' }}
+        run: |
+          report="$RUNNER_TEMP/mcp-reports/lint.xml"
+          if [ ! -f "$report" ]; then
+            echo "No JUnit report was written, so nothing was imported: see the steps above." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          npx -y @plune-ai/cli@0.34.5 run import "$report" --name "MCP self-lint" \
+            --key "mcp-self-lint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
