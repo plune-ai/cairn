@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { resolveConfig } from "../core/config.js";
 import { runExploration, runDesign, runAutomate } from "../agent/index.js";
-import type { ExploreInput, ExploreResult, DesignResult, AutomateResult } from "../agent/index.js";
+import type { ExploreInput } from "../agent/index.js";
 import type { TestCase } from "../design/index.js";
 import type { ValidationReport } from "../validate/index.js";
 import { readInputFile } from "../fs/run-dir.js";
 import { resolveStyleText } from "../design/style.js";
+import { BrowserBackendSchema, DeciderProviderSchema } from "../config/schema.js";
+import { ROUTING_PRESET_NAMES } from "../config/profiles.js";
 
 /**
  * MCP tool layer (#49). Each tool is a THIN adapter over the shared core: validate input → reuse
@@ -18,15 +20,25 @@ import { resolveStyleText } from "../design/style.js";
 /** ADR-0022 pass-through; the rest of the decision layer is configured by env (DECIDER_*). */
 const DECIDER_DESCRIPTION = "Opt-in decision layer: off | jev | laya | compat (the rest via DECIDER_* env; see docs/decider.md)";
 
+/**
+ * Closed values come from the configuration's own lists, so a value added there reaches the tools, and an unknown one
+ * is a validation error for the client instead of a warning in the server's log.
+ */
+const deciderParam = DeciderProviderSchema.optional().describe(DECIDER_DESCRIPTION);
+const routingParam = z
+  .enum(ROUTING_PRESET_NAMES)
+  .optional()
+  .describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen — faster, recommended when OpenRouter codegen overruns timeouts)");
+
 /** Tool input shape (zod raw shape) — a subset of the `cairn explore` / `design` flags. */
 export const TOOL_INPUT_SHAPE = {
   url: z.string().describe("Page URL to generate tests for"),
   session: z.string().optional().describe("Saved session name (.auth/<name>.storageState.json) for authenticated targets"),
   checklist: z.string().optional().describe("Path to a checklist file (md/text) that guides what to test"),
   style: z.string().optional().describe("Planning style or house-style pack (happy | negative | coverage | a pack name/path)"),
-  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen — faster, recommended when OpenRouter codegen overruns timeouts)"),
-  backend: z.string().optional().describe("Browser backend: lib (in-process, default) | cli"),
-  channel: z.string().optional().describe("System browser channel, e.g. chrome (drives installed Chrome; helps OAuth)"),
+  routing: routingParam,
+  backend: BrowserBackendSchema.optional().describe("Browser backend: lib (in-process, default) | cli"),
+  channel: z.string().optional().describe("System browser channel, e.g. chrome or msedge (drives the installed browser; helps OAuth)"),
   flow: z.boolean().optional().describe("Follow in-app navigation across pages → multi-page journey cases"),
   maxPages: z.number().int().positive().optional().describe("Max pages to crawl with flow (default 3)"),
   setup: z.boolean().optional().describe("For journeys (flow): plan starting-state setup (fixture / API seed)"),
@@ -35,7 +47,7 @@ export const TOOL_INPUT_SHAPE = {
   fresh: z.boolean().optional().describe("Ignore prior-run experience for this URL (full set, no delta)"),
   intoProject: z.boolean().optional().describe("explore only: write specs into an existing Playwright project's testDir (detect playwright.config.*) instead of runs/<id>/tests"),
   projectDir: z.string().optional().describe("Explicit project dir for intoProject (detection searches from cwd upward when omitted)"),
-  decider: z.string().optional().describe(DECIDER_DESCRIPTION),
+  decider: deciderParam,
 };
 
 export const ToolInputSchema = z.object(TOOL_INPUT_SHAPE);
@@ -100,17 +112,55 @@ function compactCases(cases: TestCase[]) {
   }));
 }
 
-export interface ExploreToolResult {
-  runId: string;
-  runDir: string;
-  pageSemantics: string;
-  testCases: ReturnType<typeof compactCases>;
-  validation?: { greenRatio: number; passed: number; failed: number; flaky: number };
-  scores: { name: string; value: number; comment?: string }[];
-  pilot?: { verdict: string; reason: string; guidance: string };
-  cost: ExploreResult["cost"];
-  testCaseFiles: string[];
-}
+/**
+ * Result schemas: the tools' `outputSchema` and the source of their result types, so the code that builds a result is
+ * type-checked against what the client is told. The server sends `schema.parse(result)` (server.ts), which drops any
+ * key the schema does not name: the published JSON Schema forbids extra keys, and a client checks against it.
+ */
+const CompactCaseSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  technique: z.string(),
+  type: z.string(),
+  priority: z.string(),
+  execution: z.string(),
+  steps: z.array(z.string()),
+  expected: z.string(),
+  elementRefs: z.array(z.string()),
+});
+
+const ValidationSummarySchema = z.object({ greenRatio: z.number(), passed: z.number(), failed: z.number(), flaky: z.number() });
+
+const CostSchema = z.object({
+  perRole: z.array(
+    z.object({
+      role: z.string(),
+      models: z.array(z.string()),
+      calls: z.number(),
+      inputTokens: z.number(),
+      outputTokens: z.number(),
+      totalTokens: z.number(),
+      costUsd: z.number().nullable(),
+    }),
+  ),
+  totalTokens: z.number(),
+  totalCostUsd: z.number().nullable(),
+});
+
+const ScoreSchema = z.object({ name: z.string(), value: z.number(), comment: z.string().optional() });
+
+export const ExploreToolResultSchema = z.object({
+  runId: z.string(),
+  runDir: z.string(),
+  pageSemantics: z.string(),
+  testCases: z.array(CompactCaseSchema),
+  validation: ValidationSummarySchema.optional(),
+  scores: z.array(ScoreSchema),
+  pilot: z.object({ verdict: z.string(), reason: z.string(), guidance: z.string() }).optional(),
+  cost: CostSchema,
+  testCaseFiles: z.array(z.string()),
+});
+export type ExploreToolResult = z.infer<typeof ExploreToolResultSchema>;
 
 export async function exploreTool(input: ToolInput, deps: ToolDeps = defaultDeps): Promise<ExploreToolResult> {
   const r = await deps.runExploration(await buildExploreInput(input, deps));
@@ -127,15 +177,8 @@ export async function exploreTool(input: ToolInput, deps: ToolDeps = defaultDeps
   };
 }
 
-export interface DesignToolResult {
-  runId: string;
-  runDir: string;
-  pageSemantics: string;
-  testCases: ReturnType<typeof compactCases>;
-  scores: { name: string; value: number; comment?: string }[];
-  cost: DesignResult["cost"];
-  testCaseFiles: string[];
-}
+export const DesignToolResultSchema = ExploreToolResultSchema.omit({ validation: true, pilot: true });
+export type DesignToolResult = z.infer<typeof DesignToolResultSchema>;
 
 export async function designTool(input: ToolInput, deps: ToolDeps = defaultDeps): Promise<DesignToolResult> {
   const r = await deps.runDesign(await buildExploreInput(input, deps));
@@ -156,30 +199,39 @@ export async function designTool(input: ToolInput, deps: ToolDeps = defaultDeps)
  */
 export const AUTOMATE_INPUT_SHAPE = {
   run: z.string().describe("Run folder with ready ATC cases: runs/<id>, a bare <id>, or an absolute path"),
-  validate: z.boolean().optional().describe("Run the generated tests after codegen (requires a session)"),
+  validate: z.boolean().optional().describe("Run the new tests against the target site after codegen (requires a session)"),
   session: z.string().optional().describe("Saved session name for validation"),
-  routing: z.string().optional().describe("Role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (Anthropic codegen — faster, recommended when OpenRouter codegen overruns timeouts)"),
-  channel: z.string().optional().describe("System browser channel for validation, e.g. chrome"),
+  routing: routingParam,
+  channel: z.string().optional().describe("System browser channel for validation, e.g. chrome or msedge"),
   intoProject: z.boolean().optional().describe("Write specs into an existing Playwright project's testDir (detect playwright.config.*) instead of the run's tests/"),
   projectDir: z.string().optional().describe("Explicit project dir for intoProject (detection searches from cwd upward when omitted)"),
-  decider: z.string().optional().describe(DECIDER_DESCRIPTION),
+  decider: deciderParam,
 };
 
 export const AutomateInputSchema = z.object(AUTOMATE_INPUT_SHAPE);
 export type AutomateInput = z.infer<typeof AutomateInputSchema>;
 
-export interface AutomateToolResult {
-  runDir: string;
-  specFiles: string[];
+export const AutomateToolResultSchema = z.object({
+  runDir: z.string(),
+  specFiles: z.array(z.string()),
   /** #51: host project's testDir specs were ejected into (undefined in greenfield mode). */
-  projectTestDir?: string;
-  validation?: ReturnType<typeof compactValidation>;
-  cost: AutomateResult["cost"];
+  projectTestDir: z.string().optional(),
+  validation: ValidationSummarySchema.optional(),
+  cost: CostSchema,
   /** ADR-0022: automate writes no report, so its result carries the decision layer (absent without one). */
-  decider?: AutomateResult["decider"];
-  notRepaired?: AutomateResult["notRepaired"];
-  healed?: AutomateResult["healed"];
-}
+  decider: z
+    .object({
+      provider: z.string(),
+      model: z.string(),
+      calls: z.number(),
+      fallbacks: z.array(z.object({ use: z.string(), reason: z.string() })),
+      cost: CostSchema.optional(),
+    })
+    .optional(),
+  notRepaired: z.array(z.object({ test: z.string(), category: z.string(), confidence: z.number(), exclude: z.boolean() })).optional(),
+  healed: z.array(z.object({ test: z.string(), from: z.string(), to: z.string(), confidence: z.number() })).optional(),
+});
+export type AutomateToolResult = z.infer<typeof AutomateToolResultSchema>;
 
 export async function automateTool(input: AutomateInput, deps: ToolDeps = defaultDeps): Promise<AutomateToolResult> {
   const config = deps.resolveConfig({ routing: input.routing, channel: input.channel, decider: input.decider });

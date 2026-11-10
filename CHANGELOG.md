@@ -240,6 +240,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages that were there before, 0 hints and 1 rule before, 0 and 0 after; on the two new pages with repeated elements
   (the three-row table, two identical buttons and two identical links) 7 map locators, 7 + 7 prompt hints and 1 rule
   before, 0 after.
+- **`cairn mcp` tells the client what each tool does, and returns structured results.** `explore`, `design` and
+  `automate` carry tool annotations set from what the code does: none is read-only, all reach an open world (models,
+  the target site), none is idempotent, and only `automate` is destructive (it replaces the `tests/` folder of the run
+  it is given). The descriptions say that each call is paid and which folders it writes, and what `intoProject` and
+  `validate` do. Each tool has an `outputSchema`, and its result comes as `structuredContent` as well as the JSON text.
+
+### Changed
+
+- **`cairn mcp`: `decider`, `routing` and `backend` take only their known values.** The input schemas list them as an
+  `enum` taken from the configuration (`decider`: `off`, `jev`, `laya`, `compat`; `routing`: `volume`, `volume-fast`,
+  `fast`; `backend`: `lib`, `cli`). An unknown `routing` used to print a warning and run without a preset; it is now a
+  validation error, as is a `decider` in upper case, and the call does no work. The CLI and the environment variables
+  are unchanged.
 
 ### Fixed
 
