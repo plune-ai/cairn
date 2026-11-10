@@ -215,9 +215,10 @@ async function ejectToProjectIfRequested(opts: {
     // best-effort cleanup
   }
   const renameNote = res.renamed.length ? ` · ${res.renamed.length} renamed (name collisions avoided)` : "";
+  const skipNote = res.skipped.length ? ` · ${res.skipped.length} skipped (path outside testDir: ${res.skipped.join(", ")})` : "";
   opts.onProgress(
     `into-project — wrote ${res.written.length} spec(s) → ${displayPath(res.testDir)}` +
-      `${target.configPath ? ` (config: ${displayPath(target.configPath)})` : ""}${renameNote}`,
+      `${target.configPath ? ` (config: ${displayPath(target.configPath)})` : ""}${renameNote}${skipNote}`,
   );
   return { projectSpecFiles: res.written, projectTestDir: res.testDir };
 }
