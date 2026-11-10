@@ -20,11 +20,23 @@ npm i @modelcontextprotocol/sdk
 
 ## Tools
 
-| Tool | What it does | Returns |
-|------|--------------|---------|
-| `explore`  | Explore a page → methodology-based cases → `@playwright/test` code → validate ⇄ repair | cases, validation summary, metrics, Pilot verdict, cost, run dir |
-| `design`   | Explore a page → cases in ATC/MTC format, **no code** | cases, metrics, cost, run dir |
-| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir; with an active decider, `decider` and, when any, `notRepaired` and `healed` |
+| Tool | What it does | Returns | Hints |
+|------|--------------|---------|-------|
+| `explore`  | Explore a page → methodology-based cases → `@playwright/test` code → validate ⇄ repair | cases, validation summary, metrics, Pilot verdict, cost, run dir | not read-only, not destructive, not idempotent, open world |
+| `design`   | Explore a page → cases in ATC/MTC format, **no code** | cases, metrics, cost, run dir | not read-only, not destructive, not idempotent, open world |
+| `automate` | Generate `@playwright/test` code from a previous run's ready ATC cases (the second half of design → automate) | spec files, validation, cost, run dir; with an active decider, `decider` and, when any, `notRepaired` and `healed` | not read-only, **destructive**, not idempotent, open world |
+
+The hints are the tool `annotations` a client may show when it asks you to confirm a call. They describe what the
+code does and are hints to the client, not a guarantee:
+- every call is paid (model calls) and writes files, and every tool reaches the outside world (models, the target
+  site);
+- `explore` and `design` write a new `runs/<id>/` folder per call; `explore` with `intoProject` adds spec files to the
+  project's testDir and renames its own file rather than overwrite one that exists;
+- `automate` writes into the run it is given and replaces that run's `tests/` folder (with `intoProject` it adds the
+  specs to the project's testDir and removes the run's `tests/`); `validate` runs the new tests against the target
+  site.
+
+Each result comes back twice: as JSON text, and as `structuredContent` matching the tool's `outputSchema`.
 
 `explore` and `design` take the same input: `url` (required) plus optional `session`, `flow`, `setup`,
 `gaps`, `critique`, `fresh`, `checklist`, `style`, `routing`, `backend`, `channel`, `maxPages`, `decider` —
@@ -32,6 +44,17 @@ mirroring the matching `cairn explore` flags. `automate` instead takes `run` (th
 by `design` or `explore`) plus optional `validate` / `session` / `routing` / `channel` / `decider`. Results come
 back as JSON (run id, the generated cases or spec files, validation / metrics / Pilot, cost, and the
 `runs/<id>/` directory).
+
+Three parameters take a closed set of values, listed as an `enum` in the input schema; any other value is a
+validation error and the call does no work:
+
+| Parameter | Values | Same list as |
+|-----------|--------|--------------|
+| `decider` | `off`, `jev`, `laya`, `compat` (lower case) | `--decider` / `DECIDER` |
+| `routing` | `volume`, `volume-fast`, `fast` | `LLM_ROUTING` presets |
+| `backend` (`explore`, `design`) | `lib`, `cli` | `BROWSER_BACKEND` |
+
+`channel` (`chrome`, `msedge`, …) and `style` (a style name or a pack path) stay free strings.
 
 `decider` (`off` | `jev` | `laya` | `compat`) switches the [decision layer](decider.md) for one call, like
 `--decider`. Everything else comes from the MCP server's own environment, as it does for the CLI:
