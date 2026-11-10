@@ -1,5 +1,6 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { resolveInside } from "../fs/inside-dir.js";
 import type { PageStudy } from "../observe/index.js";
 import type { GeneratedSuite } from "../codegen/index.js";
 import type { RecordedRequest } from "../browser/types.js";
@@ -78,9 +79,8 @@ export class ArtifactStore {
         await mkdir(testsDir, { recursive: true });
         const out: string[] = [];
         for (const f of suite.files) {
-          const target = resolve(testsDir, f.path);
-          const rel = relative(testsDir, target);
-          if (rel.startsWith("..") || isAbsolute(rel)) continue; // traversal — skip
+          const target = resolveInside(testsDir, f.path);
+          if (!target) continue; // traversal — skip
           await mkdir(dirname(target), { recursive: true });
           await writeFile(target, f.content, "utf8");
           out.push(target);
@@ -125,9 +125,8 @@ export class ArtifactStore {
         const out: string[] = [];
         for (const f of files) {
           const rel0 = f.path.replace(/^journeys[/\\]/, ""); // paths are emitted as "journeys/<id>.spec.ts"
-          const target = resolve(jDir, rel0);
-          const rel = relative(jDir, target);
-          if (rel.startsWith("..") || isAbsolute(rel)) continue; // traversal — skip
+          const target = resolveInside(jDir, rel0);
+          if (!target) continue; // traversal — skip
           await mkdir(dirname(target), { recursive: true });
           await writeFile(target, f.content, "utf8");
           out.push(target);
@@ -136,9 +135,8 @@ export class ArtifactStore {
       },
       writeFlowSnapshots: async (pages) => {
         for (const p of pages) {
-          const pdir = resolve(dir, p.dir);
-          const rel = relative(dir, pdir);
-          if (rel.startsWith("..") || isAbsolute(rel)) continue; // traversal — skip
+          const pdir = resolveInside(dir, p.dir);
+          if (!pdir) continue; // traversal — skip
           await mkdir(pdir, { recursive: true });
           await writeFile(join(pdir, "aria.yaml"), p.ariaYaml, "utf8");
           if (p.screenshotB64) {

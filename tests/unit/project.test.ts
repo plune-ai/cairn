@@ -11,6 +11,7 @@ import {
   ejectSuiteToProject,
 } from "../../src/project/index.js";
 import type { FileBlob } from "../../src/codegen/index.js";
+import { resolveInside } from "../../src/fs/inside-dir.js";
 
 async function exists(p: string): Promise<boolean> {
   try {
@@ -148,4 +149,43 @@ describe("ejectSuiteToProject (#51 — writes into the project, non-destructive)
     expect(res.renamed).toEqual([{ from: "login.spec.ts", to: "login.cairn.spec.ts" }]);
     expect((await readdir(testDir)).sort()).toEqual(["login.cairn.spec.ts", "login.spec.ts"]);
   });
+
+  it("skips and reports a generated path that leaves testDir; a normal path is written as before (#259)", async () => {
+    const projDir = join(root, "proj");
+    const testDir = join(projDir, "tests");
+    const absNative = join(root, "abs.spec.ts");
+    const absSlashed = join(root, "abs2.spec.ts").replace(/\\/g, "/");
+    const res = await ejectSuiteToProject(
+      [
+        { path: "../x.spec.ts", content: "// up one" },
+        { path: "a/../../y.spec.ts", content: "// up via a/" },
+        { path: "..\\z.spec.ts", content: "// up, backslash" },
+        { path: absNative, content: "// absolute" },
+        { path: absSlashed, content: "// absolute, slashes" },
+        { path: "pages/login.ts", content: "// pom" },
+      ],
+      { testDir, specSuffix: ".spec.ts" },
+    );
+    expect(res.skipped).toEqual(["../x.spec.ts", "a/../../y.spec.ts", "..\\z.spec.ts", absNative, absSlashed]);
+    expect(res.written).toEqual([resolve(testDir, "pages/login.ts")]);
+    expect(await readFile(join(testDir, "pages", "login.ts"), "utf8")).toBe("// pom");
+    // nothing landed outside testDir
+    expect(await readdir(root)).toEqual(["proj"]);
+    expect(await readdir(projDir)).toEqual(["tests"]);
+    expect(await readdir(testDir)).toEqual(["pages"]);
+  });
+});
+
+describe("resolveInside (#259 — the one path guard every writer shares)", () => {
+  const dir = resolve("some", "testDir");
+  it("keeps a nested relative path under dir", () => {
+    expect(resolveInside(dir, "pages/login.ts")).toBe(resolve(dir, "pages/login.ts"));
+    expect(resolveInside(dir, "a/../login.spec.ts")).toBe(resolve(dir, "login.spec.ts"));
+  });
+  it.each(["../x.spec.ts", "a/../../x.spec.ts", "/abs.spec.ts", "C:/x.spec.ts", "C:\\x.spec.ts", "\\\\host\\share\\x.ts"])(
+    "rejects %s on every platform",
+    (p) => {
+      expect(resolveInside(dir, p)).toBeUndefined();
+    },
+  );
 });

@@ -6,7 +6,7 @@
  * `runs/<id>/tests` folder: the `testDir` the project's runner discovers, and the spec-filename
  * suffix (`.spec.ts` vs `.test.ts`) implied by `testMatch`.
  *
- * Leaf module — depends only on node fs/path (and the codegen `FileBlob` type). Detection is opt-in
+ * Leaf module — depends only on node fs/path, the `src/fs` path guard (and the codegen `FileBlob` type). Detection is opt-in
  * (the `--into-project` flag); without it nothing here runs and the greenfield path is unchanged.
  *
  * Config parsing is best-effort (text regex, not evaluation): a TS/JS/ESM config can't be imported
@@ -16,6 +16,7 @@
 import { stat, readFile, mkdir, writeFile, access } from "node:fs/promises";
 import { dirname, join, resolve, parse as parsePath } from "node:path";
 import type { FileBlob } from "../codegen/index.js";
+import { resolveInside } from "../fs/inside-dir.js";
 
 /** Playwright config filenames, in the order Playwright itself resolves them. */
 export const PW_CONFIG_NAMES = [
@@ -182,6 +183,8 @@ export interface EjectResult {
   written: string[];
   /** Collisions Cairn dodged by renaming its own file (original → final relative path). */
   renamed: { from: string; to: string }[];
+  /** Generated paths NOT written because they leave testDir or are absolute (as generated). */
+  skipped: string[];
   testDir: string;
 }
 
@@ -196,8 +199,15 @@ export async function ejectSuiteToProject(files: FileBlob[], target: ProjectTarg
   const used = new Set<string>(); // names placed within THIS batch (avoid intra-batch collisions)
   const written: string[] = [];
   const renamed: { from: string; to: string }[] = [];
+  const skipped: string[] = [];
   for (const f of files) {
     const normalized = applySuffix(f.path.replace(/\\/g, "/"), target.specSuffix);
+    // #259: a path that climbs out of testDir or is absolute is skipped, never written. A rename
+    // only touches the basename, so checking the normalized path covers every candidate below.
+    if (!resolveInside(target.testDir, normalized)) {
+      skipped.push(f.path);
+      continue;
+    }
     // A path is free when it is neither used in this batch nor already present on disk — so a
     // pre-existing project file is never overwritten; Cairn disambiguates its own file instead.
     let rel = normalized;
@@ -212,5 +222,5 @@ export async function ejectSuiteToProject(files: FileBlob[], target: ProjectTarg
     written.push(abs);
     if (rel !== normalized) renamed.push({ from: f.path, to: rel });
   }
-  return { written, renamed, testDir: target.testDir };
+  return { written, renamed, skipped, testDir: target.testDir };
 }
