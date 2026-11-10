@@ -608,7 +608,8 @@ export function buildProgram(): Command {
         ({ startMcpServer } = await import("../mcp/server.js"));
       } catch (e) {
         const { code, message } = e as { code?: string; message?: string };
-        if (code !== "ERR_MODULE_NOT_FOUND" || !message?.includes("@modelcontextprotocol/")) throw e;
+        // The package name quoted as Node names a missing package, not a path into an installed one whose own import failed.
+        if (code !== "ERR_MODULE_NOT_FOUND" || !/['"]@modelcontextprotocol\/(server|core)\b/.test(message ?? "")) throw e;
         // Nothing on stdout: an MCP client reads it as protocol.
         process.stderr.write(
           "[cairn] `cairn mcp` needs the optional MCP server package, which is not installed.\n" +
