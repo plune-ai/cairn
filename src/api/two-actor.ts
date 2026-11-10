@@ -19,7 +19,7 @@ import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { SessionStore } from "../session/index.js";
 import type { StorageState } from "../browser/types.js";
-import { loadApiFlows, secretHeaderProblems, stepTemplateNames, templateNames, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
+import { isExactNumber, loadApiFlows, numbersAsWritten, secretHeaderProblems, stepTemplateNames, templateNames, type ApiFlow, type ApiFlowFile, type FlowStep } from "./flows.js";
 import type { RequestGuard } from "./guard.js";
 
 export type TwoActorProbe = "read" | "change" | "delete" | "neighbours";
@@ -488,9 +488,11 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
       await res.arrayBuffer().catch(() => undefined);
       return;
     }
+    let text: string;
     let answer: unknown;
     try {
-      answer = await res.json();
+      text = await res.text();
+      answer = JSON.parse(text);
     } catch {
       throw new RequestFailed(`${label}: the answer is not JSON, so nothing can be captured from it`);
     }
@@ -499,8 +501,9 @@ export async function runTwoActorChecks(plan: TwoActorPlan, opts: TwoActorOption
     for (const [name, pointer] of captures) {
       const v = pointerAt(answer, pointer);
       if (v === undefined || v === null || typeof v === "object" || String(v) === "") missing.push(`${pointer} for ${name}`);
-      // JSON.parse has already rounded a number past the safe range, or made it Infinity: it may be another record's id, so it is never kept.
-      else if (typeof v === "number" && ((Number.isInteger(v) && !Number.isSafeInteger(v)) || !Number.isFinite(v))) inexact.push(`{{${name}}}`);
+      // JSON.parse has already rounded a number past the safe range, made it Infinity, or dropped digits of a fraction
+      // (#253): it may be another record's id, so it is never kept.
+      else if (typeof v === "number" && !isExactNumber(v, String(pointerAt(numbersAsWritten(text), pointer)))) inexact.push(`{{${name}}}`);
       else vars[name] = String(v);
     }
     if (missing.length) throw new RequestFailed(`${label}: the answer has no value at ${missing.join(", ")}`);

@@ -266,7 +266,7 @@ describe("the fixture's error text holds no value (#250)", () => {
   });
 
   it("names a captured value that cannot stand in the path, never prints it", async () => {
-    const answer = { status: () => 200, json: async () => ({ link: `x/${SECRET}` }) };
+    const answer = { status: () => 200, json: async () => ({ link: `x/${SECRET}` }), text: async () => JSON.stringify({ link: `x/${SECRET}` }) };
     const file = flowOf({ steps: [{ ...read("/api/links"), capture: { link: "/link" } }, read("/api/{{link}}")] });
     const message = await failureOf(file, async () => answer)("thing");
     expect(message).toBe("API flow: {{link}} is a value, which cannot stand in the path /api/{{link}}");
@@ -289,6 +289,88 @@ describe("the fixture's error text holds no value (#250)", () => {
     const fetch = vi.fn<(url: string) => Promise<unknown>>().mockResolvedValueOnce({ status: () => 201 }).mockRejectedValueOnce(noAnswer("connect ECONNREFUSED 127.0.0.1:1"));
     const message = await failureOf(file, fetch)("thing");
     expect(message).toBe('API flow "thing": the cleanup failed, the data may still be there\nAPI flow "thing" step "delete it" got no answer: ECONNREFUSED');
+  });
+});
+
+describe("the fixture uses a captured number only as the server wrote it (#253)", () => {
+  /** A create that answers `json`, a read of what it created, and a delete of it as the cleanup; the URLs it sent. */
+  const run = async (json: string, capture: Record<string, string> = { id: "/id" }) => {
+    const file = parseApiFlows(
+      JSON.stringify({
+        version: 1,
+        flows: [
+          {
+            name: "thing",
+            steps: [{ method: "POST", path: "/api/things", capture }, { method: "GET", path: "/api/things/{{id}}" }],
+            returns: ["id"],
+            cleanup: [{ method: "DELETE", path: "/api/things/{{id}}" }],
+          },
+        ],
+      }),
+    );
+    const urls: string[] = [];
+    const fetch = async (url: string, init?: { method?: string }) => {
+      urls.push(`${init?.method} ${new URL(url).pathname}`);
+      return { status: () => 201, json: async () => JSON.parse(json) as unknown, text: async () => json };
+    };
+    return { message: await failureOf(file, fetch)("thing"), urls };
+  };
+
+  it.each([
+    ["above 2^53", "9007199254740993"],
+    ["too large to hold (1e400 parses as Infinity)", "1e400"],
+    ["too far below zero to hold", "-1e400"],
+    ["a fraction JSON.parse reads as the largest safe integer", "9007199254740991.4"],
+    ["more digits than a number holds, read as 3", "3.0000000000000000001"],
+  ])("a captured number %s is not used: no read and no delete can reach another record", async (_label, n) => {
+    const { message, urls } = await run(`{"id":${n}}`);
+    expect(message).toBe('API flow "thing" step "POST /api/things": {{id}} is not a safe integer (the number may have been rounded), so it is not used');
+    expect(urls).toEqual(["POST /api/things"]);
+  });
+
+  it("keeps the other captures of that answer, so the cleanup still goes to the created record", async () => {
+    const { message, urls } = await run('{"id":3,"size":9007199254740993}', { id: "/id", size: "/size" });
+    expect(message).toMatch(/\{\{size\}\} is not a safe integer/);
+    expect(urls).toEqual(["POST /api/things", "DELETE /api/things/3"]);
+  });
+
+  it.each([
+    ["the largest safe integer", "9007199254740991", "9007199254740991"],
+    ["a fraction a number holds", "3.5", "3.5"],
+    ["a whole number written with a fraction or an exponent", "30e-1", "3"],
+    ["zeros after the point", "3.50", "3.5"],
+  ])("takes %s", async (_label, n, sent) => {
+    const { message, urls } = await run(`{"id":${n}}`);
+    expect(message).toBe("(it did not fail)");
+    expect(urls).toEqual(["POST /api/things", `GET /api/things/${sent}`, `DELETE /api/things/${sent}`]);
+  });
+});
+
+describe("a template in a key (#253)", () => {
+  it("is refused when the file is read: a key goes out as written, so nothing fills it", () => {
+    for (const where of ["headers", "query", "form"] as const) {
+      const bad = clone(projectFlows) as { flows: { cleanup: Record<string, unknown>[] }[] };
+      bad.flows[0]!.cleanup[0]![where] = { "{{nope}}": "1" };
+      expect(() => parseApiFlows(JSON.stringify(bad))).toThrow('flow "project" cleanup 1: {{nope}} is in a key; only values are filled, so write the key as it goes out');
+    }
+    const body = clone(projectFlows) as { flows: { steps: Record<string, unknown>[] }[] };
+    body.flows[0]!.steps[0]!.body = { name: "x", tags: [{ "{{ uid }}": 1 }] };
+    expect(() => parseApiFlows(JSON.stringify(body))).toThrow('flow "project" step 1: {{uid}} is in a key');
+    const fileHeaders = { ...clone(projectFlows), headers: { "X-{{env.H}}": "1" } };
+    expect(() => parseApiFlows(JSON.stringify(fileHeaders))).toThrow("headers: {{env.H}} is in a key");
+  });
+
+  it("does not keep the written fixture from sending a cleanup step: it reads values only, as the file check does", async () => {
+    const file = parseApiFlows(JSON.stringify(projectFlows));
+    // Built past parseApiFlows (which refuses it) to prove the fixture itself reads it as the two-actor check does.
+    file.flows[0]!.cleanup[0]!.query = { "{{nope}}": "1" };
+    const methods: string[] = [];
+    const fetch = async (_url: string, init?: { method?: string }) => {
+      methods.push(init?.method ?? "");
+      return { status: () => (init?.method === "POST" ? 201 : 204), json: async () => ({ id: 3, name: "x" }), text: async () => '{"id":3,"name":"x"}' };
+    };
+    expect(await failureOf(file, fetch)("project")).toBe("(it did not fail)");
+    expect(methods).toEqual(["POST", "DELETE"]);
   });
 });
 

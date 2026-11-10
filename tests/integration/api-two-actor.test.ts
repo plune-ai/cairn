@@ -1063,6 +1063,8 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
       ["far below it", "-1e21"],
       ["too large to hold (1e400 parses as Infinity)", "1e400"],
       ["too far below zero to hold", "-1e400"],
+      ["that JSON.parse reads as the largest safe integer (#253)", "9007199254740991.4"],
+      ["with more digits than a number holds, read as 3 (#253)", "3.0000000000000000001"],
     ])("stops the check on a captured number %s: no read and no delete can reach another record", async (_label, number) => {
       const { fetch, calls } = fakeFetch(created(`{"id":${number}}`));
       const { result, all } = await runFake(await writePlan(), fetch);
@@ -1078,6 +1080,16 @@ describe("two-actor check: errors about a request never hold a secret (#233)", (
       expect(result.error).toBeUndefined();
       expect(urls(calls)).toContain("DELETE /api/projects/3");
       expect(all).not.toContain("3.5");
+    });
+
+    it.each([
+      ["30e-1", "3"],
+      ["3.000", "3"],
+    ])("takes %s, a whole number written another way, as the number it is (#253)", async (number, sent) => {
+      const { fetch, calls } = fakeFetch(created(`{"id":${number}}`));
+      const { result } = await runFake(await writePlan(), fetch);
+      expect(result.error).toBeUndefined();
+      expect(urls(calls).at(-1)).toBe(`DELETE /api/projects/${sent}`);
     });
 
     it("keeps the other captures of that answer, so the cleanup still goes to the created record", async () => {
