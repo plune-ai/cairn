@@ -280,6 +280,31 @@ describe("MCP · tools/call · closed values and structured results", () => {
     await client.close();
   });
 
+  it("MCP · tools/call · automate keeps its decision layer in the structured result", async () => {
+    const { deps } = makeDeps();
+    const decider = { provider: "laya", model: "multilingual", calls: 2, fallbacks: [] };
+    const notRepaired = [{ test: "x", category: "app-bug", confidence: 0.9, exclude: true }];
+    const healed = [{ test: "y", from: "a", to: "b", confidence: 0.9 }];
+    const base = deps.runAutomate;
+    deps.runAutomate = async (input) => ({ ...(await base(input)), decider, notRepaired, healed }) as unknown as AutomateResult;
+    const { client } = await connect(deps);
+    const r = await client.callTool({ name: "automate", arguments: { run: "runs/r1", decider: "laya" } });
+    expect(r.isError).toBeFalsy();
+    expect(r.structuredContent).toMatchObject({ decider, notRepaired, healed });
+    await client.close();
+  });
+
+  it("MCP · tools/call · a finished run whose result fails its schema is an error that names the run folder", async () => {
+    const { deps } = makeDeps();
+    const base = deps.runAutomate;
+    deps.runAutomate = async (input) => ({ ...(await base(input)), runDir: "runs/r1-done", decider: { provider: 1 } }) as unknown as AutomateResult;
+    const { client } = await connect(deps);
+    const r = await client.callTool({ name: "automate", arguments: { run: "runs/r1" } });
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(r.content)).toContain("its files are in runs/r1-done");
+    await client.close();
+  });
+
   it("MCP · exploreTool · its result passes its own output schema", async () => {
     const r = await exploreTool({ url: "http://x" }, makeDeps().deps);
     expect(ExploreToolResultSchema.safeParse(r).success).toBe(true);

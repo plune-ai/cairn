@@ -29,6 +29,9 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
   },
 };
 
+/** The preset names as a tuple, so a schema (the MCP tools' `routing` enum) can list them; a test keeps it equal to the keys of `ROUTING_PRESETS` below. */
+export const ROUTING_PRESET_NAMES = ["volume", "volume-fast", "fast"] as const;
+
 /**
  * Named role-routing presets (L1-01, ADR-0011). Layered OVER a profile's tier map:
  * a preset only sets the routable roles (`worker`/`reasoner`); the cheap `judge`
@@ -47,9 +50,6 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
  * worker is NOT Groq (Groq's OpenAI-compat endpoint 400s on large-codegen json_schema, see
  * `groq-fast-json-schema-bug`), so this preset is the recommended escape for slow OpenRouter codegen.
  */
-/** The preset names as a tuple, so a schema (the MCP tools' `routing` enum) can list them; a test keeps it equal to the keys below. */
-export const ROUTING_PRESET_NAMES = ["volume", "volume-fast", "fast"] as const;
-
 export const ROUTING_PRESETS: Record<string, RolesConfig> = {
   volume: {
     // worker spans identifyElements(vision) + generateCode/repair(bulk) → one cheap text model.

@@ -19,10 +19,20 @@ import {
 /**
  * The result as the client gets it: JSON text (for clients that read only text) and the same object as
  * `structuredContent`. Parsing drops keys the output schema does not name, which a client would reject.
+ * The work is already done (and paid) when this runs, so a result that fails its schema is an error that
+ * still names the run folder, never a lost run.
  */
-function toolResult<T extends Record<string, unknown>>(schema: { parse: (v: unknown) => T }, result: unknown) {
-  const structured = schema.parse(result);
-  return { content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }], structuredContent: structured };
+function toolResult<T extends Record<string, unknown>>(
+  schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false; error: { message: string } } },
+  result: unknown,
+) {
+  const parsed = schema.safeParse(result);
+  if (!parsed.success) {
+    const runDir = (result as { runDir?: unknown } | null)?.runDir;
+    const where = typeof runDir === "string" ? ` The run finished; its files are in ${runDir}.` : "";
+    return { isError: true, content: [{ type: "text" as const, text: `The result did not match the tool's output schema: ${parsed.error.message}.${where}` }] };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(parsed.data, null, 2) }], structuredContent: parsed.data };
 }
 
 /**
