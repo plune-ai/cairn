@@ -81,4 +81,5 @@ jobs:
             exit 1
           fi
           npx -y @plune-ai/cli@0.34.5 run import "$report" --name "MCP self-lint" \
-            --key "mcp-self-lint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+            --key "mcp-self-lint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --fail-on-failures
