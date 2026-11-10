@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
-import { readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
 import { stepsFromTrace } from "./trace-chapters.js";
 
@@ -25,6 +25,14 @@ export interface RawTestResult {
 export interface HttpCredentialsEnv {
   usernameVar: string;
   passwordVar: string;
+}
+
+/**
+ * #256: where Playwright writes a run's files. Always inside the run: without it Playwright uses `test-results/` beside
+ * the nearest `package.json`, the user's project, which every run then shares and clears.
+ */
+function outputDirOf(runDir: string, screencastDir?: string): string {
+  return screencastDir ?? join(runDir, "test-results");
 }
 
 export function configContent(
@@ -59,14 +67,14 @@ export function configContent(
   }
   parts.push(launchOpts);
   const use = `{ ${parts.join(", ")} }`;
-  const outputDir = screencastDir ? `\n  outputDir: ${JSON.stringify(screencastDir)},` : "";
   return `const { defineConfig } = require(${JSON.stringify(PW_TEST)});
 module.exports = defineConfig({
   testDir: ${JSON.stringify(join(runDir, "tests"))},
   fullyParallel: true,
   workers: ${workers},
   retries: 0,
-  reporter: 'json',${outputDir}
+  reporter: 'json',
+  outputDir: ${JSON.stringify(outputDirOf(runDir, screencastDir))},
   use: ${use},
 });
 `;
@@ -263,6 +271,30 @@ function withoutRequestLog(message: string | undefined): string | undefined {
   return kept.join("\n").trim();
 }
 
+/**
+ * #256: Playwright writes each failed test's error into `error-context.md` in the output folder, a failed request's
+ * log included, and no option turns that off. The file keeps the rest (the page snapshot, the test source) and loses
+ * the log by the same rule as the report. A file that cannot be rewritten is removed rather than left whole.
+ */
+async function scrubErrorContexts(outputDir: string): Promise<void> {
+  let files: string[];
+  try {
+    files = await readdir(outputDir, { recursive: true });
+  } catch {
+    return; // nothing was written
+  }
+  for (const file of files.filter((f) => basename(f) === "error-context.md")) {
+    const path = join(outputDir, file);
+    try {
+      const text = await readFile(path, "utf8");
+      const clean = withoutRequestLog(text);
+      if (clean !== text) await writeFile(path, `${clean}\n`, "utf8");
+    } catch {
+      await rm(path, { force: true });
+    }
+  }
+}
+
 function extract(json: PwJson): RawTestResult[] {
   const out: RawTestResult[] = [];
   const walk = (s: PwSuite): void => {
@@ -318,6 +350,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
     stdout = err.stdout ?? "";
     stderr = err.stderr ?? "";
   }
+  await scrubErrorContexts(outputDirOf(absRunDir, screencastDir));
 
   // #94: when recording, drop the step-chapter sidecar next to the .webm files. The reporter writes the
   // video paths into stdout AFTER the run, so this runs post-parse. Best-effort: a recorder/IO failure

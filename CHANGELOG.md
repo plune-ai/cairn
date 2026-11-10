@@ -263,6 +263,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed test's request log no longer stays on disk after validation (#256).** Playwright writes each failed
+  test's error into `error-context.md`, and for a request the test sent itself that error is the whole call log:
+  the URL, `Authorization`, `cookie`, `set-cookie`. Validation now gives Playwright an output folder inside the run
+  (`runs/<id>/test-results/`, or `runs/<id>/screencasts/` with `--screencast`, as before), so a run no longer writes
+  `test-results/` beside the project's `package.json`, and after each run it drops the request's log from every
+  `error-context.md` there by the same rule as the failure texts (#250), keeping each status. The page snapshot, the
+  test source and the video stay.
 - **API-flow fixture errors, repair hints and session file errors no longer repeat a value (#250).** The written
   fixture named a value that cannot stand in a path by printing it (`{{env.SEG}} is "sec/…"`), and let a failed request
   throw Playwright's own text, whose call log holds the full URL and every header. It now names the template as written,

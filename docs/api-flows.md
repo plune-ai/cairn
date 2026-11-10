@@ -124,9 +124,11 @@ call log, which holds the full URL and every header; to see it, run the tests wi
 Playwright config records one, does keep every request's headers.
 
 That covers the fixture's own requests. A request the test sends itself still fails with Playwright's call log, and
-Playwright writes that log to disk whole, `Authorization` and `set-cookie` included:
-`test-results/<test>/error-context.md`, beside the nearest `package.json` (with `--screencast`, under
-`runs/<id>/screencasts/`, beside the video). Keep that folder out of anything you publish, such as a CI artifact.
+Playwright writes that log to disk whole, `Authorization` and `set-cookie` included, in `error-context.md` in its
+output folder. When Cairn runs the suite (`--validate`), that folder is inside the run (`runs/<id>/test-results/`, or
+`runs/<id>/screencasts/` beside the video with `--screencast`), and Cairn takes the request's log out of the file
+after the run, keeping each answer's status. When you run the tests yourself, with your own Playwright config, the file
+is written whole to that config's output folder: keep it out of anything you publish, such as a CI artifact.
 
 ## Flows that change data need an explicit flag
 

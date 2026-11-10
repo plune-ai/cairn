@@ -51,10 +51,10 @@ const RECORDED_JSON = JSON.stringify({
 });
 
 describe("#94 configContent — opt-in screencast recording", () => {
-  it("default (no screencastDir): no video, no outputDir — zero regression", () => {
+  it("default (no screencastDir): no video; #256: the output stays inside the run", () => {
     const cfg = configContent("/runs/x");
     expect(cfg).not.toMatch(/video:/);
-    expect(cfg).not.toMatch(/outputDir:/);
+    expect(cfg).toContain(`outputDir: ${JSON.stringify(join("/runs/x", "test-results"))}`);
   });
 
   it("enables Playwright video + a stable outputDir when recording is on", () => {
