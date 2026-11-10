@@ -103,8 +103,8 @@ cleanup error though nothing reached the server. A cleanup step without `expect`
 login page after the owner's session ended is a cleanup error naming the method, path and status); only after the
 other actor's `DELETE` went through does a `404` or `410` from it count as done. A cleanup step whose value was never
 captured (the create answered without the id) cannot be sent and is reported as a cleanup error naming the resource
-and the missing value. A captured JSON whole number past 2^53, above or below zero, or a number too large to hold
-(`1e400`), stops the check, naming the capture: it may have been rounded, and a read or a cleanup must not reach another
+and the missing value. A captured JSON whole number past 2^53, above or below zero, a number too large to hold
+(`1e400`), or one written with more digits than a number holds (`9007199254740991.4`), stops the check, naming the capture: it may have been rounded, and a read or a cleanup must not reach another
 record. Only a capture that a request sends is read: one that no path, query, body, form or header of the flow, the
 resource or the change names stops nothing. A string id above 2^53 is used as written, and
 its neighbours are skipped. A template in a step's `name` is only part of that name. A `{{uid}}` in the actors' or the

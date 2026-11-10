@@ -87,8 +87,11 @@ are not followed) and `capture` (name → JSON pointer into the JSON answer, `/i
 Templates, in a step's `path`, `headers`, `query`, `body` and `form` (a `name` is only a label, and is not filled): `{{name}}` — a value captured by an earlier step (in the cleanup, any step);
 `{{env.NAME}}` — read from the environment when the test runs; `{{uid}}` — a value unique to this fixture run, for
 names that must not collide. In a path, values are URL-encoded, and a value that is empty, `.`, `..` or holds a `/`
-is refused rather than sent. A captured value that is empty counts as not captured. A template that names nothing known is refused when
-the file is read.
+is refused rather than sent. A captured value that is empty counts as not captured. A captured JSON number that
+`JSON.parse` may have changed is not used, and the step fails naming it: a whole number past 2^53, a number too large
+to hold (`1e400`), or one written with more digits than a number holds (`9007199254740991.4`, `3.0000000000000000001`),
+since a read or a cleanup with it could reach another record. A template that names nothing known is refused when
+the file is read, and so is a template in a key (a header name, a query, form or body key): only values are filled.
 
 **No secrets in the file.** A header such as `Authorization`, `Cookie` or `X-Api-Key`, and a body, form or query
 field such as `password`, `pass`, `pwd`, `credentials`, `api_key`, `access_token`, `token`, `secret` or `auth`, at any
