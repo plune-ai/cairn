@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-const PLUNE_CLI = "@plune-ai/cli@0.34.6";
+const PLUNE_CLI = "@plune-ai/cli@0.36.0";
 
 const [dir, ...server] = process.argv.slice(2);
 if (!dir || server[0] !== "--" || server.length < 2) {
