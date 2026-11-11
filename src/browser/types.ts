@@ -61,6 +61,8 @@ export interface ElementState {
    * else is read then (`visible` is false): what a blind first one says is not this element's.
    */
   ambiguous?: number;
+  /** #24: a field the DOM marks required (`required`, or `aria-required="true"`). Absent when it is not, or could not be read. */
+  required?: true;
 }
 
 /** An element with a verified locator (verify-before-design, grounding). */

@@ -16,6 +16,7 @@ Start at the [root README](../README.md) for the 30-second pitch; this page is t
 | To describe the environment (Basic Auth → login → start path) | [`environment.md`](./environment.md) |
 | To read a confirmation e-mail or use a TOTP code in a scenario | [`mailbox.md`](./mailbox.md) |
 | To set up a UI test's data or sign-in through the API, and clean it up | [`api-flows.md`](./api-flows.md) |
+| To write an app's user docs by walking its UI | [`collect-docs.md`](./collect-docs.md) |
 | To configure providers, profiles and role routing | [`configuration.md`](./configuration.md) |
 | To change the house style of generated cases | [`prompts-and-styles.md`](./prompts-and-styles.md) |
 | To drive it from a terminal UI | [`tui.md`](./tui.md) |

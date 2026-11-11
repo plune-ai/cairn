@@ -731,7 +731,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       ? await loc
           .evaluate(
             (node: unknown) => {
-              const n = node as { getAttribute(a: string): string | null; tagName: string; type?: string; form?: unknown };
+              const n = node as { getAttribute(a: string): string | null; tagName: string; type?: string; form?: unknown; required?: boolean };
               const hasPopup = n.getAttribute("aria-haspopup");
               const expanded = n.getAttribute("aria-expanded");
               const controls = n.getAttribute("aria-controls");
@@ -745,6 +745,8 @@ export class PlaywrightLibBackend implements BrowserBackend {
                   ...(controls ? { controls } : {}),
                 },
                 submitsForm: submitter && !!n.form,
+                // #24: what the docs call a required field
+                required: n.required === true || n.getAttribute("aria-required") === "true",
               };
             },
             undefined,
@@ -759,6 +761,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       checked,
       ...(popup && Object.keys(popup).length > 0 ? { popup } : {}),
       ...(read?.submitsForm ? { submitsForm: true as const } : {}),
+      ...(read?.required ? { required: true as const } : {}),
     };
   }
 

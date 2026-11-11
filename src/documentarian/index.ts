@@ -115,7 +115,7 @@ export function analysisFromMap(map: InteractionMap, currentRefs: Set<string>): 
 }
 
 /** Stable, filesystem-safe cache filename for a URL (the page is disambiguated by the fingerprint inside). */
-function cacheFile(cacheDir: string, url: string): string {
+export function cacheFile(cacheDir: string, url: string): string {
   return join(cacheDir, `${createHash("sha256").update(url).digest("hex").slice(0, 16)}.json`);
 }
 

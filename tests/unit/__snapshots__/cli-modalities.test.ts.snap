@@ -6,47 +6,52 @@ exports[`CLI surface lock (C1-02) > cairn --help lists the gated stubs (coming-s
 @plune-ai/cairn — autonomous UI test generator
 
 Options:
-  -V, --version            output the version number
-  -h, --help               display help for command
+  -V, --version                output the version number
+  -h, --help                   display help for command
 
 Commands:
-  observe [options]        Explore a page: ARIA snapshot + interactive elements
-                           + screenshot
-  explore [options]        Explore a page and generate methodology-based test
-                           cases (Sprint 2: no code)
-  api [options]            Generate API tests from an OpenAPI 3.x spec; with
-                           --base-url, run them and assert responses
-  dataset-add [options]    Add a run (study.json) to an experiment dataset
-  experiment [options]     Compare prompt versions on a dataset (B2
-                           self-improvement)
-  design [options]         Explore a page and WRITE test cases in ATC format
-                           (.md, with selectors), WITHOUT code
-  automate [options]       Generate @playwright/test from ready cases
-                           (runs/<id>/testcases/*.md)
-  install-browsers         Download the Chromium build Cairn drives — uses
-                           Cairn's OWN Playwright, so the revision always
-                           matches
-  doctor                   Diagnose the setup: Cairn's Playwright and the
-                           Chromium it expects (with the fix for a missing
-                           build), plus the decision layer when DECIDER is set
-  promote [options]        Promote manual MTC case(s) to automatable ATC (.md
-                           only; run \`automate\` to generate code)
-  view [options] <runDir>  Build view.html in a finished run: its screencast
-                           video with the steps as chapters (offline, one file)
-  session                  Manage saved login sessions (.auth/)
-  login [options]          Alias for \`cairn session capture\` — capture a login
-                           session interactively
-  ui|e2e                   Generate UI / end-to-end tests — coming soon (gated;
-                           see L-G2)
-  unit                     Generate unit tests — coming soon (gated; see L-G2)
-  docs                     Generate docs / doctest examples — coming soon
-                           (gated; see L-G2)
-  mcp                      run an MCP server (stdio) exposing explore/design as
-                           tools for Claude Code / Cursor
-  ci                       CI / PR bot (#50): run cairn on a PR from GitHub
-                           Action inputs/env, post a summary comment, optionally
-                           open a follow-up PR
-  help [command]           display help for command
+  observe [options]            Explore a page: ARIA snapshot + interactive
+                               elements + screenshot
+  explore [options]            Explore a page and generate methodology-based
+                               test cases (Sprint 2: no code)
+  api [options]                Generate API tests from an OpenAPI 3.x spec; with
+                               --base-url, run them and assert responses
+  collect-docs|docs [options]  Walk the app's screens and overlays and write its
+                               user docs: runs/docs-<id>/docs.md with
+                               screenshots, and openapi.derived.json from its
+                               traffic
+  dataset-add [options]        Add a run (study.json) to an experiment dataset
+  experiment [options]         Compare prompt versions on a dataset (B2
+                               self-improvement)
+  design [options]             Explore a page and WRITE test cases in ATC format
+                               (.md, with selectors), WITHOUT code
+  automate [options]           Generate @playwright/test from ready cases
+                               (runs/<id>/testcases/*.md)
+  install-browsers             Download the Chromium build Cairn drives — uses
+                               Cairn's OWN Playwright, so the revision always
+                               matches
+  doctor                       Diagnose the setup: Cairn's Playwright and the
+                               Chromium it expects (with the fix for a missing
+                               build), plus the decision layer when DECIDER is
+                               set
+  promote [options]            Promote manual MTC case(s) to automatable ATC
+                               (.md only; run \`automate\` to generate code)
+  view [options] <runDir>      Build view.html in a finished run: its screencast
+                               video with the steps as chapters (offline, one
+                               file)
+  session                      Manage saved login sessions (.auth/)
+  login [options]              Alias for \`cairn session capture\` — capture a
+                               login session interactively
+  ui|e2e                       Generate UI / end-to-end tests — coming soon
+                               (gated; see L-G2)
+  unit                         Generate unit tests — coming soon (gated; see
+                               L-G2)
+  mcp                          run an MCP server (stdio) exposing explore/design
+                               as tools for Claude Code / Cursor
+  ci                           CI / PR bot (#50): run cairn on a PR from GitHub
+                               Action inputs/env, post a summary comment,
+                               optionally open a follow-up PR
+  help [command]               display help for command
 "
 `;
 

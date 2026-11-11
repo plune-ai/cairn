@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CLI `cairn`. Commands: observe · explore · design · automate · dataset-add · experiment ·
- * promote · session · login, plus GATED modality stubs (ui|e2e / api / unit / docs — C1-01).
+ * promote · session · login · collect-docs (alias docs), plus GATED modality stubs (ui|e2e / unit — C1-01).
  * The umbrella router is thin: each modality command dispatches through the shared core
  * (`runModality`), so a future modality is a thin add, not a fork.
  * `lex-bot` stays as a hidden, deprecated alias (see ./lex-bot.ts) → same code path.
@@ -176,6 +176,25 @@ export function buildProgram(): Command {
     .option("--flows <file>", "#230: write a Playwright fixture (api-flows.fixture.ts, into --out) from the API flows in <file>; sends no request. With --base-url --allow-mutations, flows that change data may run against that address")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("api", opts);
+    });
+
+  // #24: the docs modality. `cairn docs` is its alias, as `login` is `session capture`'s.
+  program
+    .command("collect-docs")
+    .alias("docs")
+    .description("Walk the app's screens and overlays and write its user docs: runs/docs-<id>/docs.md with screenshots, and openapi.derived.json from its traffic")
+    .requiredOption("--url <url>", "the app's start page")
+    .option("--session <name>", "name of the saved session (.auth/<name>.storageState.json)")
+    .option("--session-file <path>", "direct path to a storageState file (any name)")
+    .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download)")
+    .option("--headed", "visible browser (debug)")
+    .option("--max-pages <n>", "the most screens to walk, following the app's links (default 10; one LLM call per new or changed screen)")
+    .option("--out <dir>", "where to write the docs (default runs/docs-<id>/)")
+    .option("--fresh", "describe every screen again, even an unchanged one (ignore the cached descriptions)")
+    .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated); lib backend")
+    .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (sets LLM_ROUTING)")
+    .action(async (opts: Record<string, unknown>) => {
+      await runModality("collect-docs", opts);
     });
 
   program
