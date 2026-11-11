@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`cairn collect-docs`: an app's user docs, written by walking its UI (#24).** `cairn collect-docs --url <app>
+  [--session <s>]` (alias `cairn docs`, which was a coming-soon stub) follows the app's links, same origin and never a
+  sign-out or deletion link, up to `--max-pages` screens (default 10), and opens the dialogs, drawers, menus and wizards
+  of each screen as `explore` does (#225), under its write guard, so documenting changes nothing on the server. It
+  writes `docs.md` in `runs/docs-<id>/` (or `--out`): one `## <Kind>: <title>` section per screen and overlay with its
+  screenshot, what it is, who gets here or what opens it, its ways out, its fields and which are required (`required` or
+  `aria-required` in the DOM), the steps of a wizard and what blocks Next, what a user can do and where each link or
+  button leads, and what a user might come there for; then a `## Questions` list. What the walk could not explain — a
+  status or a label shown without explanation, an abbreviation — is a question there, never a guess in the text. The
+  app's API requests seen on the way become `openapi.derived.json` (#229). The format is described in
+  `docs/collect-docs.md`.
+
+  One LLM call per screen describes the screen and its overlays from the ARIA snapshot. Its answer is cached in
+  `.cairn-cache/understanding/screens/` by the URL and a fingerprint of what the walk saw there (ADR-0018), so a second
+  walk of an unchanged screen makes no call; `--fresh` describes every screen again. An address that cannot be reached
+  or a start page with no heading and no control stops the run with a one-line error and writes nothing.
+- The lib backend's element state now says whether a field is required (`ElementState.required`), and
+  `exploreOverlays` takes an `onOverlay` hook, called while each overlay it finds is still open.
+
 ## [0.10.0] - 2026-11-11
 
 ### Added

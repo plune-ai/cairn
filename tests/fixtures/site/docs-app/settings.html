@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Settings — Docs fixture</title>
+    <style>
+      [hidden] { display: none; }
+      .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Main">
+      <a href="index.html">Home</a>
+      <a href="projects.html">Projects</a>
+      <a href="settings.html">Settings</a>
+    </nav>
+    <main>
+      <h1>Settings</h1>
+      <label><input type="checkbox" /> Email alerts</label>
+      <button type="button" id="open" aria-haspopup="dialog">Start setup</button>
+    </main>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <div id="wizard" class="dialog" role="dialog" aria-modal="true" aria-label="Setup wizard" hidden>
+      <h2 id="title">Step 1 of 3</h2>
+      <div id="step1"><label>Company <input id="company" type="text" /></label></div>
+      <div id="step2" hidden><label>Team size <input id="team" type="text" /></label></div>
+      <div id="step3" hidden><p>Review your answers</p></div>
+      <div id="error" role="alert"></div>
+      <button type="button" id="back" hidden>Back</button>
+      <button type="button" id="next">Next</button>
+      <button type="button" id="finish" hidden>Finish</button>
+      <button type="button" id="cancel">Cancel</button>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      let step = 1;
+      function show(n) {
+        step = n;
+        for (const i of [1, 2, 3]) $("step" + i).hidden = i !== n;
+        $("title").textContent = "Step " + n + " of 3";
+        $("back").hidden = n === 1;
+        $("next").hidden = n === 3;
+        $("finish").hidden = n !== 3;
+        $("error").textContent = "";
+      }
+      const close = () => { $("wizard").hidden = true; $("backdrop").hidden = true; show(1); };
+      $("open").addEventListener("click", () => { $("wizard").hidden = false; $("backdrop").hidden = false; });
+      $("next").addEventListener("click", () => {
+        if (step === 1 && !$("company").value.trim()) { $("error").textContent = "Company is required"; return; }
+        show(step + 1);
+      });
+      $("back").addEventListener("click", () => show(step - 1));
+      $("cancel").addEventListener("click", close);
+      $("finish").addEventListener("click", close);
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    </script>
+  </body>
+</html>

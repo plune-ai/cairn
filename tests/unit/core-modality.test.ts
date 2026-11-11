@@ -4,7 +4,7 @@ import { MODALITIES, getModality, runModality } from "../../src/core/registry.js
 
 /**
  * C1-01: a `Modality` is one kind of test artifact Cairn can generate. `explore` (UI) and `api`
- * (OpenAPI ingest, API-1 #22) are real; ui/unit/docs are GATED stubs (L-G2 / #25) — discoverable
+ * (OpenAPI ingest, API-1 #22) and `collect-docs` (#24, alias `docs`) are real; ui/unit are GATED stubs (L-G2 / #25) — discoverable
  * placeholders with ZERO generation logic. The registry is the seam every modality reuses.
  */
 
@@ -35,14 +35,14 @@ describe("gatedNotice (pure)", () => {
 });
 
 describe("registry (C1-01)", () => {
-  it("registers explore + api as REAL modalities (have a run); ui/unit/docs are gated stubs", () => {
-    for (const real of ["explore", "api"]) {
+  it("registers explore, api and collect-docs as REAL modalities (have a run); ui/unit are gated stubs", () => {
+    for (const real of ["explore", "api", "collect-docs"]) {
       const m = getModality(real);
       expect(m?.gated, `${real} should be real`).toBe(false);
       expect(typeof m?.run, `${real} should carry a runner`).toBe("function");
     }
 
-    for (const name of ["ui", "unit", "docs"]) {
+    for (const name of ["ui", "unit"]) {
       const m = getModality(name);
       expect(m, `modality ${name} should exist`).toBeDefined();
       expect(m?.gated, `${name} should be gated`).toBe(true);
@@ -55,6 +55,10 @@ describe("registry (C1-01)", () => {
     expect(getModality("e2e")?.name).toBe("ui");
   });
 
+  it("resolves the docs alias to the collect-docs modality (#24)", () => {
+    expect(getModality("docs")?.name).toBe("collect-docs");
+  });
+
   it("ui carries the explore pointer as its hint", () => {
     expect(getModality("ui")?.hint).toContain("cairn explore --url");
   });
@@ -65,7 +69,7 @@ describe("registry (C1-01)", () => {
 
   it("exposes exactly the gated stubs (build-by-demand discipline)", () => {
     const gated = MODALITIES.filter((m) => m.gated).map((m) => m.name).sort();
-    expect(gated).toEqual(["docs", "ui", "unit"]); // api left the gate in API-1 (#22)
+    expect(gated).toEqual(["ui", "unit"]); // api left the gate in API-1 (#22), docs in #24
   });
 });
 

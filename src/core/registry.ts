@@ -1,14 +1,15 @@
 /**
  * C1-01 — the modality registry: the single list every surface (CLI, tests) reads.
  *
- * `explore` (UI) is the only REAL modality today. ui/api/unit/docs are GATED stubs (L-G2 / #25):
+ * `explore`, `api` and `collect-docs` (#24) are REAL modalities. ui/unit are GATED stubs (L-G2 / #25):
  * placeholders with no `run`, pulled one at a time by named demand. Adding a modality = append one
- * entry (+ a `run` that consumes the shared core). #21–24 stay gated until a named user pulls.
+ * entry (+ a `run` that consumes the shared core).
  */
 import { defaultIO, gatedNotice } from "./modality.js";
 import type { IO, Modality } from "./modality.js";
 import { exploreModality } from "./modalities/explore.js";
 import { apiModality } from "./modalities/api.js";
+import { collectDocsModality } from "./modalities/collect-docs.js";
 
 export const MODALITIES: Modality[] = [
   exploreModality,
@@ -23,7 +24,8 @@ export const MODALITIES: Modality[] = [
   // generation yet). It is a REAL modality now — registered with its own `--spec` command below.
   apiModality,
   { name: "unit", gated: true, summary: "Generate unit tests" },
-  { name: "docs", gated: true, summary: "Generate docs / doctest examples" },
+  // #24: the docs stub became `collect-docs` (alias `docs`), registered with its own command.
+  collectDocsModality,
 ];
 
 /** Look up a modality by its name or one of its aliases (e.g. `e2e` → the `ui` modality). */

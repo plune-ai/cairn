@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Home — Docs fixture</title>
+  </head>
+  <body>
+    <nav aria-label="Main">
+      <a href="index.html">Home</a>
+      <a href="projects.html">Projects</a>
+      <a href="settings.html">Settings</a>
+    </nav>
+    <main>
+      <h1>Home</h1>
+      <p>Your SLA this month: 99.9%</p>
+      <p>Open projects: <span id="count">…</span></p>
+    </main>
+    <script>
+      // the app's own API: what the OpenAPI draft is made from
+      fetch("/api/ok").then((r) => r.text()).then((t) => { document.getElementById("count").textContent = t === "ok" ? "3" : "?"; });
+    </script>
+  </body>
+</html>

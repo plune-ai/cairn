@@ -52,6 +52,11 @@ export interface ExploreOverlaysInput {
   onProgress?: (event: string) => void;
   /** The most triggers pressed on the page (cost guardrail). */
   maxTriggers?: number;
+  /**
+   * #24: called once per overlay found, while it is still open in the browser that presses, with its screenshot and its
+   * elements (the gateway still reads that browser then). Best effort: a throw here changes nothing of the exploration.
+   */
+  onOverlay?: (state: OverlayState, open: { screenshotB64: string; elements: ElementRef[] }) => void | Promise<void>;
 }
 
 export interface ExploreOverlaysResult {
@@ -286,6 +291,11 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
       skipped: [],
     };
     states.push(state);
+    try {
+      await input.onOverlay?.(state, { screenshotB64: s.obs.screenshotB64, elements: top.elements });
+    } catch {
+      // the caller's hook is best effort
+    }
     say(`exploreOverlays — ${state.kind}${state.name ? ` "${state.name}"` : ""} opened by "${last.name ?? last.role}"`);
     for (const x of state.exits) if (x.kind === "submit" && x.safe === false) skip({ role: "button", name: x.name }, DESTRUCTIVE_REASON);
 

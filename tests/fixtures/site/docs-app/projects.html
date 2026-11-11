@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Projects — Docs fixture</title>
+    <style>
+      [hidden] { display: none; }
+      .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4); }
+      .dialog { position: fixed; top: 20%; left: 30%; width: 40%; background: #fff; padding: 1rem; border: 1px solid #333; }
+    </style>
+  </head>
+  <body>
+    <nav aria-label="Main">
+      <a href="index.html">Home</a>
+      <a href="projects.html">Projects</a>
+      <a href="settings.html">Settings</a>
+    </nav>
+    <main>
+      <h1>Projects</h1>
+      <label>Filter projects <input type="search" /></label>
+      <button type="button" id="new" aria-haspopup="dialog">New project</button>
+      <button type="button" id="export">Export</button>
+      <p>Created: <span id="created">0</span></p>
+    </main>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <div id="modal" class="dialog" role="dialog" aria-modal="true" aria-label="New project" hidden>
+      <h2>New project</h2>
+      <form method="post" action="/api/projects" onsubmit="return false">
+        <label>Project name <input id="name" type="text" required /></label>
+        <label>Description <textarea id="desc"></textarea></label>
+        <div id="error" role="alert"></div>
+        <button type="button" id="save">Save</button>
+        <button type="button" id="cancel">Cancel</button>
+      </form>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const close = () => { $("modal").hidden = true; $("backdrop").hidden = true; };
+      $("new").addEventListener("click", () => { $("modal").hidden = false; $("backdrop").hidden = false; });
+      $("cancel").addEventListener("click", close);
+      $("backdrop").addEventListener("click", close);
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+      $("save").addEventListener("click", () => {
+        if (!$("name").value.trim()) { $("error").textContent = "Project name is required"; return; }
+        fetch("/api/projects", { method: "POST" });
+        $("created").textContent = String(Number($("created").textContent) + 1);
+        close();
+      });
+    </script>
+  </body>
+</html>

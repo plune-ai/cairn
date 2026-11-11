@@ -257,7 +257,8 @@ describe("explore parity (C1-02)", () => {
 
 describe("gated modality stubs (C1-02)", () => {
   // `api` is no longer gated — it ships OpenAPI ingest in API-1 (#22); see api-modality.test.ts.
-  for (const name of ["ui", "e2e", "unit", "docs"]) {
+  // Nor is `docs`: it is the alias of `collect-docs` (#24); see collect-docs-cli.test.ts.
+  for (const name of ["ui", "e2e", "unit"]) {
     it(`cairn ${name} prints coming-soon, exits 0, and calls NO runner`, async () => {
       await buildProgram().parseAsync(["node", "cairn", name]);
       expect(outChunks.join("")).toContain("coming soon — gated (see L-G2). Build by demand, one at a time.");
@@ -282,7 +283,7 @@ describe("CLI surface lock (C1-02)", () => {
     expect(help).toContain("ui|e2e");
     expect(help).toContain("api"); // now a real command (API-1, #22), not a gated stub
     expect(help).toContain("unit");
-    expect(help).toContain("docs");
+    expect(help).toContain("collect-docs|docs"); // a real command since #24, `docs` its alias
     expect(help).toMatch(/coming soon|gated/i);
     expect(help).toMatchSnapshot();
   });

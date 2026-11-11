@@ -18,8 +18,8 @@ pages (ARIA snapshot + screenshot), designs methodology-based UI test cases (ISO
 generates runnable `@playwright/test` code, self-validates, self-repairs, and **self-improves** via
 Langfuse. A portable CLI + library for embedding into other TypeScript projects.
 
-**Cairn is the generation layer** — it produces tests across surfaces (UI + API shipped; unit / docs
-planned), each arriving by demand. A separate **Plune** layer owns record / management / eval.
+**Cairn is the generation layer** — it produces tests across surfaces (UI + API shipped, and docs written from a
+walk of the UI; unit planned), each arriving by demand. A separate **Plune** layer owns record / management / eval.
 
 > **Renamed Lex-Bot → Cairn.** The old `lex-bot` command and `@plune-ai/lex-bot` package still work
 > (the CLI prints a one-line deprecation notice) — prefer `cairn` / `@plune-ai/cairn`. Legacy
@@ -182,6 +182,7 @@ result summary → past-run browser). Ink/React are optional deps — see **[doc
 | `cairn api [--spec <path\|url>] [--base-url <u>] [--negative] [--scenarios] [--adversarial [styles]] [--min-coverage <percent> [--count-partial]] [--allow-mutations] [--allowed-methods <list>] [--allowed-paths <list>] [--max-requests <n>] [--rps <n>]` | Generate (and, with `--base-url`, run + assert status/contract) happy-path, negative-schema, multi-endpoint-scenario, and adversarial (`normal`/`curious`/`psycho`/`hacker`) cases from an OpenAPI 3.x spec. **With `--base-url` only GET/HEAD/OPTIONS are sent unless you pass `--allow-mutations`** (300 requests max, 5 req/s, host pinned, no redirects). Without `--spec`, the `--base-url` server is searched for a spec it serves (`/openapi.json`, `/v3/api-docs`, …). `--spec` also takes a Postman collection (v2.1) or a HAR file: it is converted to OpenAPI and saved as `openapi.derived.json` in the run directory |
 | `cairn api --spec <s> --scenarios --save-flows <f>` · `cairn api --flows <f> [--out <dir>] [--base-url <u> --allow-mutations]` | Save scenario chains as [API flows](docs/api-flows.md) (create → return its id → delete), and write their Playwright fixture (`api-flows.fixture.ts`) for UI test setup and cleanup; sends no request. A flow that changes data runs only against an address allowed with `--allow-mutations` |
 | `cairn api --base-url <u> --actors <f> --allow-mutations` | Two-actor API security check: IDOR (`WSTG-ATHZ-04`) and privilege escalation (`WSTG-ATHZ-03`) — the owner creates a resource through a saved API flow, the other actor tries to read, change and delete it and reads the ids next to it; the flow's cleanup always runs. See [below](#api-security-idor-and-privilege-escalation-across-two-actors) |
+| `cairn collect-docs --url <u> [--session <s>] [--max-pages <n>] [--out <dir>] [--fresh]` | Walk the app's screens (by its links) and their dialogs, drawers, menus and wizards, and write its user docs: `docs.md` with a section and a screenshot per screen and overlay — what it is, who gets here, fields and required fields, what a user can do and where it leads — and a list of open questions; plus `openapi.derived.json` from the app's traffic. `cairn docs` is an alias. See [Collect docs](docs/collect-docs.md) |
 | `cairn experiment --dataset <d> --candidate name=file` | Compare prompt versions on a dataset |
 
 > `lex-bot <command>` still runs every command above (deprecated alias — prints a notice, then runs `cairn`).
