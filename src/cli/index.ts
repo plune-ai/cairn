@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CLI `cairn`. Commands: observe · explore · design · automate · dataset-add · experiment ·
- * promote · session · login · collect-docs (alias docs), plus GATED modality stubs (ui|e2e / unit — C1-01).
+ * promote · session · login · collect-docs (alias docs) · check-docs, plus GATED modality stubs (ui|e2e / unit — C1-01).
  * The umbrella router is thin: each modality command dispatches through the shared core
  * (`runModality`), so a future modality is a thin add, not a fork.
  * `lex-bot` stays as a hidden, deprecated alias (see ./lex-bot.ts) → same code path.
@@ -195,6 +195,24 @@ export function buildProgram(): Command {
     .option("--routing <preset>", "role-routing preset: fast (Groq worker) | volume (OpenRouter worker) | volume-fast (sets LLM_ROUTING)")
     .action(async (opts: Record<string, unknown>) => {
       await runModality("collect-docs", opts);
+    });
+
+  // #231: the same walk, compared with docs in the collect-docs format. No LLM call; exit 2 on a mismatch.
+  program
+    .command("check-docs")
+    .description("Walk the app and compare it with its docs: screens, overlays, fields and controls in the docs, not in the UI, and back; exit 2 on a mismatch")
+    .requiredOption("--docs <path>", "the docs: a docs.md in the format `cairn collect-docs` writes, or a directory holding one")
+    .requiredOption("--url <url>", "the app's start page")
+    .option("--spec <path>", "an OpenAPI 3.x spec (JSON or YAML): API operations the app called while walked, but the spec lacks, are mismatches too")
+    .option("--session <name>", "name of the saved session (.auth/<name>.storageState.json)")
+    .option("--session-file <path>", "direct path to a storageState file (any name)")
+    .option("--channel <channel>", "system browser channel, e.g. chrome — drives your installed Chrome (no bundled-Chromium download)")
+    .option("--headed", "visible browser (debug)")
+    .option("--max-pages <n>", "the most screens to walk, following the app's links (default 10)")
+    .option("--out <dir>", "where to write the report (default runs/check-docs-<id>/)")
+    .option("--api-origin <list>", "#229: origins besides --url's whose API requests count as the app's (comma-separated); lib backend")
+    .action(async (opts: Record<string, unknown>) => {
+      await runModality("check-docs", opts);
     });
 
   program

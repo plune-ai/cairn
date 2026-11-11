@@ -2,7 +2,7 @@
 
 When a product has no user documentation, `cairn collect-docs` writes a first version by walking its UI: every
 screen it reaches by the app's own links, and every dialog, drawer, menu and wizard on those screens. A person edits
-the result; `cairn check-docs` (#231) will later compare docs like these with the UI.
+the result; [`cairn check-docs`](./check-docs.md) compares docs like these with the UI.
 
 ```bash
 cairn collect-docs --url https://app.example.com --session myapp

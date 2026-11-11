@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn check-docs`: do the docs still match the UI? (#231)** `cairn check-docs --docs <dir|file> --url <app>
+  [--session <s>] [--spec <file>]` walks the app as `collect-docs` does and compares it with docs in that format. The
+  walk is written in the docs format and read back with the same reader as the docs. Screens are paired by address,
+  overlays by kind and title (a section alone on both sides with the same address or the same opener is the same one,
+  renamed); within a section, fields and controls by role and name, and where a link or a trigger leads, compared
+  through the pairing so a renamed screen is one difference. Three kinds of mismatch: in the docs, not in the UI; in the
+  UI, not in the docs; name differs. With `--spec` (OpenAPI 3.x, JSON or YAML), an API operation the app called while
+  walked that the spec lacks is a mismatch too; one the spec has that the walk did not see is listed, not counted. The
+  report, `check-docs.md` in `runs/check-docs-<id>/` (or `--out`), links each mismatch to its docs section and to the
+  screen as the walk saw it. Exit 0 when the docs match, 2 on a mismatch, 1 when the docs cannot be read or the app
+  cannot be walked. It makes no LLM call and needs no API key. See `docs/check-docs.md`.
+
 - **`cairn collect-docs`: an app's user docs, written by walking its UI (#24).** `cairn collect-docs --url <app>
   [--session <s>]` (alias `cairn docs`, which was a coming-soon stub) follows the app's links, same origin and never a
   sign-out or deletion link, up to `--max-pages` screens (default 10), and opens the dialogs, drawers, menus and wizards
