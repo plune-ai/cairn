@@ -20,6 +20,10 @@ Commands:
                                user docs: runs/docs-<id>/docs.md with
                                screenshots, and openapi.derived.json from its
                                traffic
+  check-docs [options]         Walk the app and compare it with its docs:
+                               screens, overlays, fields and controls in the
+                               docs, not in the UI, and back; exit 2 on a
+                               mismatch
   dataset-add [options]        Add a run (study.json) to an experiment dataset
   experiment [options]         Compare prompt versions on a dataset (B2
                                self-improvement)

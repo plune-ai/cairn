@@ -10,6 +10,7 @@ import type { IO, Modality } from "./modality.js";
 import { exploreModality } from "./modalities/explore.js";
 import { apiModality } from "./modalities/api.js";
 import { collectDocsModality } from "./modalities/collect-docs.js";
+import { checkDocsModality } from "./modalities/check-docs.js";
 
 export const MODALITIES: Modality[] = [
   exploreModality,
@@ -26,6 +27,8 @@ export const MODALITIES: Modality[] = [
   { name: "unit", gated: true, summary: "Generate unit tests" },
   // #24: the docs stub became `collect-docs` (alias `docs`), registered with its own command.
   collectDocsModality,
+  // #231: the same walk, compared with docs in that format.
+  checkDocsModality,
 ];
 
 /** Look up a modality by its name or one of its aliases (e.g. `e2e` → the `ui` modality). */

@@ -62,7 +62,8 @@ const MAX_ARIA_CHARS = 12_000;
 export interface CollectDocsDeps {
   gateway: BrowserGateway;
   prompts: PromptRegistry;
-  describeInvoke: StructuredInvoke;
+  /** Absent: no screen is described (no LLM call) — `check-docs` (#231) compares facts only. */
+  describeInvoke?: StructuredInvoke;
   /** Where screen descriptions are cached across runs; undefined: no cache. */
   cacheDir?: string;
   /** Ignore the cache (describe every screen again). */
@@ -282,6 +283,7 @@ async function describe(
   count: (cacheHit: boolean) => void,
 ): Promise<ScreenDescription> {
   const say = deps.onProgress ?? (() => undefined);
+  if (!deps.describeInvoke) return NO_DESCRIPTION;
   const overlays = formatOverlays(screen.states) || "(none)";
   const fingerprint = screenFingerprint(screen.aria, overlays);
   const hit = deps.cacheDir && !deps.fresh ? await loadDescription(deps.cacheDir, screen.url, fingerprint) : undefined;
@@ -339,55 +341,82 @@ export interface CollectDocsResult {
   cost: CostReport;
 }
 
-/** `cairn collect-docs`: the walk, then `docs.md`, its screenshots and the OpenAPI draft in the run's directory. */
-export async function runCollectDocs(input: CollectDocsInput): Promise<CollectDocsResult> {
-  const cfg = input.config;
-  ensureBrowsersInstalled({ channel: cfg.browser.channel });
+/** What a walk needs to open the app; shared by `collect-docs` and `check-docs` (#231). */
+export interface WalkInput {
+  url: string;
+  browser: { backend: AppConfig["browser"]["backend"]; channel?: string };
+  sessionName?: string;
+  sessionFile?: string;
+  sessionsDir?: string;
+  maxScreens?: number;
+  headed?: boolean;
+  /** #229: origins besides `url`'s whose API requests go into openapi.derived.json (comma-separated). */
+  apiOrigins?: string;
+  onProgress?: (event: string) => void;
+}
+
+export interface WalkResult {
+  docs: CollectedDocs;
+  /** Absent when the app made no API request the draft could use. */
+  openApiFile?: string;
+}
+
+/**
+ * Opens the app, walks it ({@link collectDocs}) and writes into `outDir` what the walk saw: the screenshots and the
+ * OpenAPI draft from the traffic. `outDir` is created only after the walk succeeds. `describe`: what the model needs
+ * (absent: no screen is described and no LLM call is made).
+ */
+export async function walkApp(
+  input: WalkInput,
+  outDir: string,
+  describe?: Pick<CollectDocsDeps, "describeInvoke" | "cacheDir" | "fresh" | "language">,
+): Promise<WalkResult> {
+  ensureBrowsersInstalled({ channel: input.browser.channel });
   const onProgress = input.onProgress ?? (() => undefined);
-  const router = new RoleRouter(cfg, { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey }, new CallBudget(80));
-  const apiTraffic = cfg.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
+  const apiTraffic = input.browser.backend === "lib" ? new ApiTrafficRecorder({ origins: parseApiOrigins(input.url, input.apiOrigins) }) : undefined;
 
   const sessions = new SessionStore(resolve(input.sessionsDir ?? ".auth"));
   let storageState: StorageState | undefined;
   if (input.sessionFile) storageState = await sessions.loadFile(resolve(input.sessionFile));
   else if (input.sessionName) storageState = await sessions.load(input.sessionName);
 
-  const gateway = makeGateway({ backend: cfg.browser.backend, storageState, channel: cfg.browser.channel, headless: !input.headed, apiTraffic });
+  const gateway = makeGateway({ backend: input.browser.backend, storageState, channel: input.browser.channel, headless: !input.headed, apiTraffic });
   try {
-    const docs = await collectDocs(
-      {
-        gateway,
-        prompts: new PromptRegistry(),
-        describeInvoke: input.describeInvoke ?? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)),
-        cacheDir: resolve(input.cacheDir ?? ".cairn-cache/understanding"),
-        fresh: input.fresh,
-        maxScreens: input.maxScreens,
-        language: cfg.testCaseLanguage,
-        onProgress,
-      },
-      input.url,
-    );
-    const outDir = input.out ? resolve(input.out) : join(defaultRunsBaseDir(), `docs-${randomUUID()}`);
+    const docs = await collectDocs({ gateway, prompts: new PromptRegistry(), ...describe, maxScreens: input.maxScreens, onProgress }, input.url);
     await mkdir(join(outDir, SCREENSHOTS_DIR), { recursive: true });
     for (const s of docs.screenshots) await writeFile(join(outDir, s.path), Buffer.from(s.b64, "base64"));
-    const docsFile = join(outDir, DOCS_FILE);
-    await writeFile(docsFile, renderDocsMd(docs.model), "utf8");
     await writeTrafficSpec(apiTraffic, outDir, input.url, secretValues("", process.env), onProgress);
     const openApiFile = join(outDir, DERIVED_SPEC_FILE);
     const hasSpec = await access(openApiFile).then(
       () => true,
       () => false,
     );
-    return {
-      outDir,
-      docsFile,
-      ...(hasSpec ? { openApiFile } : {}),
-      model: docs.model,
-      described: docs.described,
-      cached: docs.cached,
-      cost: router.ledger.report(),
-    };
+    return { docs, ...(hasSpec ? { openApiFile } : {}) };
   } finally {
     await gateway.close();
   }
+}
+
+/** `cairn collect-docs`: the walk, then `docs.md`, its screenshots and the OpenAPI draft in the run's directory. */
+export async function runCollectDocs(input: CollectDocsInput): Promise<CollectDocsResult> {
+  const cfg = input.config;
+  const router = new RoleRouter(cfg, { anthropicApiKey: cfg.anthropicApiKey, openrouterApiKey: cfg.openrouterApiKey, groqApiKey: cfg.groqApiKey }, new CallBudget(80));
+  const outDir = input.out ? resolve(input.out) : join(defaultRunsBaseDir(), `docs-${randomUUID()}`);
+  const { docs, openApiFile } = await walkApp({ ...input, browser: cfg.browser }, outDir, {
+    describeInvoke: input.describeInvoke ?? router.invoke("worker", router.tierFor("worker", cfg.models.bulk)),
+    cacheDir: resolve(input.cacheDir ?? ".cairn-cache/understanding"),
+    fresh: input.fresh,
+    language: cfg.testCaseLanguage,
+  });
+  const docsFile = join(outDir, DOCS_FILE);
+  await writeFile(docsFile, renderDocsMd(docs.model), "utf8");
+  return {
+    outDir,
+    docsFile,
+    ...(openApiFile ? { openApiFile } : {}),
+    model: docs.model,
+    described: docs.described,
+    cached: docs.cached,
+    cost: router.ledger.report(),
+  };
 }

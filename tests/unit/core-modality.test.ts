@@ -35,8 +35,8 @@ describe("gatedNotice (pure)", () => {
 });
 
 describe("registry (C1-01)", () => {
-  it("registers explore, api and collect-docs as REAL modalities (have a run); ui/unit are gated stubs", () => {
-    for (const real of ["explore", "api", "collect-docs"]) {
+  it("registers explore, api, collect-docs and check-docs as REAL modalities (have a run); ui/unit are gated stubs", () => {
+    for (const real of ["explore", "api", "collect-docs", "check-docs"]) {
       const m = getModality(real);
       expect(m?.gated, `${real} should be real`).toBe(false);
       expect(typeof m?.run, `${real} should carry a runner`).toBe("function");
