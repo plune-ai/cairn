@@ -48,18 +48,10 @@ jobs:
         run: npm ci
       - if: steps.token.outputs.present == 'true'
         run: npm run build
-      # The same command as the CI step.
+      # The same script as the CI step.
       - name: MCP — lint the built server
         if: steps.token.outputs.present == 'true'
-        run: |
-          if env | grep -qE '^[A-Z0-9_]*_API_KEY='; then
-            echo "A model provider key is set in this step: this check must not reach a model." >&2
-            env | grep -oE '^[A-Z0-9_]*_API_KEY' >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/mcp-reports"
-          npx -y @plune-ai/cli@0.34.6 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
-            -- node dist/cli/index.js mcp
+        run: node scripts/mcp-self-lint.mjs "$RUNNER_TEMP/mcp-reports" -- node dist/cli/index.js mcp
       - name: MCP — lint report
         if: ${{ !cancelled() && steps.token.outputs.present == 'true' }}
         uses: actions/upload-artifact@v7
