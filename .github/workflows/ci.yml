@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -18,22 +21,15 @@ jobs:
       - name: Install Playwright Chromium (for integration tests)
         run: npx playwright install --with-deps chromium
       - run: npm run build
-      # Our own MCP server, checked by our own tool: `plune mcp lint` from the published CLI, pinned, against the built
-      # `cairn mcp` as a real process. Listing the tools calls no model and opens no browser, and the server gets no
-      # key: the lint passes it only the variables named with --env (none here). No tool is called (no --call), so
-      # explore, design and automate never run. Exit 1 is a finding at the error level, 2 a server that did not start,
-      # 3 nothing measured, such as an empty tool list. A protocol conformance command joins this step when the CLI
-      # has one.
+      # Our own MCP server, checked by our own tool: `plune mcp lint` from the published CLI, pinned in
+      # scripts/mcp-self-lint.mjs, against the built `cairn mcp` as a real process. Listing the tools calls no model and
+      # opens no browser, and the server gets no key: the lint passes it only the variables named with --env (none
+      # here). No tool is called (no --call), so explore, design and automate never run. Exit 1 is a finding at the
+      # error level, 2 a server that did not start, 3 nothing measured, such as an empty tool list;
+      # tests/integration/mcp-self-lint.test.ts proves each. A protocol conformance command joins this step when a
+      # published CLI has one.
       - name: MCP — lint the built server
-        run: |
-          if env | grep -qE '^[A-Z0-9_]*_API_KEY='; then
-            echo "A model provider key is set in this step: this check must not reach a model." >&2
-            env | grep -oE '^[A-Z0-9_]*_API_KEY' >&2
-            exit 1
-          fi
-          mkdir -p "$RUNNER_TEMP/mcp-reports"
-          npx -y @plune-ai/cli@0.34.6 mcp lint --reporter junit-xml --out "$RUNNER_TEMP/mcp-reports/lint.xml" \
-            -- node dist/cli/index.js mcp
+        run: node scripts/mcp-self-lint.mjs "$RUNNER_TEMP/mcp-reports" -- node dist/cli/index.js mcp
       - name: MCP — lint report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
