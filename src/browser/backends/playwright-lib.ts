@@ -186,7 +186,7 @@ const seedTabStorage = (tab: { origin: string; items: [string, string][] }): voi
 
 /**
  * Only the app's own origin is recorded: an analytics call on another host answering 204 to every click would make
- * every dead click look like a silent save. ponytail: an API on another origin (api.example.com for app.example.com)
+ * every dead click look like a silent save. Kept simple on purpose: an API on another origin (api.example.com for app.example.com)
  * is waited for but neither recorded nor counted; compare registrable domains instead if that matters.
  */
 function sameOrigin(a: string, b: string): boolean {
@@ -786,7 +786,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
     if (this.pressing) throw new Error("The write guard is already on.");
     const page = await this.ensurePage();
     // A plain storageState leaves out IndexedDB and the tab's sessionStorage, where an app may keep its session.
-    // ponytail: IndexedDB is copied whole, however large; sessionStorage only of the origin the crawler's page is on.
+    // Kept simple on purpose: IndexedDB is copied whole, however large; sessionStorage only of the origin the crawler's page is on.
     const state = await within<PwStorageState | undefined>(this.context!.storageState({ indexedDB: true }), SESSION_READ_TIMEOUT_MS, undefined);
     if (!state) throw guardFailure("SESSION_READ_FAILED");
     const tab = await within<{ origin: string; items: [string, string][] } | undefined>(page.evaluate(readTabStorage), STATE_READ_TIMEOUT_MS, undefined);

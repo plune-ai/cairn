@@ -89,7 +89,7 @@ export function buildInteractionMap(
       name: v.name,
       // #226: never `.first()` — a repeated element is reached through the row, card or section that narrows it
       locator: locatorFor(v),
-      // ponytail: container = the tab/view the element sits behind (known deterministically). Richer
+      // Kept simple on purpose: container = the tab/view the element sits behind (known deterministically). Richer
       // landmark/region inference from the ARIA tree is a follow-up if reviewers want it.
       container: v.viaSwitcher ? `${v.viaSwitcher.role} "${v.viaSwitcher.name ?? ""}"` : undefined,
       candidateActions: candidateActionsFor(v, transitions),

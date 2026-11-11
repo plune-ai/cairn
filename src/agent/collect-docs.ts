@@ -236,7 +236,7 @@ export async function collectDocs(deps: CollectDocsDeps, url: string): Promise<C
       const otitle = titleOf(st);
       const from = st.parent ? (refById.get(st.parent) ?? screenRef) : screenRef;
       const opened = st.trigger.role === "page" ? `open when ${screenRef} loads` : `${from} — ${st.trigger.role} "${st.trigger.name ?? ""}"`;
-      // ponytail: one section per kind and title across screens (a header menu on every page); two different dialogs
+      // Kept simple on purpose: one section per kind and title across screens (a header menu on every page); two different dialogs
       // with one title merge too. A content fingerprint per overlay when that bites.
       const key = `${kind}\u0000${otitle}`;
       const known = overlayByKey.get(key);

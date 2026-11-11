@@ -223,7 +223,7 @@ const COMMON_ABBREVIATIONS = new Set(
  * Abbreviations shown on a screen that are not common knowledge: words of 2 to 6 capitals and digits, two capitals at
  * least, outside `/url:` lines. Their meaning is asked, never guessed.
  */
-// ponytail: ASCII capitals only, and any capitalised word ("NEW" badge) counts; a glossary option if real apps say too much.
+// Kept simple on purpose: ASCII capitals only, and any capitalised word ("NEW" badge) counts; a glossary option if real apps say too much.
 export function abbreviationsIn(aria: string): string[] {
   const text = aria
     .split(/\r?\n/)
