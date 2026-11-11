@@ -72,6 +72,6 @@ jobs:
             echo "No JUnit report was written, so nothing was imported: see the steps above." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          npx -y @plune-ai/cli@0.34.6 run import "$report" --name "MCP self-lint" \
+          npx -y @plune-ai/cli@0.35.0 run import "$report" --name "MCP self-lint" \
             --key "mcp-self-lint-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-            --fail-on-failures
+            --create --fail-on-failures
