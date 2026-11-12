@@ -92,6 +92,35 @@ describe("runExploreGraph: manual cases are not automated", () => {
   });
 });
 
+describe("runExploreGraph: every case manual", () => {
+  it("skips codegen and validation and says so", async () => {
+    const onlyManual: StructuredInvoke = async (schema) =>
+      schema.parse({
+        testCases: [{ title: "Upload quarterly invoice archive", technique: "decision-table", execution: "manual", preconditions: [], steps: ["s"], expected: "e", priority: "high", elementRefs: ["e1"] }],
+      });
+    let codegenCalls = 0;
+    let validateCalls = 0;
+    const events: string[] = [];
+    const out = await runExploreGraph(
+      {
+        ...baseDeps,
+        designInvoke: onlyManual,
+        codegenInvoke: async (schema, m) => (codegenCalls++, codegenInvoke(schema, m)),
+        validate: async () => (validateCalls++, green),
+        maxRepair: 1,
+        onProgress: (e: string) => events.push(e),
+      },
+      { url: "http://x", runId: "r1" },
+    );
+    expect(codegenCalls).toBe(0);
+    expect(validateCalls).toBe(0);
+    expect(out.suite).toBeUndefined();
+    expect(out.testCases).toHaveLength(1);
+    expect(events.join("
+")).toMatch(/nothing to automate/);
+  });
+});
+
 describe("runExploreGraph (full pipeline + repair, fake deps)", () => {
   it("green on the first try → no repair (attempts 0)", async () => {
     const out = await runExploreGraph({ ...baseDeps, validate: async () => green, maxRepair: 2 }, { url: "http://x", runId: "r1" });

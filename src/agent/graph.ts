@@ -491,6 +491,12 @@ export async function runExploreGraph(
     return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ambiguous, ...overlayKeys() };
   }
 
+  // Nothing automated (every case is manual): no codegen, so the model cannot invent tests that would run on the target.
+  if (!testCases.some(isAutomated)) {
+    deps.onProgress?.("generateCode — nothing to automate: every designed case is manual (MTC); no code generated, no tests run");
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ambiguous, ...overlayKeys() };
+  }
+
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
   const genAndWrite = async (repairHint?: string): Promise<GeneratedSuite> => {
     const suite = await generateSuite(
