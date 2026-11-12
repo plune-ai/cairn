@@ -97,6 +97,17 @@ export interface Observation {
    * a cookie banner leaves the page live. Absent on the cli backend: every dialog is then taken as modal.
    */
   nonModal?: string[];
+  /**
+   * A layer over the page that the ARIA snapshot does not call a dialog (a plain `div` modal open on load): visible,
+   * fixed or absolute, stacked above the page, covering a good part of the viewport. Lib backend only.
+   */
+  layers?: OpenLayer[];
+}
+
+/** A dialog-like layer read from the DOM: its name (aria-label or heading) and the controls in it. */
+export interface OpenLayer {
+  name?: string;
+  elements: { role: string; name?: string }[];
 }
 
 /** HTTP Basic Auth for the browser context (values come from environment variables, never from a file). */

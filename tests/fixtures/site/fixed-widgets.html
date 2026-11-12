@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixed widgets — Fixture</title>
+    <style>
+      #side { position: fixed; top: 0; left: 0; width: 220px; height: 100%; z-index: 10; background: #eee; }
+      #chat { position: fixed; right: 16px; bottom: 16px; width: 60px; height: 60px; z-index: 20; }
+      #cookies { position: fixed; left: 0; right: 0; bottom: 0; height: 15%; z-index: 30; background: #333; color: #fff; }
+    </style>
+  </head>
+  <body>
+    <div id="side"><h2>Menu</h2><a href="/a">Section A</a></div>
+    <main style="margin-left: 240px">
+      <h1>Dashboard</h1>
+      <p>Ordinary page with fixed widgets and no overlay.</p>
+    </main>
+    <button id="chat" type="button">Chat</button>
+    <div id="cookies"><span>We use cookies</span> <button type="button">Accept</button></div>
+  </body>
+</html>

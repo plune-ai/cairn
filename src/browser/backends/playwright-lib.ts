@@ -33,6 +33,7 @@ import type {
   VerifiedElement,
   BlockedRequest,
   WriteGuard,
+  OpenLayer,
 } from "../types.js";
 import { overlayKey, parseAriaSnapshot } from "../../observe/parse-aria.js";
 
@@ -372,6 +373,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
     const buf = await page.screenshot({ fullPage: opts.fullPage ?? false });
 
     this.nonModal = await this.nonModalDialogs(page, ariaSnapshot);
+    const layers = await this.openLayers(page);
     this.refMap.clear();
     for (const el of parseAriaSnapshot(ariaSnapshot, { nonModal: this.nonModal })) {
       this.refMap.set(el.ref, { role: el.role, name: el.name, ...(el.scope ? { scope: el.scope } : {}), ...(el.underOverlay ? { underOverlay: true as const } : {}), ...(el.context ? { context: el.context } : {}) });
@@ -384,8 +386,53 @@ export class PlaywrightLibBackend implements BrowserBackend {
       capturedBy: "lib",
       consoleErrors: [...this.consoleErrors],
       nonModal: [...this.nonModal],
+      ...(layers.length > 0 ? { layers } : {}),
       ...(status !== undefined ? { status } : {}),
     };
+  }
+
+  /**
+   * Dialog-like layers the ARIA snapshot does not show as dialogs (a plain `div` modal open on load): visible, fixed
+   * or absolute, with a positive z-index, covering at least half the viewport (or marked aria-modal), and holding no dialog, menu or
+   * listbox of its own (those the snapshot already has). The outermost one of each stack. A heuristic: a page that
+   * cannot be read gives none.
+   */
+  private async openLayers(page: Page): Promise<OpenLayer[]> {
+    return page
+      .evaluate(() => {
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const doc = (globalThis as any).document;
+        const win = globalThis as any;
+        const area = win.innerWidth * win.innerHeight;
+        const picked: any[] = [];
+        for (const n of doc.body.querySelectorAll(":scope > *, :scope > * > *, :scope > * > * > *")) {
+          const cs = win.getComputedStyle(n);
+          if ((cs.position !== "fixed" && cs.position !== "absolute") || !(parseInt(cs.zIndex, 10) > 0)) continue;
+          if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) continue;
+          const r = n.getBoundingClientRect();
+          const w = Math.min(r.right, win.innerWidth) - Math.max(r.left, 0);
+          const h = Math.min(r.bottom, win.innerHeight) - Math.max(r.top, 0);
+          if (w <= 0 || h <= 0 || (w * h < area / 2 && n.getAttribute("aria-modal") !== "true")) continue;
+          if (n.closest("[aria-hidden=true],[role=dialog],[role=alertdialog],dialog,[role=menu],[role=listbox]")) continue;
+          if (n.querySelector("[role=dialog],[role=alertdialog],dialog,[role=menu],[role=listbox]")) continue;
+          if (picked.some((p) => p.contains(n))) continue;
+          picked.push(n);
+        }
+        const text = (n: any): string => String(n.getAttribute("aria-label") || n.value || n.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+        return picked.map((n) => {
+          const heading = n.querySelector("h1,h2,h3,h4,h5,h6");
+          const name = n.getAttribute("aria-label") || (heading ? text(heading) : "");
+          const elements: { role: string; name?: string }[] = [];
+          for (const c of n.querySelectorAll("button,a[href],input,select,textarea,[role=button],[role=link]")) {
+            const tag = c.tagName.toLowerCase();
+            const role = c.getAttribute("role") || (tag === "a" ? "link" : tag === "button" ? "button" : tag === "select" ? "combobox" : "textbox");
+            const label = text(c);
+            elements.push({ role, ...(label ? { name: label } : {}) });
+          }
+          return { ...(name ? { name } : {}), elements };
+        });
+      })
+      .catch(() => []);
   }
 
   /**

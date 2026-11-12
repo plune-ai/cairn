@@ -1,5 +1,5 @@
 import type { BrowserGateway } from "../browser/gateway.js";
-import type { BackendKind, ElementRef } from "../browser/types.js";
+import type { BackendKind, ElementRef, OpenLayer } from "../browser/types.js";
 import { parseAriaSnapshot } from "./parse-aria.js";
 
 export { parseAriaSnapshot } from "./parse-aria.js";
@@ -13,6 +13,8 @@ export interface PageStudy {
   capturedBy: BackendKind;
   /** Page JS errors (console.error + uncaught), if the backend captures them. */
   consoleErrors?: string[];
+  /** Dialog-like layers open on load that the ARIA snapshot does not show as dialogs. */
+  layers?: OpenLayer[];
 }
 
 /**
@@ -32,5 +34,6 @@ export async function capture(
     elements: parseAriaSnapshot(obs.ariaSnapshot),
     capturedBy: obs.capturedBy,
     consoleErrors: obs.consoleErrors,
+    ...(obs.layers?.length ? { layers: obs.layers } : {}),
   };
 }
