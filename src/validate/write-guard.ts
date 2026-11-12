@@ -24,7 +24,7 @@ import { V, caseFlips, changesServer, decoded, recordedPath, recordedUrl, secret
  * `route.fetch()`; its pages' browser traffic is covered), the `playwright` fixture's browser types, WebSocket messages,
  * and a GET that changes the server.
  */
-function guardModule(pwTest: string, origins: string[], log: string, flowsFixture: string): string {
+function guardModule(pwTest: string, origins: string[], log: string, flowsFixture: string | undefined): string {
   return `// Written by cairn for one validation run (#285): '@playwright/test' with the write guard on.
 const pw = require(${JSON.stringify(pwTest)});
 const { appendFileSync } = require('node:fs');
@@ -88,14 +88,23 @@ const guardedRequest = (ctx, sent) => new Proxy(ctx, {
 const SENT = [];
 const norm = (s) => String(s).split(String.fromCharCode(92)).join('/').toLowerCase();
 const SELF = norm(__filename);
-const FLOWS_FIXTURE = ${JSON.stringify(flowsFixture.split("\\").join("/").toLowerCase())};
+/** The flows fixture cairn wrote into this run (--flows), or null: a file of that name the run did not write is no exemption. */
+const FLOWS_FIXTURE = ${flowsFixture === undefined ? "null" : JSON.stringify(flowsFixture.split("\\").join("/").toLowerCase())};
+const { fileURLToPath } = require('node:url');
+/** The file a stack frame names, as a path: an ES module's frame names a file:// URL, percent-encoded. */
+const frameFile = (line) => {
+  const m = /\\((.*):\\d+:\\d+\\)$/.exec(line) || /at (.*):\\d+:\\d+$/.exec(line);
+  if (!m) return undefined;
+  try { return norm(m[1].startsWith('file:') ? fileURLToPath(m[1]) : m[1]); } catch { return undefined; }
+};
 /**
  * The API flows fixture's sign-in (#230) sends its login POST by design: a context made by that function of that file
  * is the one that stays unguarded. Every other caller (a spec, a helper, the fixture's data flows) gets a guarded one.
  */
 const signInOfFlows = () => {
-  const caller = String(new Error().stack).split('\\n').slice(1).find((l) => !norm(l).includes(SELF));
-  return caller !== undefined && /\\bat (?:async )?signIn \\(/.test(caller) && norm(caller).includes(FLOWS_FIXTURE);
+  if (FLOWS_FIXTURE === null) return false;
+  const caller = String(new Error().stack).split('\\n').slice(1).find((l) => frameFile(l) !== SELF);
+  return caller !== undefined && /^\\s*at (?:async )?signIn \\(/.test(caller) && frameFile(caller) === FLOWS_FIXTURE;
 };
 // One object: the export \`request\`, the \`playwright\` fixture's \`playwright.request\` and the one the request fixture uses.
 const newContext = pw.request.newContext.bind(pw.request);
@@ -180,14 +189,17 @@ export interface InstalledGuard {
   read(): Promise<GuardRecord>;
 }
 
-/** Write the guard into the run (`runDir` absolute); `origins` empty guards every origin. */
-export async function installWriteGuard(runDir: string, origins: string[], pwTest: string): Promise<InstalledGuard> {
+/**
+ * Write the guard into the run (`runDir` absolute); `origins` empty guards every origin. `flows`: cairn wrote the API flows
+ * fixture into this run, whose sign-in is then the one caller exempt.
+ */
+export async function installWriteGuard(runDir: string, origins: string[], pwTest: string, flows = false): Promise<InstalledGuard> {
   const module = join(runDir, "write-guard.cjs");
   const tsconfig = join(runDir, "write-guard.tsconfig.json");
   const log = join(runDir, "write-guard.log");
   await rm(log, { force: true });
   const guarded = [...new Set(origins.map((o) => new URL(o).origin))];
-  await writeFile(module, guardModule(pwTest, guarded, log, join(runDir, "tests", FLOW_FIXTURE_FILE)), "utf8");
+  await writeFile(module, guardModule(pwTest, guarded, log, flows ? join(runDir, "tests", FLOW_FIXTURE_FILE) : undefined), "utf8");
   // Exact keys: Playwright maps only these specifiers, and never inside node_modules, so the guard's own require stays real.
   // The guard exports all that \`playwright\` and \`playwright-core\` do, so a spec that takes its browser types there gets it too.
   const paths = Object.fromEntries(["@playwright/test", "playwright/test", "playwright", "playwright-core"].map((k) => [k, [module]]));

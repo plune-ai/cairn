@@ -75,6 +75,8 @@ export interface ValidateOptions {
    * other origin are blocked too, and only logged. None given: every origin counts as the target's.
    */
   guardOrigins?: string[];
+  /** #285: the suite carries the API flows fixture cairn wrote (--flows): its sign-in may send its login. */
+  flowsFixture?: boolean;
   /** #285: the run log: each write the guard blocked on a guarded origin is named there, and every other origin once. */
   log?: (line: string) => void;
 }
@@ -105,6 +107,7 @@ export async function validateSuite(
         secretsInRun: opts.secretsInRun,
         allowWrites: opts.allowWrites,
         guardOrigins: opts.guardOrigins,
+        flowsFixture: opts.flowsFixture,
         onWriteGuard: (record) => {
           for (const r of record.blocked) blocked.add(r);
           for (const [origin, seen] of record.otherOrigins) {

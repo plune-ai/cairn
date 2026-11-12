@@ -237,6 +237,33 @@ test('stringifies', async ({ context, page }) => {
     }
   }, 120_000);
 
+  it("Validate · validateSuite · a signIn() the run did not write as its flows fixture is no exemption", async () => {
+    const signIn = `import { request } from '@playwright/test';
+export async function signIn(): Promise<void> {
+  const api = await request.newContext();
+  await api.post('${url}/api/login');
+}`;
+    const uses = (from: string): string => `import { test } from '@playwright/test';
+import { signIn } from '${from}';
+test('signs in', async () => {
+  await signIn();
+});`;
+    // A model-written tests/api-flows.fixture.ts in a run without --flows.
+    const noFlows = await new ArtifactStore(BASE).openRun("model-fixture");
+    await noFlows.writeSuite({ files: [{ path: "api-flows.fixture.ts", content: signIn }, { path: "uses.spec.ts", content: uses("./api-flows.fixture") }] });
+    const a = await validateSuite(noFlows.dir, { reruns: 1, workers: 1, guardOrigins: [url] });
+    // With --flows, a file whose name only starts with the fixture's.
+    const lookalike = await new ArtifactStore(BASE).openRun("lookalike");
+    await lookalike.writeSuite({ files: [{ path: "api-flows.fixture.ts.spec.ts", content: `${signIn.replace("export async", "async")}\n${uses("./nothing").split("\n").filter((l) => !l.includes("./nothing")).join("\n")}` }] });
+    const b = await validateSuite(lookalike.dir, { reruns: 1, workers: 1, guardOrigins: [url], flowsFixture: true });
+
+    expect(writes).toEqual([]);
+    expect([...a.results, ...b.results].map((r) => [r.test, r.status])).toEqual([
+      ["signs in", "failed"],
+      ["signs in", "failed"],
+    ]);
+  }, 120_000);
+
   it("Validate · validateSuite · a test that ran where the guard never loaded fails the validation run (fail closed)", async () => {
     const run = await new ArtifactStore(BASE).openRun("unguarded");
     // A relative path is not a specifier the guard maps.

@@ -1228,6 +1228,7 @@ export async function runAutomate(input: {
                 // #285: the run's origin and the flows' API are guarded unless --allow-mutations.
                 allowWrites: input.allowMutations,
                 guardOrigins: [baseUrl, apiBase].flatMap((u) => originOrUndefined(u ?? "") ?? []),
+                flowsFixture: fixture !== undefined,
                 log: onProgress,
               }),
               [...envSecrets, ...(input.mailbox?.secrets ?? [])],

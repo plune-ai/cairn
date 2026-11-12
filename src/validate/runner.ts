@@ -106,6 +106,8 @@ export interface RunSpecsOptions {
   allowWrites?: boolean;
   /** #285: the origins a blocked write fails its test on (the target's, the API's); none given: every origin. */
   guardOrigins?: string[];
+  /** #285: the suite carries the API flows fixture cairn wrote (--flows): its sign-in is the one caller the guard exempts. */
+  flowsFixture?: boolean;
   /** #285: what the guard blocked in this run. */
   onWriteGuard?: (record: GuardRecord) => void;
 }
@@ -342,7 +344,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   const absRunDir = resolve(runDir); // testDir in the config must be absolute
   const configPath = join(absRunDir, "playwright.config.cjs");
   const screencastDir = opts.screencastDir ? resolve(opts.screencastDir) : undefined;
-  const guard = opts.allowWrites ? undefined : await installWriteGuard(absRunDir, opts.guardOrigins ?? [], PW_TEST);
+  const guard = opts.allowWrites ? undefined : await installWriteGuard(absRunDir, opts.guardOrigins ?? [], PW_TEST, opts.flowsFixture);
   await writeFile(
     configPath,
     configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv, opts.secretsInRun, guard?.tsconfig),

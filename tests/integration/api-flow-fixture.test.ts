@@ -10,6 +10,8 @@ import { parseApiFlows, renderFlowFixture, FLOW_FIXTURE_FILE } from "../../src/a
 
 // Run directories must live INSIDE the project: spec files resolve @playwright/test via node_modules.
 const ITEST_BASE = join(process.cwd(), "runs", ".itest-api-flows");
+/** #285: a run directory whose path an ES module's stack frame percent-encodes (a space, a Cyrillic letter). */
+const ENCODED_BASE = join(process.cwd(), "runs", ".itest-api-flows шлях x");
 
 /** A tiny app: a project API, a page per project, and a sign-in that sets a cookie. */
 interface App {
@@ -157,6 +159,7 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     delete process.env.APP_USER;
     delete process.env.APP_PASSWORD;
     await rm(ITEST_BASE, { recursive: true, force: true });
+    await rm(ENCODED_BASE, { recursive: true, force: true });
   });
 
   it("a UI test uses the created object, and after the test — passed or failed — the object is gone", { timeout: 120000 }, async (ctx) => {
@@ -203,8 +206,11 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     expect([...app.projects.keys()]).toEqual([]);
   });
 
-  it("#285: under the validation write guard the sign-in flow still signs in: its login POST is the one write let through", { timeout: 120000 }, async (ctx) => {
-    const run = await new ArtifactStore(ITEST_BASE).openRun("guarded-signin");
+  it.for([
+    ["a plain path", ITEST_BASE],
+    ["a path with a space and a Cyrillic letter", ENCODED_BASE],
+  ] as const)("#285: under the validation write guard the sign-in flow still signs in (run dir: %s): its login POST is the one write let through", { timeout: 120000 }, async ([, base], ctx) => {
+    const run = await new ArtifactStore(base).openRun("guarded-signin");
     await run.writeSuite({
       files: [
         { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(flowFile, { baseUrl: app.url }) },
@@ -219,7 +225,7 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     });
     let results: Awaited<ReturnType<typeof runSpecs>>;
     try {
-      results = await runSpecs(run.dir, { workers: 1, guardOrigins: [app.url] });
+      results = await runSpecs(run.dir, { workers: 1, guardOrigins: [app.url], flowsFixture: true });
     } catch (e) {
       if (isMissingBrowserError(e)) return ctx.skip();
       throw e;
@@ -243,7 +249,7 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     });
     let results: Awaited<ReturnType<typeof runSpecs>>;
     try {
-      results = await runSpecs(run.dir, { workers: 1 });
+      results = await runSpecs(run.dir, { workers: 1, flowsFixture: true });
     } catch (e) {
       if (isMissingBrowserError(e)) return ctx.skip();
       throw e;
@@ -355,7 +361,7 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     });
     try {
       // No test here takes `page`: the runner opens no browser.
-      const results = await runSpecs(run.dir, { workers: 1 });
+      const results = await runSpecs(run.dir, { workers: 1, flowsFixture: true });
       const byTitle = Object.fromEntries(results.map((r) => [r.title, r]));
       expect(byTitle["bad path"]?.error).toMatch(/\{\{env\.FLOW_SEG\}\} is a value, which cannot stand in the path \/api\/\{\{env\.FLOW_SEG\}\}/);
       expect(byTitle["no answer"]?.error).toMatch(/API flow "noAnswer" step "read" got no answer: ECONNREFUSED/);
@@ -417,7 +423,7 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     });
     let results: Awaited<ReturnType<typeof runSpecs>>;
     try {
-      results = await runSpecs(run.dir, { workers: 1 });
+      results = await runSpecs(run.dir, { workers: 1, flowsFixture: true });
     } catch (e) {
       if (isMissingBrowserError(e)) return ctx.skip();
       throw e;
