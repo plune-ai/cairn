@@ -114,7 +114,10 @@ describe("visible and unique in its scope (integration, real Chromium)", () => {
       gateway: backend as unknown as BrowserGateway,
       prompts: new PromptRegistry(),
       analyzeInvoke: spy({ pageSemantics: "A page", primaryRefs: [], viewSwitchers: [] }),
-      designInvoke: spy({ testCases: [] }),
+      // one automated case: with none (every case manual) the run writes no code, and these tests read the codegen prompt
+      designInvoke: spy({
+        testCases: [{ title: "Rows are listed", technique: "exploratory", kind: "static", type: "Positive", execution: "auto", preconditions: [], steps: ["Open the page"], expected: "The rows are visible", priority: "medium", elementRefs: [] }],
+      }),
       codegenInvoke: spy({ files: [{ path: "a.spec.ts", content: "// generated" }] }),
       useVision: false,
       runWriter: {
