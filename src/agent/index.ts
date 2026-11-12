@@ -665,6 +665,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   } catch (err) {
     // L1-04 (Box 1/3/4): the single failure path — write a partial report + a readable, actionable
     // summary, then throw a friendly Error. The user never sees a raw traceback or a silent halt.
+    // #276: the traffic recorded so far is a result of its own; a later failure must not discard its OpenAPI draft.
+    await writeTrafficSpec(apiTraffic, runWriter.dir, input.url, [...secretValues(knowledgeText, process.env), ...envSecrets], onProgress);
     throw await finalizeFailure(runWriter, {
       runId,
       url: input.url,
@@ -995,6 +997,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     // L1-04 parity with runExploration: write a partial report + a friendly, actionable summary
     // instead of leaking a raw traceback. Study/snapshots/log/cases were already persisted
     // incrementally (onStudy/persistLog/onTestCases), so the partial run is still useful on disk.
+    // #276: the traffic recorded so far is a result of its own; a later failure must not discard its OpenAPI draft.
+    await writeTrafficSpec(apiTraffic, runWriter.dir, input.url, [...secretValues(knowledgeText, process.env), ...envSecrets], onProgress);
     throw await finalizeFailure(runWriter, {
       runId,
       url: input.url,
