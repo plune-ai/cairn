@@ -356,7 +356,15 @@ const STATIC_TYPES = new Set(["document", "stylesheet", "script", "image", "font
 const STATIC_MIME = /^(?:text\/(?:html|css|javascript|vtt)|(?:application|text)\/(?:x-)?(?:java|ecma)script|image\/|font\/|audio\/|video\/|application\/(?:font|x-font|wasm|manifest\+json|vnd\.ms-fontobject))/i;
 const STATIC_EXT = /\.(?:m?js|css|map|png|jpe?g|gif|svg|ico|webp|avif|bmp|woff2?|ttf|otf|eot|mp4|webm|mp3|ogg|wav|html?|wasm)$/i;
 
-/** A request the application's API answers — not a page, a script, a style, an image, a font or a media file. */
+/**
+ * Path prefixes the hosting layer serves on the app's own origin: not the application's API (#278). Add a family here
+ * when a platform's beacon or challenge endpoint shows up in a draft.
+ */
+export const INFRASTRUCTURE_PATH_PREFIXES: readonly string[] = [
+  "/cdn-cgi/", // Cloudflare: rum beacon, trace, challenge
+];
+
+/** A request the application's API answers — not an infrastructure endpoint, a page, a script, a style, an image, a font or a media file. */
 export function isApiTraffic(r: { url: string; resourceType?: string; mimeType?: string }): boolean {
   if (r.resourceType && STATIC_TYPES.has(r.resourceType.toLowerCase())) return false;
   if (r.mimeType && STATIC_MIME.test(r.mimeType.trim())) return false;
@@ -366,6 +374,7 @@ export function isApiTraffic(r: { url: string; resourceType?: string; mimeType?:
   } catch {
     path = r.url.split(/[?#]/)[0] ?? "";
   }
+  if (INFRASTRUCTURE_PATH_PREFIXES.some((p) => path.startsWith(p))) return false;
   return !STATIC_EXT.test(path);
 }
 

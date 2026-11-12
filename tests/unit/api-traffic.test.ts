@@ -43,6 +43,15 @@ describe("ApiTrafficRecorder (#229)", () => {
     expect(Object.keys(op.responses as object)).toEqual(["200", "404"]);
   });
 
+  it("leaves the CDN's own endpoints on the app's origin out (#278)", async () => {
+    const rec = new ApiTrafficRecorder({ origins: [APP] });
+    rec.note({ method: "POST", url: `${APP}/cdn-cgi/rum?`, resourceType: "fetch", status: 204 });
+    rec.note({ method: "GET", url: `${APP}/cdn-cgi/trace`, resourceType: "fetch", status: 200, responseContentType: "application/json", body: json({ ip: "x" }) });
+    rec.note({ method: "GET", url: `${APP}/api/projects`, resourceType: "fetch", status: 200, responseContentType: "application/json", body: json([]) });
+    await rec.flush();
+    expect(Object.keys((rec.spec() as { paths: object }).paths)).toEqual(["/api/projects"]);
+  });
+
   it("an origin allowed explicitly is kept as well", async () => {
     const rec = new ApiTrafficRecorder({ origins: [APP, "https://api.example.test"] });
     sample(rec);
