@@ -11,7 +11,11 @@ import type { StructuredInvoke } from "../../src/llm/structured.js";
  * The model is a fake that counts its calls: no network beyond localhost, no key.
  */
 const BASE = join(process.cwd(), "runs", ".itest-collect-docs");
-const crawl = vi.hoisted(() => ({ failAfterStart: false }));
+const crawl = vi.hoisted(() => ({ failAfterStart: false, noOperation: false }));
+vi.mock("../../src/browser/api-traffic.js", async (orig) => {
+  const real = await orig<typeof import("../../src/browser/api-traffic.js")>();
+  return { ...real, ApiTrafficRecorder: class extends real.ApiTrafficRecorder { override get operations(): number { return crawl.noOperation ? 0 : super.operations; } } };
+});
 vi.mock("../../src/flow/crawl.js", async (orig) => {
   const real = await orig<typeof import("../../src/flow/crawl.js")>();
   return { ...real, crawlFlow: ((...a: Parameters<typeof real.crawlFlow>) => (crawl.failAfterStart ? Promise.reject(new Error("the crawl broke")) : real.crawlFlow(...a))) as typeof real.crawlFlow };
@@ -124,6 +128,19 @@ describe("cairn collect-docs (integration, real Chromium, fake model)", () => {
       crawl.failAfterStart = false;
     }
     expect(await readFile(join(out, "openapi.derived.json"), "utf8")).toContain('"/api/ok"');
+  }, 120_000);
+
+  it("a walk that fails with traffic that makes no operation leaves no directory, and its own error comes through (#286)", async () => {
+    const out = join(BASE, "fails-no-operation");
+    crawl.failAfterStart = true;
+    crawl.noOperation = true;
+    try {
+      await expect(runCollectDocs({ url: start(), config, out, cacheDir: join(BASE, "cache-fail2"), describeInvoke: fakeModel().invoke })).rejects.toThrow("the crawl broke");
+    } finally {
+      crawl.failAfterStart = false;
+      crawl.noOperation = false;
+    }
+    await expect(access(out)).rejects.toThrow();
   }, 120_000);
 
   it("an app with nothing on its start page fails with a clear error, and writes nothing", async () => {

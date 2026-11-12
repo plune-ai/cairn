@@ -24,6 +24,7 @@ cairn docs --url https://app.example.com --session myapp
 
 1. Opens `--url`. An address that cannot be reached, or a start page with no heading and no control, stops the run
    with a one-line error and writes nothing.
+   A walk that fails part-way still writes `openapi.derived.json` from the API requests recorded so far (a partial draft, noted in the log); no `docs.md` is written then.
 2. Follows the app's links, same origin only, never a sign-out or deletion link, up to `--max-pages` screens.
 3. On each screen, opens what announces an overlay (`aria-haspopup`, `aria-expanded`, `aria-controls`) as `explore`
    does: in a throwaway browser that stops every request but GET, HEAD and OPTIONS, so documenting changes nothing on
