@@ -45,8 +45,48 @@ export function meteredInvoker(
     } catch {
       // metering must never break the underlying call
     }
+    if (res.parsed === null || res.parsed === undefined) throw structuredOutputError(schema, res.raw);
     return res.parsed;
   };
+}
+
+/** Cap on the raw model text carried by a {@link StructuredOutputError}. */
+const RAW_CAP = 2000;
+
+/**
+ * The model answered but its output did not parse into the schema. LangChain's `includeRaw` mode swallows
+ * the parser's error and returns `parsed: null`; this makes that failure typed and diagnosable instead of
+ * letting the caller crash later on a null.
+ */
+export class StructuredOutputError extends Error {
+  constructor(
+    readonly schemaName: string,
+    /** Why the raw output does not fit the schema (re-derived: LangChain drops the original error). */
+    readonly parseError: string,
+    /** The model's raw text, capped at {@link RAW_CAP} characters. */
+    readonly raw: string,
+  ) {
+    super(`Model output did not parse into schema ${schemaName}: ${parseError}`);
+    this.name = "StructuredOutputError";
+  }
+}
+
+function structuredOutputError(schema: ZodType<unknown>, rawMsg: unknown): StructuredOutputError {
+  const m = (rawMsg ?? {}) as { content?: unknown; tool_calls?: Array<{ args?: unknown }> };
+  const call = m.tool_calls?.[0]?.args;
+  const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+  const rawText = call !== undefined ? JSON.stringify(call) : text;
+  let parseError: string;
+  try {
+    const r = schema.safeParse(call !== undefined ? call : JSON.parse(text));
+    parseError = r.success ? "output parsed on a second attempt but LangChain returned null" : r.error.message;
+  } catch (e) {
+    parseError = e instanceof Error ? e.message : String(e);
+  }
+  const raw = rawText.length > RAW_CAP ? `${rawText.slice(0, RAW_CAP)}…` : rawText;
+  const d = schema as { description?: string; shape?: Record<string, unknown> };
+  const name = d.description ?? (d.shape ? `{${Object.keys(d.shape).join(", ")}}` : "(unnamed)");
+  return new StructuredOutputError(name, parseError.slice(0, RAW_CAP), raw);
 }
 
 /** Transient provider errors worth retrying (rate limit / overload / 5xx / timeout). */
