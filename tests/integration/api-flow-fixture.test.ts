@@ -362,7 +362,8 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
         },
       ],
     });
-    const results = await runSpecs(run.dir, { workers: 1 });
+    // The POST's answer is what this test reads, so the write guard (#285) lets it through.
+    const results = await runSpecs(run.dir, { workers: 1, allowWrites: true });
     const byTitle = Object.fromEntries(results.map((r) => [r.title, r]));
     expect(byTitle["failed request"]?.error).toMatch(/apiRequestContext\.get: connect ECONNREFUSED/);
     expect(byTitle["not ok"]?.error).toMatch(/toBeOK/);

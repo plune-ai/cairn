@@ -92,6 +92,8 @@ export interface ExploreInput {
   critique?: boolean;
   /** #229: origins besides the run URL's whose API requests go into openapi.derived.json (comma-separated). */
   apiOrigins?: string;
+  /** #285: validation may send writes (POST/PUT/PATCH/DELETE) to the target and its API origins. Default off: blocked. */
+  allowMutations?: boolean;
   /** #59: follow in-app navigation and design multi-page journey cases. Default off (single page). */
   flow?: boolean;
   /** #59: max pages to crawl when `flow` is on (page cap — cost guardrail). */
@@ -334,6 +336,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
   const analyzeTier = router.tierFor("worker", visionTier);
   const designTier = router.tierFor("reasoner", cfg.models.reasoning);
   const codegenTier = router.tierFor("worker", cfg.models.bulk);
+  const studiedOrigins = new Set<string>();
   const deps = {
     gateway,
     prompts,
@@ -368,6 +371,10 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           screencast: input.screencast,
           httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
           secretsInRun: envSecrets.length > 0 || input.mailbox !== undefined,
+          // #285: the pages the run studied may sit on another origin than --url (a redirect): theirs are guarded too.
+          allowWrites: input.allowMutations,
+          guardOrigins: [...parseApiOrigins(input.url, input.apiOrigins), ...studiedOrigins],
+          log: onProgress,
         }),
         [...envSecrets, ...(input.mailbox?.secrets ?? [])],
       ),
@@ -377,6 +384,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // the page study/screenshot/ARIA on disk (best-effort — never break the run).
     onStudy: async (study: PageStudy) => {
       try {
+        studiedOrigins.add(new URL(study.url).origin);
         await runWriter.writeStudy(study);
         if (study.screenshotB64) await runWriter.writeScreenshot(study.screenshotB64);
         await runWriter.writeAria(study.ariaYaml);
@@ -1066,7 +1074,10 @@ export async function runAutomate(input: {
   mailbox?: MailboxSession;
   /** #230: saved API flows — the specs use their fixture for data and sign-in preconditions; `api-flows.fixture.ts` is written beside them. */
   apiFlows?: ApiFlowFile;
-  /** #230: with `apiFlows`, flows that change data may run against the API's address (the file's baseUrl, else the run's origin). */
+  /**
+   * #230: with `apiFlows`, flows that change data may run against the API's address (the file's baseUrl, else the run's
+   * origin). #285: with `validate`, the generated tests may send writes to the run's origin and that API; off: blocked.
+   */
   allowMutations?: boolean;
   headed?: boolean;
   onProgress?: (event: string) => void;
@@ -1214,6 +1225,10 @@ export async function runAutomate(input: {
                 httpCredentialsEnv: envRun?.applied.httpCredentialsEnv,
                 // A flow's requests carry its secrets and whatever it captured: a trace would keep every header.
                 secretsInRun: envSecrets.length > 0 || input.mailbox !== undefined || flows !== undefined,
+                // #285: the run's origin and the flows' API are guarded unless --allow-mutations.
+                allowWrites: input.allowMutations,
+                guardOrigins: [baseUrl, apiBase].flatMap((u) => originOrUndefined(u ?? "") ?? []),
+                log: onProgress,
               }),
               [...envSecrets, ...(input.mailbox?.secrets ?? [])],
             ),

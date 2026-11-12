@@ -184,6 +184,14 @@ export function recordedUrl(url: string): string {
   }
 }
 
+/**
+ * #225 review 3, #285: the write guard's rule. A request whose method is not GET, HEAD or OPTIONS may change the server.
+ * Self-contained on purpose: validation writes its source into the guard that its own Playwright process loads.
+ */
+export function changesServer(method: string): boolean {
+  return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+}
+
 /** The page-side watch lives under this key of the page's window while one click is watched; it is removed after. */
 export const WATCH_KEY = "__cairnClickWatch";
 

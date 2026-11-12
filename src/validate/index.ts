@@ -68,6 +68,12 @@ export interface ValidateOptions {
   httpCredentialsEnv?: { usernameVar: string; passwordVar: string };
   /** The suite types environment or mailbox secrets: a screencast then keeps no trace (#210). */
   secretsInRun?: boolean;
+  /** #285: the user allowed writes for this run (--allow-mutations). Off: the write guard blocks them. */
+  allowWrites?: boolean;
+  /** #285: the target's origin and the API's; none given: the guard keeps writes from every origin. */
+  guardOrigins?: string[];
+  /** #285: the run log: each request the guard blocked is named there. */
+  log?: (line: string) => void;
 }
 
 /**
@@ -83,6 +89,7 @@ export async function validateSuite(
   // dir), so the surviving .webm files + sidecar match the LAST run — read back once after the loop.
   const screencastDir = opts.screencast ? join(resolve(runDir), "screencasts") : undefined;
   const runs: RawTestResult[][] = [];
+  const blocked = new Set<string>();
   for (let i = 0; i < reruns; i += 1) {
     runs.push(
       await runSpecs(runDir, {
@@ -92,9 +99,13 @@ export async function validateSuite(
         screencastDir,
         httpCredentialsEnv: opts.httpCredentialsEnv,
         secretsInRun: opts.secretsInRun,
+        allowWrites: opts.allowWrites,
+        guardOrigins: opts.guardOrigins,
+        onBlockedWrite: (r) => blocked.add(r),
       }),
     );
   }
+  for (const r of blocked) opts.log?.(`validate — write guard: blocked ${r} (writes are off; --allow-mutations allows them)`);
   const report = classifyRuns(runs);
   if (screencastDir) {
     try {

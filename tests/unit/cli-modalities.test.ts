@@ -122,12 +122,13 @@ describe("explore parity (C1-02)", () => {
       "--into-project",
       "--screencast",
       "--api-origin",
+      "--allow-mutations",
       "--decider",
       "--decider-shadow",
     ]) {
       expect(longs, `explore should accept ${f}`).toContain(f);
     }
-    expect(longs).toHaveLength(22); // + --api-origin (#229) + --env-file (#204) + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51) + --goal (#63) + --screencast (#94) + --decider / --decider-shadow (ADR-0022)
+    expect(longs).toHaveLength(23); // + --allow-mutations (#285) + --api-origin (#229) + --env-file (#204) + --critique (#82) + --flow / --max-pages (#59) + --setup (#60) + --gaps (#61) + --into-project (#51) + --goal (#63) + --screencast (#94) + --decider / --decider-shadow (ADR-0022)
   });
 
   it("--decider reaches the config on explore, design and automate — and `off` means no decider", async () => {

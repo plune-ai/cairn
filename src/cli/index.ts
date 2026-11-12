@@ -132,6 +132,7 @@ export function buildProgram(): Command {
     .option("--into-project [dir]", "write specs into an existing Playwright project's testDir (detect playwright.config.*; respects testDir/naming) instead of runs/<id>/tests")
     .option("--screencast", "record a .webm per scenario (with step chapters) during validation → runs/<id>/screencasts/ for the review gate")
     .option("--api-origin <list>", "#229: origins besides --url's whose API requests go into openapi.derived.json (comma-separated, e.g. https://api.example.com); lib backend")
+    .option("--allow-mutations", "#285: validation may send POST/PUT/PATCH/DELETE to the target and --api-origin; off by default — the write guard blocks them and names them in the run log")
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .action(async (opts: Record<string, unknown>) => {
@@ -420,12 +421,12 @@ export function buildProgram(): Command {
     .option("--decider <provider>", DECIDER_FLAG_HELP)
     .option("--decider-shadow", DECIDER_SHADOW_HELP)
     .option("--flows <file>", "#230: saved API flows (JSON) — specs take their data and sign-in from the flows' Playwright fixture (api-flows.fixture.ts, written beside them)")
-    .option("--allow-mutations", "#230: with --flows, flows that change data may run against the API's address (the flow file's baseUrl, else the run's origin); off: their tests are skipped")
+    .option("--allow-mutations", "#230: with --flows, flows that change data may run against the API's address (the flow file's baseUrl, else the run's origin); off: their tests are skipped. #285: with --validate, the tests may send POST/PUT/PATCH/DELETE to the run's origin and that API; off: the write guard blocks them and names them in the run log")
     .action(
       async (opts: { run: string; envFile?: string; validate?: boolean; session?: string; sessionFile?: string; channel?: string; routing?: string; intoProject?: boolean | string; screencast?: boolean; flows?: string; allowMutations?: boolean; decider?: string; deciderShadow?: boolean }) => {
         const config = resolveConfig({ routing: opts.routing, channel: opts.channel, decider: opts.decider, deciderShadow: opts.deciderShadow });
         process.stderr.write(`▸ Automating cases from ${displayPath(opts.run)}…\n`);
-        if (opts.allowMutations && !opts.flows) process.stderr.write("⚠ --allow-mutations has no effect without --flows.\n");
+        if (opts.allowMutations && !opts.flows && !opts.validate) process.stderr.write("⚠ --allow-mutations has no effect without --flows or --validate.\n");
         const progress = makeCliProgress({
           write: (s) => void process.stderr.write(s),
           isTTY: Boolean(process.stderr.isTTY),

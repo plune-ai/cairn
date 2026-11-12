@@ -5,6 +5,7 @@ import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
 import { stepsFromTrace } from "./trace-chapters.js";
+import { installWriteGuard } from "./write-guard.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -43,6 +44,7 @@ export function configContent(
   screencastDir?: string,
   httpCredentialsEnv?: HttpCredentialsEnv,
   secretsInRun = false,
+  guardTsconfig?: string,
 ): string {
   const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
   const parts = ["headless: true"];
@@ -69,7 +71,8 @@ export function configContent(
   const use = `{ ${parts.join(", ")} }`;
   return `const { defineConfig } = require(${JSON.stringify(PW_TEST)});
 module.exports = defineConfig({
-  testDir: ${JSON.stringify(join(runDir, "tests"))},
+  testDir: ${JSON.stringify(join(runDir, "tests"))},${guardTsconfig ? `
+  tsconfig: ${JSON.stringify(guardTsconfig)},` : ""}
   fullyParallel: true,
   workers: ${workers},
   retries: 0,
@@ -96,6 +99,12 @@ export interface RunSpecsOptions {
   httpCredentialsEnv?: HttpCredentialsEnv;
   /** The suite types environment or mailbox secrets: no trace is recorded, since it would keep them (#210). */
   secretsInRun?: boolean;
+  /** #285: send the suite's writes to the target. Off: the write guard blocks them (see write-guard.ts). */
+  allowWrites?: boolean;
+  /** #285: the origins the guard keeps writes from (the target's, the API's); none given: every origin. */
+  guardOrigins?: string[];
+  /** #285: called once per request the guard blocked, `METHOD url`. */
+  onBlockedWrite?: (request: string) => void;
 }
 
 /** #94: one chapter marker — a scenario step title at its offset (ms) from the start of the `.webm`. */
@@ -330,9 +339,10 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
   const absRunDir = resolve(runDir); // testDir in the config must be absolute
   const configPath = join(absRunDir, "playwright.config.cjs");
   const screencastDir = opts.screencastDir ? resolve(opts.screencastDir) : undefined;
+  const guard = opts.allowWrites ? undefined : await installWriteGuard(absRunDir, opts.guardOrigins ?? [], PW_TEST);
   await writeFile(
     configPath,
-    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv, opts.secretsInRun),
+    configContent(absRunDir, opts.storageStatePath, opts.channel, opts.workers, screencastDir, opts.httpCredentialsEnv, opts.secretsInRun, guard?.tsconfig),
     "utf8",
   );
 
@@ -359,6 +369,7 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
     stderr = err.stderr ?? "";
   }
   await scrubErrorContexts(outputDirOf(absRunDir, screencastDir));
+  for (const request of (await guard?.blocked()) ?? []) opts.onBlockedWrite?.(request);
 
   // #94: when recording, drop the step-chapter sidecar next to the .webm files. The reporter writes the
   // video paths into stdout AFTER the run, so this runs post-parse. Best-effort: a recorder/IO failure
