@@ -116,8 +116,7 @@ describe("runExploreGraph: every case manual", () => {
     expect(validateCalls).toBe(0);
     expect(out.suite).toBeUndefined();
     expect(out.testCases).toHaveLength(1);
-    expect(events.join("
-")).toMatch(/nothing to automate/);
+    expect(events.join("\n")).toMatch(/nothing to automate/);
   });
 });
 
