@@ -3,7 +3,7 @@ export type { ModelSpec, ProviderKeys } from "./factory.js";
 export { imageBlock } from "./vision.js";
 export type { ImageBlock } from "./vision.js";
 // L1-01 — per-role routing + cost/token accounting (ADR-0011).
-export { structuredInvoker, meteredInvoker, StructuredOutputError, retryInvoke, CallBudget, cappedInvoke, timeoutInvoke, DEFAULT_STEP_TIMEOUT_MS } from "./structured.js";
+export { structuredInvoker, meteredInvoker, StructuredOutputError, nameSchema, retryInvoke, CallBudget, cappedInvoke, timeoutInvoke, DEFAULT_STEP_TIMEOUT_MS } from "./structured.js";
 export type { StructuredInvoke, StructuredMethod, TimeoutOptions } from "./structured.js";
 export { RoleRouter, resolveRoleTier, KNOWN_ROLES } from "./routing.js";
 export { CostLedger, DEFAULT_PRICING, priceFor, extractUsage } from "./cost.js";
