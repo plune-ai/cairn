@@ -43,4 +43,9 @@ describe("overlays open on load and comboboxes (integration, real Chromium)", ()
     expect(list?.trigger).toMatchObject({ role: "combobox", name: "Pick a colour" });
     expect(out.note ?? "").not.toContain("nothing was pressed");
   });
+
+  it("a fixed sidebar, a corner chat bubble and a bottom cookie bar are not modal dialog states", async () => {
+    const out = await explore("fixed-widgets.html");
+    expect(out.states.filter((s) => s.kind === "dialog")).toEqual([]);
+  });
 });

@@ -393,7 +393,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
 
   /**
    * Dialog-like layers the ARIA snapshot does not show as dialogs (a plain `div` modal open on load): visible, fixed
-   * or absolute, with a positive z-index, covering at least a tenth of the viewport, and holding no dialog, menu or
+   * or absolute, with a positive z-index, covering at least half the viewport (or marked aria-modal), and holding no dialog, menu or
    * listbox of its own (those the snapshot already has). The outermost one of each stack. A heuristic: a page that
    * cannot be read gives none.
    */
@@ -405,14 +405,14 @@ export class PlaywrightLibBackend implements BrowserBackend {
         const win = globalThis as any;
         const area = win.innerWidth * win.innerHeight;
         const picked: any[] = [];
-        for (const n of doc.body.querySelectorAll("*")) {
+        for (const n of doc.body.querySelectorAll(":scope > *, :scope > * > *, :scope > * > * > *")) {
           const cs = win.getComputedStyle(n);
           if ((cs.position !== "fixed" && cs.position !== "absolute") || !(parseInt(cs.zIndex, 10) > 0)) continue;
           if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) continue;
           const r = n.getBoundingClientRect();
           const w = Math.min(r.right, win.innerWidth) - Math.max(r.left, 0);
           const h = Math.min(r.bottom, win.innerHeight) - Math.max(r.top, 0);
-          if (w <= 0 || h <= 0 || w * h < area / 10) continue;
+          if (w <= 0 || h <= 0 || (w * h < area / 2 && n.getAttribute("aria-modal") !== "true")) continue;
           if (n.closest("[aria-hidden=true],[role=dialog],[role=alertdialog],dialog,[role=menu],[role=listbox]")) continue;
           if (n.querySelector("[role=dialog],[role=alertdialog],dialog,[role=menu],[role=listbox]")) continue;
           if (picked.some((p) => p.contains(n))) continue;
