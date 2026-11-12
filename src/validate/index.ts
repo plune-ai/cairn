@@ -68,6 +68,17 @@ export interface ValidateOptions {
   httpCredentialsEnv?: { usernameVar: string; passwordVar: string };
   /** The suite types environment or mailbox secrets: a screencast then keeps no trace (#210). */
   secretsInRun?: boolean;
+  /** #285: the user allowed writes for this run (--allow-mutations). Off: the write guard blocks them. */
+  allowWrites?: boolean;
+  /**
+   * #285: the target's origin, the studied pages' and the API's: a write blocked there fails its test. Writes to every
+   * other origin are blocked too, and only logged. None given: every origin counts as the target's.
+   */
+  guardOrigins?: string[];
+  /** #285: the suite carries the API flows fixture cairn wrote (--flows): its sign-in may send its login. */
+  flowsFixture?: boolean;
+  /** #285: the run log: each write the guard blocked on a guarded origin is named there, and every other origin once. */
+  log?: (line: string) => void;
 }
 
 /**
@@ -83,6 +94,8 @@ export async function validateSuite(
   // dir), so the surviving .webm files + sidecar match the LAST run — read back once after the loop.
   const screencastDir = opts.screencast ? join(resolve(runDir), "screencasts") : undefined;
   const runs: RawTestResult[][] = [];
+  const blocked = new Set<string>();
+  const others = new Map<string, { methods: Set<string>; count: number }>();
   for (let i = 0; i < reruns; i += 1) {
     runs.push(
       await runSpecs(runDir, {
@@ -92,8 +105,24 @@ export async function validateSuite(
         screencastDir,
         httpCredentialsEnv: opts.httpCredentialsEnv,
         secretsInRun: opts.secretsInRun,
+        allowWrites: opts.allowWrites,
+        guardOrigins: opts.guardOrigins,
+        flowsFixture: opts.flowsFixture,
+        onWriteGuard: (record) => {
+          for (const r of record.blocked) blocked.add(r);
+          for (const [origin, seen] of record.otherOrigins) {
+            const all = others.get(origin) ?? { methods: new Set<string>(), count: 0 };
+            for (const m of seen.methods) all.methods.add(m);
+            all.count += seen.count;
+            others.set(origin, all);
+          }
+        },
       }),
     );
+  }
+  for (const r of blocked) opts.log?.(`validate — write guard: blocked ${r} (writes are off; --allow-mutations allows them)`);
+  for (const [origin, { methods, count }] of others) {
+    opts.log?.(`validate — write guard: blocked ${[...methods].join(", ")} to another origin, ${origin} (${count}×; aborted, fails no test)`);
   }
   const report = classifyRuns(runs);
   if (screencastDir) {

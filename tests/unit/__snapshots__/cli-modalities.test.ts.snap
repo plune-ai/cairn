@@ -105,6 +105,9 @@ Options:
   --api-origin <list>    #229: origins besides --url's whose API requests go
                          into openapi.derived.json (comma-separated, e.g.
                          https://api.example.com); lib backend
+  --allow-mutations      #285: validation may send POST/PUT/PATCH/DELETE to the
+                         target and --api-origin; off by default — the write
+                         guard blocks them and names them in the run log
   --decider <provider>   opt-in decision layer: off | jev | laya | compat (sets
                          DECIDER; see docs/decider.md)
   --decider-shadow       with a decider: record its answers next to the current

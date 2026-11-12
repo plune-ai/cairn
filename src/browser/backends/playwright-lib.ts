@@ -7,6 +7,8 @@ import {
   REQUEST_ANSWER_MS,
   WATCH_KEY,
   clickEffect,
+  SENDS_PAST_FETCH,
+  changesServer,
   clickFailure,
   recordedPath,
   recordedUrl,
@@ -133,16 +135,8 @@ const WAITED_REQUESTS = new Set(["document", "fetch", "xhr", "script"]);
 /** …of which the page's own navigations and API calls are recorded — not scripts, images, fonts or beacons. */
 const RECORDED_REQUESTS = new Set(["document", "fetch", "xhr"]);
 
-/** #225 review 3: the methods the write guard lets through: by HTTP's own rule they read and change nothing. */
-const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-
 /** The Blink features every browser of this backend runs without. */
 const BLINK_OFF = "AutomationControlled";
-/**
- * #225 review 4: the one API seen sending where the browser's own Fetch interception does not look (full Chromium and
- * Chrome; the headless shell has none): it does not exist in the browser that presses.
- */
-const SENDS_PAST_FETCH = "BackgroundFetch";
 
 /**
  * #225 review 5: how long reading the crawler's session for the write guard may take. `storageState()` with IndexedDB has
@@ -682,7 +676,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       if (!WAITED_REQUESTS.has(r.resourceType()) || this.isPoll(r)) return;
       // #252: in the browser that presses, the write guard stops every such request: it never reached the server, so it
       // is no request of the run (it is in `blocked`), and the click it followed cannot be judged without its answer.
-      const stopped = this.server !== undefined && !SAFE_METHODS.has(r.method().toUpperCase());
+      const stopped = this.server !== undefined && changesServer(r.method());
       const entry: (typeof started)[number] = { r, done: false, recorded: !stopped && RECORDED_REQUESTS.has(r.resourceType()) && sameOrigin(r.url(), from), stopped };
       started.push(entry);
       void r
@@ -860,7 +854,7 @@ export class PlaywrightLibBackend implements BrowserBackend {
       const cdp = await pressing.browser.newBrowserCDPSession();
       cdp.on("Fetch.requestPaused", ({ requestId, request }) => {
         const method = request.method.toUpperCase();
-        if (SAFE_METHODS.has(method)) {
+        if (!changesServer(method)) {
           void cdp.send("Fetch.continueRequest", { requestId }).catch(() => undefined);
           return;
         }

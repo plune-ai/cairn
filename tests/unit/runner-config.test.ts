@@ -34,3 +34,17 @@ describe("configContent — Playwright worker count", () => {
     expect(configContent("/runs/x")).toMatch(/workers:\s*5/);
   });
 });
+
+describe("configContent — #285 write guard", () => {
+  it("under the guard: names its tsconfig and launches without BackgroundFetch, as observe's press browser", () => {
+    const cfg = configContent("/runs/x", undefined, undefined, 5, undefined, undefined, false, "/runs/x/write-guard.tsconfig.json");
+    expect(cfg).toContain('tsconfig: "/runs/x/write-guard.tsconfig.json"');
+    expect(cfg).toContain("--disable-blink-features=AutomationControlled,BackgroundFetch");
+  });
+
+  it("with writes allowed: no tsconfig, BackgroundFetch left on", () => {
+    const cfg = configContent("/runs/x");
+    expect(cfg).not.toContain("tsconfig");
+    expect(cfg).toContain("--disable-blink-features=AutomationControlled'");
+  });
+});
