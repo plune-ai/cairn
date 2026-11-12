@@ -45,8 +45,68 @@ export function meteredInvoker(
     } catch {
       // metering must never break the underlying call
     }
+    if (res.parsed === null || res.parsed === undefined) throw structuredOutputError(schema, res.raw);
     return res.parsed;
   };
+}
+
+/** Cap on the raw model text carried by a {@link StructuredOutputError}. */
+const RAW_CAP = 2000;
+
+/**
+ * The model answered but its output did not parse into the schema. LangChain's `includeRaw` mode swallows
+ * the parser's error and returns `parsed: null`; this makes that failure typed and diagnosable instead of
+ * letting the caller crash later on a null.
+ */
+export class StructuredOutputError extends Error {
+  constructor(
+    readonly schemaName: string,
+    /** Why the raw output does not fit the schema (re-derived: LangChain drops the original error). */
+    readonly parseError: string,
+    /** The model's raw text, capped at {@link RAW_CAP} characters. */
+    readonly raw: string,
+  ) {
+    super(`Model output did not parse into schema ${schemaName}: ${parseError}`);
+    this.name = "StructuredOutputError";
+  }
+}
+
+const SCHEMA_NAMES = new WeakMap<object, string>();
+
+/** Names a schema for {@link StructuredOutputError} without touching what is sent to the model. Returns the schema. */
+export function nameSchema<S extends object>(schema: S, name: string): S {
+  SCHEMA_NAMES.set(schema, name);
+  return schema;
+}
+
+/** Explicit name, else `.describe()`, looking through zod wrappers (effects, pipes, optional, default…), else its keys. */
+function schemaNameOf(schema: unknown): string {
+  let cur = schema as { description?: string; shape?: Record<string, unknown>; _zod?: { def?: Record<string, unknown> } } | undefined;
+  const first = cur;
+  for (let i = 0; cur && i < 8; i++) {
+    const named = SCHEMA_NAMES.get(cur) ?? cur.description;
+    if (named) return named;
+    const def = cur._zod?.def;
+    cur = (def?.innerType ?? def?.in ?? def?.out ?? def?.schema) as typeof cur;
+  }
+  const keys = first?.shape ? Object.keys(first.shape) : [];
+  return keys.length ? `object {${keys.join(", ")}}` : "(unnamed)";
+}
+
+function structuredOutputError(schema: ZodType<unknown>, rawMsg: unknown): StructuredOutputError {
+  const m = (rawMsg ?? {}) as { content?: unknown; tool_calls?: Array<{ args?: unknown }> };
+  const call = m.tool_calls?.[0]?.args;
+  const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+  const rawText = call !== undefined ? JSON.stringify(call) : text;
+  let parseError: string;
+  try {
+    const r = schema.safeParse(call !== undefined ? call : JSON.parse(text));
+    parseError = r.success ? "output parsed on a second attempt but LangChain returned null" : r.error.message;
+  } catch (e) {
+    parseError = e instanceof Error ? e.message : String(e);
+  }
+  const raw = rawText.length > RAW_CAP ? `${rawText.slice(0, RAW_CAP)}…` : rawText;
+  return new StructuredOutputError(schemaNameOf(schema), parseError.slice(0, RAW_CAP), raw);
 }
 
 /** Transient provider errors worth retrying (rate limit / overload / 5xx / timeout). */

@@ -1,11 +1,11 @@
 import { HumanMessage } from "@langchain/core/messages";
-import type { StructuredInvoke } from "../llm/structured.js";
+import { StructuredOutputError, type StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { PageStudy } from "../observe/index.js";
 import type { VerifiedElement } from "../browser/types.js";
 import { formatTransitions, type Transition } from "../probe/index.js";
 import { repeatedHint } from "../observe/locator-hints.js";
-import { DesignResultSchema, type TestCase } from "./schema.js";
+import { DesignResultSchema, type DesignResult, type TestCase } from "./schema.js";
 import { dedupCases } from "./dedup.js";
 import { designedCaseStableId } from "../artifacts/contract.js";
 
@@ -91,7 +91,9 @@ export async function designTestCases(input: DesignInput, deps: DesignDeps): Pro
   // #230: the flows section is appended only when flows were given, so a run without --flows sends the same prompt.
   const flowsSection = input.apiFlows ? (await deps.prompts.getPrompt("qa-api-flows-design", { flows: input.apiFlows })).text : "";
   const text = flowsSection ? `${prompt.text}\n\n${flowsSection}` : prompt.text;
-  const result = await deps.invoke(DesignResultSchema, [new HumanMessage(text)]);
+  // The same page parsed on a second try in a live run: one retry on an unparsable answer (one more model call), then throw.
+  const ask = (): Promise<DesignResult> => deps.invoke(DesignResultSchema, [new HumanMessage(text)]);
+  const result = await ask().catch((e: unknown) => (e instanceof StructuredOutputError ? ask() : Promise.reject(e)));
 
   const known = new Set(els.map((e) => e.ref));
   const grounded = result.testCases.map((c, i) => ({

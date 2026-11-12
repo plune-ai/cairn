@@ -1,6 +1,6 @@
 import type { GeneratedSuite } from "../codegen/index.js";
 import type { ValidationReport } from "../validate/index.js";
-import type { TriageResult } from "../decider/uses/repair-triage.js";
+import { locatorErrorKind, type TriageResult } from "../decider/uses/repair-triage.js";
 import type { HealRecord } from "../decider/uses/locator-heal.js";
 import type { LintFinding } from "../codegen/lint.js";
 import { progressSnapshot, madeProgress } from "./progress.js";
@@ -25,9 +25,11 @@ export function failedTestsHint(
       const t = triage?.get(r.test);
       const name = t ? `${r.test} [triage: ${t.category}]` : r.test;
       const line = r.error ? `- ${name}: ${clip(r.error.trim())}` : `- ${name}`;
+      const locator = locatorErrorKind(r.error);
+      const tagged = locator ? `${line}\n  → ${locator.hint}` : line;
       // locator-heal: a proposal, not a patch — the repair still writes the code, and the next validation judges it.
       const h = heals?.get(r.test);
-      return h ? `${line}\n  → replace ${h.from} with ${h.to} (verified: 1 match)` : line;
+      return h ? `${tagged}\n  → replace ${h.from} with ${h.to} (verified: 1 match)` : tagged;
     })
     .join("\n");
 }

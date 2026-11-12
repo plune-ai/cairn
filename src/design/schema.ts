@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nameSchema } from "../llm/structured.js";
 
 /** ISO/IEC/IEEE 29119-4 techniques. */
 export const TestTechniqueSchema = z.enum([
@@ -43,7 +44,8 @@ export type DesignedCase = z.infer<typeof DesignedCaseSchema>;
 export const isAutomated = (c: { id: string; execution?: string }): boolean =>
   c.execution !== "manual" && !c.id.startsWith("MTC");
 
-export const DesignResultSchema = z.object({ testCases: z.array(DesignedCaseSchema) });
+export type DesignResult = z.infer<typeof DesignResultSchema>;
+export const DesignResultSchema = nameSchema(z.object({ testCases: z.array(DesignedCaseSchema) }), "DesignResult");
 
 /** Final test case with an assigned id. */
 export interface TestCase extends DesignedCase {

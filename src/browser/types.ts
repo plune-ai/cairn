@@ -76,6 +76,8 @@ export interface VerifiedElement extends ElementRef {
    * row, card or section narrows it to one). Not clicked; reported as a finding.
    */
   ambiguous?: true;
+  /** The one visible element lies wholly outside the page (above or left of its origin, say a skip link at `top: -10em`): it cannot be scrolled to or clicked. */
+  offViewport?: true;
   /** #226: the container whose name narrows several matches down to this one. */
   narrowedBy?: OverlayScope;
   /** If the element is hidden behind a tab/view — which switcher to click first (multi-state). */
@@ -97,6 +99,17 @@ export interface Observation {
    * a cookie banner leaves the page live. Absent on the cli backend: every dialog is then taken as modal.
    */
   nonModal?: string[];
+  /**
+   * A layer over the page that the ARIA snapshot does not call a dialog (a plain `div` modal open on load): visible,
+   * fixed or absolute, stacked above the page, covering a good part of the viewport. Lib backend only.
+   */
+  layers?: OpenLayer[];
+}
+
+/** A dialog-like layer read from the DOM: its name (aria-label or heading) and the controls in it. */
+export interface OpenLayer {
+  name?: string;
+  elements: { role: string; name?: string }[];
 }
 
 /** HTTP Basic Auth for the browser context (values come from environment variables, never from a file). */

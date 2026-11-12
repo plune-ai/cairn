@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { designTestCases } from "../../src/design/index.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
-import type { StructuredInvoke } from "../../src/llm/structured.js";
+import { StructuredOutputError, type StructuredInvoke } from "../../src/llm/structured.js";
 import type { PageStudy } from "../../src/observe/index.js";
 
 const study: PageStudy = {
@@ -92,5 +92,31 @@ describe("designTestCases", () => {
       { invoke: fakeInvoke, prompts: new PromptRegistry() },
     );
     expect(cases).toHaveLength(1); // two identical-modulo-title cases → merged
+  });
+});
+
+describe("designTestCases: an unparsable model answer", () => {
+  const ok = { testCases: [{ title: "t", technique: "boundary-value", steps: ["s"], expected: "e", priority: "high", elementRefs: ["e6"] }] };
+  const bad = (): never => {
+    throw new StructuredOutputError("DesignResult", "bad json", "{");
+  };
+  it("is retried once: unparsable then valid gets through with 2 calls", async () => {
+    let calls = 0;
+    const invoke: StructuredInvoke = async (schema) => (++calls === 1 ? bad() : schema.parse(ok));
+    const cases = await designTestCases({ study, pageSemantics: "p" }, { invoke, prompts: new PromptRegistry() });
+    expect(cases).toHaveLength(1);
+    expect(calls).toBe(2);
+  });
+  it("fails twice: throws the typed error after 2 calls", async () => {
+    let calls = 0;
+    const invoke: StructuredInvoke = async () => (++calls, bad());
+    await expect(designTestCases({ study, pageSemantics: "p" }, { invoke, prompts: new PromptRegistry() })).rejects.toBeInstanceOf(StructuredOutputError);
+    expect(calls).toBe(2);
+  });
+  it("other errors are not retried", async () => {
+    let calls = 0;
+    const invoke: StructuredInvoke = async () => { ++calls; throw new Error("boom"); };
+    await expect(designTestCases({ study, pageSemantics: "p" }, { invoke, prompts: new PromptRegistry() })).rejects.toThrow("boom");
+    expect(calls).toBe(1);
   });
 });

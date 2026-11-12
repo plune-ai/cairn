@@ -51,6 +51,15 @@ export const DESTRUCTIVE = new RegExp(
   "iu",
 );
 
+/**
+ * A page named after a pair of opposite actions ("Add/Remove Elements", "Create and Delete Users") is a page, not a
+ * deletion: the deletion word only counts when it stands alone. #280
+ */
+const ACTION_PAIR = /\b(?:add|create|new|insert)\s*(?:\/|&|,|\band\b)\s*(?:delete|remove)\b/iu;
+
+/** A link the crawl must not follow: it deletes or ends the session, and its name is not a paired page title. */
+export const isDestructiveLink = (name: string | undefined): boolean => DESTRUCTIVE.test(name ?? "") && !ACTION_PAIR.test(name ?? "");
+
 /** Same-origin check — the crawl stays inside the app under test, never wanders to external sites. */
 function sameOrigin(a: string, b: string): boolean {
   try {
@@ -96,7 +105,7 @@ export async function crawlFlow(
     // (e.g. 3× "See the platform"); following each is wasted work and unreliable for getByRole().first().
     const seenLink = new Set<string>();
     const links = node.study.elements.filter((e) => {
-      if (e.role !== "link" || !e.interactive || DESTRUCTIVE.test(e.name ?? "")) return false;
+      if (e.role !== "link" || !e.interactive || isDestructiveLink(e.name)) return false;
       const key = `${e.name ?? ""}\u0000${e.url ?? ""}`;
       if (seenLink.has(key)) return false;
       seenLink.add(key);

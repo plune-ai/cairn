@@ -1,4 +1,4 @@
-import type { ElementRef, OverlayScope } from "../browser/types.js";
+import type { ElementRef, OpenLayer, OverlayScope } from "../browser/types.js";
 import { DESTRUCTIVE } from "../flow/crawl.js";
 import { isDeletionIntent } from "../safety/guardrails.js";
 import { overlayKey, parseAriaSnapshot } from "./parse-aria.js";
@@ -141,6 +141,20 @@ export function overlayStack(aria: string, opts: { baseline?: string; nonModal?:
     out.push({ kind, role: el.role, ...(el.name !== undefined ? { name: el.name } : {}), modal, elements });
   }
   return out;
+}
+
+/**
+ * The layers the DOM showed over the page that the snapshot has no dialog for (a plain `div` modal open on load), as
+ * modal dialogs. Their elements carry no scope, so their locators are page-wide.
+ */
+export function layerViews(layers: readonly OpenLayer[] | undefined): OverlayView[] {
+  return (layers ?? []).map((l, i) => ({
+    kind: "dialog" as const,
+    role: "dialog",
+    ...(l.name !== undefined ? { name: l.name } : {}),
+    modal: true,
+    elements: l.elements.map((e, j) => ({ ref: `layer${i + 1}-${j + 1}`, role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), interactive: true, rank: 0 })),
+  }));
 }
 
 /** `c` lies after `el` in document order, before the next element that is not inside `el` (same-named containers stay apart). */
