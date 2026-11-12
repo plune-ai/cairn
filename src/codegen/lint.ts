@@ -1,7 +1,7 @@
 import type { GeneratedSuite } from "./schema.js";
 
 /** #226: kinds that are errors, not advice: they go into the repair loop before the suite is even run. */
-export type ERROR_KIND = "mouse-click" | "force-click" | "blind-position";
+export type ERROR_KIND = "mouse-click" | "force-click" | "blind-position" | "ambiguous-locator";
 
 export interface LintFinding {
   file: string;
@@ -199,6 +199,71 @@ function mouseAliases(code: string): string[] {
   return [...out];
 }
 
+/** What the lint knows of the page's elements: a verified element, reduced to what it checks. */
+export interface KnownElement {
+  role: string;
+  name?: string;
+  count: number;
+  ambiguous?: true;
+  narrowedBy?: unknown;
+  offViewport?: true;
+}
+
+/**
+ * The elements of the overlay states as {@link KnownElement}s, one observation per overlay: the ones sharing a role, a
+ * name and a locator are one clash (two Close buttons in one modal); the same name in two overlays is not.
+ */
+export function knownFromOverlays(states: readonly { elements: readonly { role: string; name?: string; locator: string }[] }[]): KnownElement[] {
+  return states.flatMap((s) => {
+    const by = new Map<string, { role: string; name?: string; n: number }>();
+    for (const e of s.elements) {
+      const k = `${e.role}\u0000${e.name ?? ""}\u0000${e.locator}`;
+      const cur = by.get(k);
+      if (cur) cur.n += 1;
+      else by.set(k, { role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), n: 1 });
+    }
+    return [...by.values()].map(({ n, ...e }) => ({ ...e, count: n, ...(n > 1 ? { ambiguous: true as const } : {}) }));
+  });
+}
+
+const GET_BY_ROLE_CALL = /getByRole\(\s*(['"])(\w+)\1\s*,\s*\{\s*name:\s*(['"])((?:\\.|(?!\3).)*)\3([^}]*)\}\s*\)/g;
+/** Roles a test acts on: a locator for one of them that matches nothing the page has was made up. */
+const ACTED_ON = new Set(["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "textbox", "combobox", "option"]);
+
+/**
+ * Why a `page.getByRole(role, { name })` in `text` does not resolve to one visible element, judged by the elements read
+ * from the page: none has that role and name (a made-up locator), several visible ones that nothing narrows, one
+ * outside the viewport, or a name that is part of another element's name without `exact: true`. Only calls made on
+ * `page` itself are judged, also when the chain is split over lines; a call reached through another locator
+ * (`dialog.getByRole(...)`, `.locator(...).getByRole(...)`) is scoped to it and left alone. Returns [index, reason].
+ */
+function ambiguousLocators(text: string, known: readonly KnownElement[]): [number, string][] {
+  const out: [number, string][] = [];
+  if (known.length === 0) return out;
+  for (const m of text.matchAll(GET_BY_ROLE_CALL)) {
+    if (!/\bpage\s*\.\s*$/.test(text.slice(0, m.index))) continue;
+    const role = m[2]!;
+    const name = m[4]!.replace(/\\(.)/g, "$1");
+    const exact = /exact:\s*true/.test(m[5] ?? "");
+    const at = (reason: string): void => void out.push([m.index!, reason]);
+    const same = known.filter((k) => k.role === role && k.name === name);
+    // one clash is within one observation: it counts only when every view that has the element has it twice
+    const clash = (k: KnownElement): boolean => !!k.ambiguous || (k.count > 1 && !k.narrowedBy);
+    const bad = same.length > 0 && same.every(clash) ? same[0] : undefined;
+    if (bad) at(`getByRole('${role}', { name: '${name}' }) matches ${bad.count} visible elements and nothing narrows it: reach it through its dialog, row or section`);
+    else if (same.some((k) => k.offViewport)) at(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
+    else if (same.length === 0 && ACTED_ON.has(role)) {
+      const lower = name.toLowerCase();
+      const hit = known.some((k) => k.role === role && k.name && (exact ? k.name === name : k.name.toLowerCase().includes(lower)));
+      if (!hit) at(`getByRole('${role}', { name: '${name}' }) matches no ${role} on the page: use an element from the list`);
+    } else if (!exact) {
+      const longer = known.find((k) => k.role === role && k.name && k.name.length > name.length && k.name.toLowerCase().includes(name.toLowerCase()));
+      if (longer) at(`getByRole('${role}', { name: '${name}' }) also matches "${longer.name}": add exact: true`);
+    }
+  }
+  return out;
+}
+
 /**
  * #226: errors in generated code, found before the suite is run. A pointer click at coordinates (also through an alias
  * of `page.mouse`), a click forced past the actionability checks (also through a quoted key or a shorthand of a true
@@ -207,7 +272,7 @@ function mouseAliases(code: string): string[] {
  * the same line or on the line above that says why the position is the point of the check (sorting, say). Strings and
  * comments are not read as code.
  */
-export function lintErrors(suite: GeneratedSuite): LintFinding[] {
+export function lintErrors(suite: GeneratedSuite, known: readonly KnownElement[] = []): LintFinding[] {
   const out: LintFinding[] = [];
   for (const f of suite.files) {
     const lines = f.content.split("\n");
@@ -215,6 +280,10 @@ export function lintErrors(suite: GeneratedSuite): LintFinding[] {
     const all = code.join("\n");
     const mouse = clickOn(mouseAliases(all));
     const forceSet = FORCE_TRUE.test(all);
+    for (const [at, d] of ambiguousLocators(f.content, known)) {
+      const i = f.content.slice(0, at).split("\n").length - 1;
+      if (code[i]?.trim()) out.push({ file: f.path, kind: "ambiguous-locator", detail: `${d} (line ${i + 1}: ${snippet(lines[i] ?? "")})` });
+    }
     let aboveReason = false; // the line above is a comment that says something
     code.forEach((c, i) => {
       const where = `line ${i + 1}: ${snippet(lines[i] ?? "")}`;

@@ -24,6 +24,7 @@ Rules (STRICT):
 - Each file is complete valid TypeScript: import { test, expect } from '@playwright/test';
 - At the start of each test: await page.goto('{{baseUrl}}');
 - Locators ONLY user-facing by role+name: page.getByRole('button', { name: 'Sign In' }), getByLabel, getByText. NO CSS/XPath/testid.
+- Every locator must resolve to exactly ONE visible element of the list above. Pass exact: true with every name, and always when the element's line says its name is part of another's. Never use an element marked as outside the viewport.
 - Repeated elements (marked ×N — list/table rows): never pick by position. Narrow by context: go through the accessible name of the row, card, section or list item the element sits in, e.g. page.getByRole('row', { name: 'Jane Roe Delete', exact: true }).getByRole('button', { name: 'Delete', exact: true }). Use the locator given on the element's line when there is one. .first() / .nth(i) ONLY with a comment (on the same line or the line above) saying why the position is the point of the check, for example sorting: the first row must be the lowest. An element marked "ambiguous" cannot be told apart from the others: do not click it; at most assert it is visible.
 - FORBIDDEN (the code is rejected before it runs): page.mouse.click(...), { force: true }, and .first() / .nth(...) without such a comment.
 - An element marked [first click tab "X"] lives behind a tab/view: first await page.getByRole(...{ name: 'X' }).click(), and ONLY then interact with it (otherwise it is not visible).
