@@ -9,6 +9,7 @@ import { parseAriaSnapshot } from "../observe/parse-aria.js";
 import {
   EXIT_ORDER,
   formatOverlays,
+  layerViews,
   isBackName,
   isCompletionName,
   isStepName,
@@ -359,9 +360,12 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
   // Only a button that says it opens something is pressed (allow-list). Read on the crawler's own page, before anything
   // starts: reading presses nothing, and it is the page the study describes. Where the presses happen, a request the app
   // reads through may be stopped and the button not be there at all.
+  // What is open when the page is read is a state whatever else happens below: a modal shown on load has no trigger.
+  recordOpenOnLoad();
   if (!gateway.guardWrites) return readOpenOverlays(NO_GUARD_NOTE);
   const found: ElementRef[] = [];
-  for (const e of study.elements.filter((e) => e.role === "button" && e.interactive && !e.underOverlay && !e.scope && !e.inside)) {
+  // a combobox that announces a popup (aria-haspopup / aria-expanded / aria-controls) is a trigger like a button
+  for (const e of study.elements.filter((e) => (e.role === "button" || e.role === "combobox") && e.interactive && !e.underOverlay && !e.scope && !e.inside)) {
     if (found.some((c) => c.name === e.name)) continue;
     const reason = await refusalOf(e);
     if (reason) skip(e, reason);
@@ -436,7 +440,13 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
 
   /** Nothing is pressed: only the overlays open when the page was read are recorded, and the result says why. */
   function readOpenOverlays(why: string): ExploreOverlaysResult {
-    for (const top of overlayStack(baseline)) {
+    say(`exploreOverlays — ${why}`);
+    return { states, skipped, toasts, guard: "none", blocked: [], note: why };
+  }
+
+  /** The overlays open when the page was read (dialogs of the snapshot, then layers the DOM showed), once each. */
+  function recordOpenOnLoad(): void {
+    for (const top of [...overlayStack(baseline), ...layerViews(study.layers)]) {
       states.push({
         id: `overlay-${states.length + 1}`,
         kind: top.kind,
@@ -450,8 +460,6 @@ export async function exploreOverlays(input: ExploreOverlaysInput): Promise<Expl
         skipped: [],
       });
     }
-    say(`exploreOverlays — ${why}`);
-    return { states, skipped, toasts, guard: "none", blocked: [], note: why };
   }
 
   /** The page's own triggers, pressed while the write guard is on. */
