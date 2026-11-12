@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { generateSuite } from "../../src/codegen/index.js";
-import { lintErrors, type KnownElement } from "../../src/codegen/lint.js";
+import { lintErrors, knownFromOverlays, type KnownElement } from "../../src/codegen/lint.js";
 import { failedTestsHint } from "../../src/agent/repair-loop.js";
 import { makeTriage } from "../../src/decider/uses/repair-triage.js";
 import { PromptRegistry } from "../../src/prompts/index.js";
@@ -83,6 +83,24 @@ await dialog.getByRole('button', { name: 'Close' }).click();`)).toEqual([]);
   });
   it("does not read a comment", () => {
     expect(kinds("// page.getByRole('link', { name: 'Close' })")).toEqual([]);
+  });
+});
+
+describe("lint knows what the overlays hold (#279)", () => {
+  const btn = (name: string, locator = `page.getByRole('button', { name: '${name}', exact: true })`) => ({ role: "button", name, locator });
+  const page = [el("button", "Open")];
+
+  it("a button that exists only in an overlay, written as an unscoped page locator, raises nothing", () => {
+    const known = [...page, ...knownFromOverlays([{ elements: [btn("Close")] }])];
+    expect(lintErrors(suite("await page.getByRole('button', { name: 'Close', exact: true }).click();"), known)).toEqual([]);
+  });
+  it("the same name in two separate views is not a clash", () => {
+    const known = [...page, ...knownFromOverlays([{ elements: [btn("Close")] }, { elements: [btn("Close")] }])];
+    expect(lintErrors(suite("await page.getByRole('button', { name: 'Close', exact: true }).click();"), known)).toEqual([]);
+  });
+  it("two Close elements in one overlay are still ambiguous", () => {
+    const known = [...page, ...knownFromOverlays([{ elements: [btn("Close"), btn("Close")] }])];
+    expect(lintErrors(suite("await page.getByRole('button', { name: 'Close', exact: true }).click();"), known).map((f) => f.kind)).toEqual(["ambiguous-locator"]);
   });
 });
 

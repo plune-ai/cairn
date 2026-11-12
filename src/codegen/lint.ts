@@ -209,6 +209,23 @@ export interface KnownElement {
   offViewport?: true;
 }
 
+/**
+ * The elements of the overlay states as {@link KnownElement}s, one observation per overlay: the ones sharing a role, a
+ * name and a locator are one clash (two Close buttons in one modal); the same name in two overlays is not.
+ */
+export function knownFromOverlays(states: readonly { elements: readonly { role: string; name?: string; locator: string }[] }[]): KnownElement[] {
+  return states.flatMap((s) => {
+    const by = new Map<string, { role: string; name?: string; n: number }>();
+    for (const e of s.elements) {
+      const k = `${e.role}\u0000${e.name ?? ""}\u0000${e.locator}`;
+      const cur = by.get(k);
+      if (cur) cur.n += 1;
+      else by.set(k, { role: e.role, ...(e.name !== undefined ? { name: e.name } : {}), n: 1 });
+    }
+    return [...by.values()].map(({ n, ...e }) => ({ ...e, count: n, ...(n > 1 ? { ambiguous: true as const } : {}) }));
+  });
+}
+
 const GET_BY_ROLE_CALL = /getByRole\(\s*(['"])(\w+)\1\s*,\s*\{\s*name:\s*(['"])((?:\\.|(?!\3).)*)\3([^}]*)\}\s*\)/g;
 /** Roles a test acts on: a locator for one of them that matches nothing the page has was made up. */
 const ACTED_ON = new Set(["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "textbox", "combobox", "option"]);
@@ -230,7 +247,9 @@ function ambiguousLocators(text: string, known: readonly KnownElement[]): [numbe
     const exact = /exact:\s*true/.test(m[5] ?? "");
     const at = (reason: string): void => void out.push([m.index!, reason]);
     const same = known.filter((k) => k.role === role && k.name === name);
-    const bad = same.find((k) => k.ambiguous || (k.count > 1 && !k.narrowedBy));
+    // one clash is within one observation: it counts only when every view that has the element has it twice
+    const clash = (k: KnownElement): boolean => !!k.ambiguous || (k.count > 1 && !k.narrowedBy);
+    const bad = same.length > 0 && same.every(clash) ? same[0] : undefined;
     if (bad) at(`getByRole('${role}', { name: '${name}' }) matches ${bad.count} visible elements and nothing narrows it: reach it through its dialog, row or section`);
     else if (same.some((k) => k.offViewport)) at(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
     else if (same.length === 0 && ACTED_ON.has(role)) {
