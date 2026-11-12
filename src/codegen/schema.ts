@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nameSchema } from "../llm/structured.js";
 
 export const FileBlobSchema = z.object({
   path: z.string(),
@@ -6,7 +7,7 @@ export const FileBlobSchema = z.object({
 });
 export type FileBlob = z.infer<typeof FileBlobSchema>;
 
-export const GeneratedSuiteSchema = z.object({
+export const GeneratedSuiteSchema = nameSchema(z.object({
   files: z.array(FileBlobSchema).min(1),
-});
+}), "GeneratedSuite");
 export type GeneratedSuite = z.infer<typeof GeneratedSuiteSchema>;

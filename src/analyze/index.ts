@@ -1,16 +1,16 @@
 import { HumanMessage } from "@langchain/core/messages";
 import { z } from "zod";
-import type { StructuredInvoke } from "../llm/structured.js";
+import { nameSchema, type StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { PageStudy } from "../observe/index.js";
 import { imageBlock } from "../llm/index.js";
 
-export const PageAnalysisSchema = z.object({
+export const PageAnalysisSchema = nameSchema(z.object({
   pageSemantics: z.string(),
   primaryRefs: z.array(z.string()).default([]),
   /** Refs of view/tab/wizard-step switchers (a click opens different content). */
   viewSwitchers: z.array(z.string()).default([]),
-});
+}), "PageAnalysis");
 export type PageAnalysis = z.infer<typeof PageAnalysisSchema>;
 
 export interface AnalyzeDeps {
