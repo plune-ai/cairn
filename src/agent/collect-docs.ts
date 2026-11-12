@@ -363,7 +363,7 @@ export interface WalkResult {
 
 /**
  * Opens the app, walks it ({@link collectDocs}) and writes into `outDir` what the walk saw: the screenshots and the
- * OpenAPI draft from the traffic. `outDir` is created only after the walk succeeds. `describe`: what the model needs
+ * OpenAPI draft from the traffic. `outDir` is created only after the walk succeeds, or by a failed walk that leaves a partial draft. `describe`: what the model needs
  * (absent: no screen is described and no LLM call is made).
  */
 export async function walkApp(
@@ -392,6 +392,13 @@ export async function walkApp(
       () => false,
     );
     return { docs, ...(hasSpec ? { openApiFile } : {}) };
+  } catch (err) {
+    // #286: the traffic recorded so far is a result of its own; a walk that fails part-way must not discard its draft.
+    if (apiTraffic?.recorded) {
+      onProgress("collect-docs — the walk failed; writing the OpenAPI draft from the traffic recorded so far (partial)");
+      await writeTrafficSpec(apiTraffic, outDir, input.url, secretValues("", process.env), onProgress);
+    }
+    throw err;
   } finally {
     await gateway.close();
   }
