@@ -7,7 +7,7 @@ import { crawlFlow, type FlowGraph } from "../flow/crawl.js";
 import { designJourneys } from "../flow/journey.js";
 import { planSetup, type SetupPlan } from "../flow/setup.js";
 import { buildJourneySetupSuite } from "../codegen/journey-setup.js";
-import type { JourneyCase } from "../design/schema.js";
+import { isAutomated, type JourneyCase } from "../design/schema.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
@@ -497,7 +497,7 @@ export async function runExploreGraph(
       {
         study,
         pageSemantics: analysis.pageSemantics,
-        testCases,
+        testCases: testCases.filter(isAutomated),
         repairHint,
         elements: verified.filter((v) => v.count >= 1),
         transitions,
