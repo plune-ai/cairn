@@ -19,7 +19,7 @@ import type { Page } from "playwright";
  * page loads and those its clicks start — are folded into openapi.derived.json in the run dir. The LLM-driven graph is
  * replaced by a script that clicks through the SPA's screens with the run's real gateway; everything else is the run.
  */
-const blockWrite = vi.hoisted(() => ({ in: undefined as string | undefined }));
+const blockWrite = vi.hoisted(() => ({ in: undefined as string | undefined, failAfterTraffic: false }));
 vi.mock("../../src/eval/judge.js", async (orig) => ({
   ...(await orig<typeof import("../../src/eval/judge.js")>()),
   judgeTestCases: async () => [],
@@ -43,6 +43,7 @@ vi.mock("../../src/agent/graph.js", () => ({
     const first = await g.observe({ url });
     await new Promise((r) => setTimeout(r, 300)); // the requests the page makes while it loads
     for (const name of ["Projects", "Open Alpha", "Projects", "Open Beta", "Projects", "New project", "Settings"]) await click(name);
+    if (blockWrite.failAfterTraffic) throw new Error("the model call failed after observe");
     return {
       study: { url, screenshotB64: "", ariaYaml: first.ariaSnapshot, capturedBy: "lib", elements: [] },
       analysis: { pageSemantics: "A projects app", primaryRefs: [], viewSwitchers: [] },
@@ -265,6 +266,23 @@ describe("an OpenAPI draft from the traffic recorded while exploring the UI (#22
       expect(events.join("\n")).toMatch(/could not write openapi\.derived\.json \(EISDIR\)/);
     } finally {
       blockWrite.in = undefined;
+    }
+  });
+
+  it.each([
+    ["explore", runExploration],
+    ["design", runDesign],
+  ] as const)("%s: a run that fails after the traffic was recorded still leaves openapi.derived.json (#276)", { timeout: 90_000 }, async (_name, run) => {
+    const own = await mkdtemp(join(base, "fails-after-"));
+    blockWrite.failAfterTraffic = true;
+    try {
+      const failure: unknown = await run({ url: start(), config: config(), runsBaseDir: own, knowledgeDir: join(base, "none"), fresh: true }).catch((e: unknown) => e);
+      expect(failure).toBeInstanceOf(Error);
+      const [dir] = await readdir(own);
+      const model = await ingestOpenApi(join(own, dir!, "openapi.derived.json"));
+      expect(model.endpoints.map((e) => `${e.method} ${e.path}`)).toContain("GET /api/projects");
+    } finally {
+      blockWrite.failAfterTraffic = false;
     }
   });
 
