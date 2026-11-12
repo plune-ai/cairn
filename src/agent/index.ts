@@ -52,6 +52,7 @@ import type { StorageState } from "../browser/index.js";
 import type { PageStudy } from "../observe/index.js";
 import type { PageAnalysis } from "../analyze/index.js";
 import type { TestCase } from "../design/index.js";
+import { isAutomated } from "../design/schema.js";
 import type { GeneratedSuite } from "../codegen/index.js";
 import { FLOW_FIXTURE_FILE, flowEnvSecrets, formatFlowsForPrompt, renderFlowFixture, withFlowFixture, type ApiFlowFile } from "../api/flows.js";
 
@@ -1138,7 +1139,7 @@ export async function runAutomate(input: {
     const allCases: ReturnType<typeof parseTestCaseMd>[] = [];
     for (const f of mdFiles) allCases.push(parseTestCaseMd(await readFile(join(tcDir, f), "utf8")));
     // Only auto/ATC — manual/MTC cases are NOT automated (they are manual).
-    const cases = allCases.filter((c) => c.execution !== "manual" && !c.id.startsWith("MTC"));
+    const cases = allCases.filter(isAutomated);
     const skipped = allCases.length - cases.length;
     onProgress(`automate — ${cases.length} auto cases (skipped manual/MTC: ${skipped}) from ${displayPath(tcDir)}`);
 

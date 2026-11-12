@@ -7,7 +7,7 @@ import { crawlFlow, type FlowGraph } from "../flow/crawl.js";
 import { designJourneys } from "../flow/journey.js";
 import { planSetup, type SetupPlan } from "../flow/setup.js";
 import { buildJourneySetupSuite } from "../codegen/journey-setup.js";
-import type { JourneyCase } from "../design/schema.js";
+import { isAutomated, type JourneyCase } from "../design/schema.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
@@ -491,13 +491,19 @@ export async function runExploreGraph(
     return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ambiguous, ...overlayKeys() };
   }
 
+  // Nothing automated (every case is manual): no codegen, so the model cannot invent tests that would run on the target.
+  if (!testCases.some(isAutomated)) {
+    deps.onProgress?.("generateCode — nothing to automate: every designed case is manual (MTC); no code generated, no tests run");
+    return { study, analysis, verified, transitions, testCases, stoppedEarly: false, attempts: 0, critique, flowGraph, journeys, setupPlans, clicks, ambiguous, ...overlayKeys() };
+  }
+
   // ── generate → validate → repair (reuse runRepairLoop) ───────────────────
   const genAndWrite = async (repairHint?: string): Promise<GeneratedSuite> => {
     const suite = await generateSuite(
       {
         study,
         pageSemantics: analysis.pageSemantics,
-        testCases,
+        testCases: testCases.filter(isAutomated),
         repairHint,
         elements: verified.filter((v) => v.count >= 1),
         transitions,

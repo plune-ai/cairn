@@ -70,6 +70,56 @@ const baseDeps = {
 const green: ValidationReport = { results: [{ test: "t", status: "passed" }], greenRatio: 1, flakyCount: 0 };
 const red: ValidationReport = { results: [{ test: "t", status: "failed" }], greenRatio: 0, flakyCount: 0 };
 
+describe("runExploreGraph: manual cases are not automated", () => {
+  it("generates code for the auto case only; the manual case is designed but not sent to codegen", async () => {
+    const mk = (title: string, execution: "auto" | "manual", technique: string) => ({
+      title, technique, execution, preconditions: [], steps: [`${title} step`], expected: `${title} result`, priority: "high", elementRefs: ["e1"],
+    });
+    const twoCases: StructuredInvoke = async (schema) =>
+      schema.parse({ testCases: [mk("Login happy path", "auto", "boundary-value"), mk("Upload quarterly invoice archive", "manual", "decision-table")] });
+    let codegenPrompt = "";
+    const spyCodegen: StructuredInvoke = async (schema, messages) => {
+      codegenPrompt = JSON.stringify(messages);
+      return codegenInvoke(schema, messages);
+    };
+    const out = await runExploreGraph(
+      { ...baseDeps, designInvoke: twoCases, codegenInvoke: spyCodegen, validate: async () => green, maxRepair: 0 },
+      { url: "http://x", runId: "r1" },
+    );
+    expect(out.testCases).toHaveLength(2);
+    expect(codegenPrompt).toContain("Login happy path");
+    expect(codegenPrompt).not.toContain("Upload quarterly invoice archive");
+  });
+});
+
+describe("runExploreGraph: every case manual", () => {
+  it("skips codegen and validation and says so", async () => {
+    const onlyManual: StructuredInvoke = async (schema) =>
+      schema.parse({
+        testCases: [{ title: "Upload quarterly invoice archive", technique: "decision-table", execution: "manual", preconditions: [], steps: ["s"], expected: "e", priority: "high", elementRefs: ["e1"] }],
+      });
+    let codegenCalls = 0;
+    let validateCalls = 0;
+    const events: string[] = [];
+    const out = await runExploreGraph(
+      {
+        ...baseDeps,
+        designInvoke: onlyManual,
+        codegenInvoke: async (schema, m) => (codegenCalls++, codegenInvoke(schema, m)),
+        validate: async () => (validateCalls++, green),
+        maxRepair: 1,
+        onProgress: (e: string) => events.push(e),
+      },
+      { url: "http://x", runId: "r1" },
+    );
+    expect(codegenCalls).toBe(0);
+    expect(validateCalls).toBe(0);
+    expect(out.suite).toBeUndefined();
+    expect(out.testCases).toHaveLength(1);
+    expect(events.join("\n")).toMatch(/nothing to automate/);
+  });
+});
+
 describe("runExploreGraph (full pipeline + repair, fake deps)", () => {
   it("green on the first try → no repair (attempts 0)", async () => {
     const out = await runExploreGraph({ ...baseDeps, validate: async () => green, maxRepair: 2 }, { url: "http://x", runId: "r1" });

@@ -40,6 +40,10 @@ export const DesignedCaseSchema = z.object({
 });
 export type DesignedCase = z.infer<typeof DesignedCaseSchema>;
 
+/** Only auto/ATC cases are automated; manual/MTC cases stay manual. Shared by `automate` and `explore`. */
+export const isAutomated = (c: { id: string; execution?: string }): boolean =>
+  c.execution !== "manual" && !c.id.startsWith("MTC");
+
 export type DesignResult = z.infer<typeof DesignResultSchema>;
 export const DesignResultSchema = nameSchema(z.object({ testCases: z.array(DesignedCaseSchema) }), "DesignResult");
 
