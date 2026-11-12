@@ -188,6 +188,55 @@ test('own browser', async () => {
     expect(report.results[1]?.error).toContain("refuses chromium.launch()");
   }, 120_000);
 
+  it("Validate · validateSuite · request.newContext() (export and playwright fixture) is guarded, a context stringifies, and playwright / playwright-core browser types are refused", async () => {
+    const run = await new ArtifactStore(BASE).openRun("contexts");
+    const launch = (from: string): string => `import { test } from '@playwright/test';
+import { chromium } from '${from}';
+test('launch from ${from}', async () => {
+  await chromium.launch();
+});`;
+    await run.writeSuite({
+      files: [
+        {
+          path: "contexts.spec.ts",
+          content: `import { test, request } from '@playwright/test';
+test('own API context', async () => {
+  const api = await request.newContext();
+  await api.post('${url}/api/own');
+});
+test('fixture API context', async ({ playwright }) => {
+  const api = await playwright.request.newContext();
+  await api.post('${url}/api/fixture');
+});
+test('stringifies', async ({ context, page }) => {
+  String(context.request);
+  String(page.request);
+});`,
+        },
+        { path: "pw.spec.ts", content: launch("playwright") },
+        { path: "core.spec.ts", content: launch("playwright-core") },
+      ],
+    });
+    const log: string[] = [];
+
+    const report = await validateSuite(run.dir, { reruns: 1, workers: 1, guardOrigins: [url], log: (l) => log.push(l) });
+
+    expect(writes).toEqual([]);
+    const status = Object.fromEntries(report.results.map((r) => [r.test, r.status]));
+    expect(status).toEqual({
+      "own API context": "failed",
+      "fixture API context": "failed",
+      stringifies: "passed",
+      "launch from playwright": "failed",
+      "launch from playwright-core": "failed",
+    });
+    expect(log.some((l) => l.includes(`POST ${url}/api/own`))).toBe(true);
+    expect(log.some((l) => l.includes(`POST ${url}/api/fixture`))).toBe(true);
+    for (const t of ["launch from playwright", "launch from playwright-core"]) {
+      expect(report.results.find((r) => r.test === t)?.error).toContain("refuses chromium.launch()");
+    }
+  }, 120_000);
+
   it("Validate · validateSuite · a test that ran where the guard never loaded fails the validation run (fail closed)", async () => {
     const run = await new ArtifactStore(BASE).openRun("unguarded");
     // A relative path is not a specifier the guard maps.

@@ -190,7 +190,8 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
 
     let results: Awaited<ReturnType<typeof runSpecs>>;
     try {
-      results = await runSpecs(run.dir, { workers: 1 });
+      // The fixture allows mutations (--allow-mutations), and the same flag lets validation write (#285).
+      results = await runSpecs(run.dir, { workers: 1, allowWrites: true });
     } catch (e) {
       if (isMissingBrowserError(e)) return ctx.skip();
       throw e;
@@ -200,6 +201,30 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     expect(app.created).toBe(2); // one project per test that asked for it
     expect(app.deleted).toBe(2); // the failed test's project too
     expect([...app.projects.keys()]).toEqual([]);
+  });
+
+  it("#285: under the validation write guard the sign-in flow still signs in: its login POST is the one write let through", { timeout: 120000 }, async (ctx) => {
+    const run = await new ArtifactStore(ITEST_BASE).openRun("guarded-signin");
+    await run.writeSuite({
+      files: [
+        { path: FLOW_FIXTURE_FILE, content: renderFlowFixture(flowFile, { baseUrl: app.url }) },
+        {
+          path: "signin.spec.ts",
+          content: spec(`test('signed in through the API', async ({ page }) => {
+  await page.goto('${app.url}/me');
+  await expect(page.getByRole('heading', { name: 'Signed in' })).toBeVisible();
+});`),
+        },
+      ],
+    });
+    let results: Awaited<ReturnType<typeof runSpecs>>;
+    try {
+      results = await runSpecs(run.dir, { workers: 1, guardOrigins: [app.url] });
+    } catch (e) {
+      if (isMissingBrowserError(e)) return ctx.skip();
+      throw e;
+    }
+    expect(results.map((r) => [r.title, r.status])).toEqual([["signed in through the API", "passed"]]);
   });
 
   it("a flow that changes data does not run against an address no flag allowed — the test is skipped, nothing is sent", { timeout: 120000 }, async (ctx) => {
@@ -239,7 +264,8 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     });
     let results: Awaited<ReturnType<typeof runSpecs>>;
     try {
-      results = await runSpecs(run.dir, { workers: 1 });
+      // The fixture allows mutations (--allow-mutations), and the same flag lets validation write (#285).
+      results = await runSpecs(run.dir, { workers: 1, allowWrites: true });
     } catch (e) {
       if (isMissingBrowserError(e)) return ctx.skip();
       throw e;
@@ -275,7 +301,8 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
         { path: "named.spec.ts", content: spec(`test('named', async ({ named }) => { expect(named.id).toBeTruthy(); });`) },
       ],
     });
-    const results = await runSpecs(run.dir, { workers: 1 });
+    // The fixture allows mutations (--allow-mutations), and the same flag lets validation write (#285).
+    const results = await runSpecs(run.dir, { workers: 1, allowWrites: true });
     expect(results.map((r) => r.status)).toEqual(["passed"]);
     expect(app.log.filter((l) => l.startsWith("DELETE"))).toHaveLength(1);
   });
@@ -291,7 +318,8 @@ describe("API flow fixture in a UI test (#230, integration, real playwright runn
     });
     let results: Awaited<ReturnType<typeof runSpecs>>;
     try {
-      results = await runSpecs(run.dir, { workers: 1 });
+      // The fixture allows mutations (--allow-mutations), and the same flag lets validation write (#285).
+      results = await runSpecs(run.dir, { workers: 1, allowWrites: true });
     } catch (e) {
       if (isMissingBrowserError(e)) return ctx.skip();
       throw e;

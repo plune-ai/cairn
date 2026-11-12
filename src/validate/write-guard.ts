@@ -1,12 +1,13 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { FLOW_FIXTURE_FILE } from "../api/flows.js";
 import { V, caseFlips, changesServer, decoded, recordedPath, recordedUrl, secretShaped } from "../browser/click-effect.js";
 
 /**
  * #285: observe's write guard for the validation run. Validation is a `playwright test` process of its own, so the guard
- * reaches it as a module: the run's tsconfig maps `@playwright/test` and `playwright/test` to it, which every generated
- * spec (and the API flows fixture) imports. It is `@playwright/test` with these fixtures added:
+ * reaches it as a module: the run's tsconfig maps `@playwright/test`, `playwright/test`, `playwright` and `playwright-core` to it; every generated
+ * spec (and the API flows fixture) imports the first. It is `@playwright/test` with these fixtures added:
  * - every worker's browser gets a Fetch interception on the browser itself, as observe's press browser: every request
  *   that changes the server (`changesServer`) is aborted, on every origin, from any page, popup, frame or worker;
  * - the `request` fixture and each test context's `request` (which `page.request` and `route.fetch()` use) refuse the
@@ -17,12 +18,13 @@ import { V, caseFlips, changesServer, decoded, recordedPath, recordedUrl, secret
  * Each block goes into `log` as it happens, with a line per worker the guard loaded in (`runSpecs` fails a run in which a
  * test ran where it did not). The re-exported `chromium`, `firefox` and `webkit` refuse to launch or connect: a browser
  * of a spec's own would have no guard.
- * Not covered: API contexts made with `playwright.request.newContext()` (the API flows fixture's, whose sign-in POST is by
- * design and whose flows that change data have their own `--allow-mutations` gate), the `request` of a context a spec
- * makes with `browser.newContext()` (its pages' traffic is covered), the `playwright` fixture's browser types, WebSocket
- * messages, and a GET that changes the server.
+ * `request.newContext()` (the export, and the `playwright` fixture's `playwright.request`) gives guarded API contexts too,
+ * but to the API flows fixture's sign-in, whose login POST is by design (see `signInOfFlows`).
+ * Not covered: a context a spec makes with `browser.newContext()` (its `request`, its pages' `page.request` and
+ * `route.fetch()`; its pages' browser traffic is covered), the `playwright` fixture's browser types, WebSocket messages,
+ * and a GET that changes the server.
  */
-function guardModule(pwTest: string, origins: string[], log: string): string {
+function guardModule(pwTest: string, origins: string[], log: string, flowsFixture: string): string {
   return `// Written by cairn for one validation run (#285): '@playwright/test' with the write guard on.
 const pw = require(${JSON.stringify(pwTest)});
 const { appendFileSync } = require('node:fs');
@@ -64,7 +66,7 @@ const guardedRequest = (ctx, sent) => new Proxy(ctx, {
     const value = Reflect.get(target, key);
     if (typeof value !== 'function') return value;
     // bound to the context itself, so a read's own fetch() inside Playwright is not checked (and keeps its call name)
-    if (!(key in SENDS || key === 'fetch' || key === '_innerFetch')) return value.bind(target);
+    if (!(Object.hasOwn(SENDS, key) || key === 'fetch' || key === '_innerFetch')) return value.bind(target);
     return (...args) => {
       let method, url;
       if (key === '_innerFetch') { // route.fetch() calls it on the context's request
@@ -82,9 +84,28 @@ const guardedRequest = (ctx, sent) => new Proxy(ctx, {
     };
   },
 });
+/** What this worker blocked on a guarded origin since its current test began. */
+const SENT = [];
+const norm = (s) => String(s).split(String.fromCharCode(92)).join('/').toLowerCase();
+const SELF = norm(__filename);
+const FLOWS_FIXTURE = ${JSON.stringify(flowsFixture.split("\\").join("/").toLowerCase())};
+/**
+ * The API flows fixture's sign-in (#230) sends its login POST by design: a context made by that function of that file
+ * is the one that stays unguarded. Every other caller (a spec, a helper, the fixture's data flows) gets a guarded one.
+ */
+const signInOfFlows = () => {
+  const caller = String(new Error().stack).split('\\n').slice(1).find((l) => !norm(l).includes(SELF));
+  return caller !== undefined && /\\bat (?:async )?signIn \\(/.test(caller) && norm(caller).includes(FLOWS_FIXTURE);
+};
+// One object: the export \`request\`, the \`playwright\` fixture's \`playwright.request\` and the one the request fixture uses.
+const newContext = pw.request.newContext.bind(pw.request);
+pw.request.newContext = (...args) => {
+  const exempt = signInOfFlows();
+  return newContext(...args).then((ctx) => (exempt ? ctx : guardedRequest(ctx, SENT)));
+};
 const test = pw.test.extend({
   cairnWriteGuard: [async ({ browser }, use, workerInfo) => {
-    const sent = [];
+    const sent = SENT;
     const cdp = await browser.newBrowserCDPSession();
     cdp.on('Fetch.requestPaused', ({ requestId, request, resourceType }) => {
       if (!changesServer(request.method)) {
@@ -165,9 +186,11 @@ export async function installWriteGuard(runDir: string, origins: string[], pwTes
   const tsconfig = join(runDir, "write-guard.tsconfig.json");
   const log = join(runDir, "write-guard.log");
   await rm(log, { force: true });
-  await writeFile(module, guardModule(pwTest, [...new Set(origins.map((o) => new URL(o).origin))], log), "utf8");
+  const guarded = [...new Set(origins.map((o) => new URL(o).origin))];
+  await writeFile(module, guardModule(pwTest, guarded, log, join(runDir, "tests", FLOW_FIXTURE_FILE)), "utf8");
   // Exact keys: Playwright maps only these specifiers, and never inside node_modules, so the guard's own require stays real.
-  const paths = { "@playwright/test": [module], "playwright/test": [module] };
+  // The guard exports all that \`playwright\` and \`playwright-core\` do, so a spec that takes its browser types there gets it too.
+  const paths = Object.fromEntries(["@playwright/test", "playwright/test", "playwright", "playwright-core"].map((k) => [k, [module]]));
   await writeFile(tsconfig, JSON.stringify({ compilerOptions: { allowJs: true, paths } }, null, 2), "utf8");
   return {
     tsconfig,
