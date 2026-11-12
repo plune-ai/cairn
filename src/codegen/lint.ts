@@ -209,27 +209,37 @@ export interface KnownElement {
   offViewport?: true;
 }
 
-const GET_BY_ROLE_CALL = /getByRole\(\s*(['"])(\w+)\1\s*,\s*\{\s*name:\s*(['"])((?:\.|(?!\3).)*)\3([^}]*)\}\s*\)/g;
+const GET_BY_ROLE_CALL = /getByRole\(\s*(['"])(\w+)\1\s*,\s*\{\s*name:\s*(['"])((?:\\.|(?!\3).)*)\3([^}]*)\}\s*\)/g;
+/** Roles a test acts on: a locator for one of them that matches nothing the page has was made up. */
+const ACTED_ON = new Set(["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "textbox", "combobox", "option"]);
 
 /**
- * Why a `getByRole(role, { name })` on `line` does not resolve to one visible element, judged by the elements read from
- * the page: several visible ones that nothing narrows, one outside the viewport, or a name that is part of another
- * element's name without `exact: true`. A call reached through another locator (`getByRole('dialog').getByRole(...)`)
- * is scoped, so it is left alone.
+ * Why a `page.getByRole(role, { name })` in `text` does not resolve to one visible element, judged by the elements read
+ * from the page: none has that role and name (a made-up locator), several visible ones that nothing narrows, one
+ * outside the viewport, or a name that is part of another element's name without `exact: true`. Only calls made on
+ * `page` itself are judged, also when the chain is split over lines; a call reached through another locator
+ * (`dialog.getByRole(...)`, `.locator(...).getByRole(...)`) is scoped to it and left alone. Returns [index, reason].
  */
-function ambiguousLocators(line: string, known: readonly KnownElement[]): string[] {
-  const out: string[] = [];
-  for (const m of line.matchAll(GET_BY_ROLE_CALL)) {
-    if (/\)\s*\.\s*$/.test(line.slice(0, m.index))) continue;
+function ambiguousLocators(text: string, known: readonly KnownElement[]): [number, string][] {
+  const out: [number, string][] = [];
+  if (known.length === 0) return out;
+  for (const m of text.matchAll(GET_BY_ROLE_CALL)) {
+    if (!/\bpage\s*\.\s*$/.test(text.slice(0, m.index))) continue;
     const role = m[2]!;
     const name = m[4]!.replace(/\\(.)/g, "$1");
+    const exact = /exact:\s*true/.test(m[5] ?? "");
+    const at = (reason: string): void => void out.push([m.index!, reason]);
     const same = known.filter((k) => k.role === role && k.name === name);
     const bad = same.find((k) => k.ambiguous || (k.count > 1 && !k.narrowedBy));
-    if (bad) out.push(`getByRole('${role}', { name: '${name}' }) matches ${bad.count} visible elements and nothing narrows it: reach it through its dialog, row or section`);
-    else if (same.some((k) => k.offViewport)) out.push(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
-    else if (same.length > 0 && !/exact:\s*true/.test(m[5] ?? "")) {
+    if (bad) at(`getByRole('${role}', { name: '${name}' }) matches ${bad.count} visible elements and nothing narrows it: reach it through its dialog, row or section`);
+    else if (same.some((k) => k.offViewport)) at(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
+    else if (same.length === 0 && ACTED_ON.has(role)) {
+      const lower = name.toLowerCase();
+      const hit = known.some((k) => k.role === role && k.name && (exact ? k.name === name : k.name.toLowerCase().includes(lower)));
+      if (!hit) at(`getByRole('${role}', { name: '${name}' }) matches no ${role} on the page: use an element from the list`);
+    } else if (!exact) {
       const longer = known.find((k) => k.role === role && k.name && k.name.length > name.length && k.name.toLowerCase().includes(name.toLowerCase()));
-      if (longer) out.push(`getByRole('${role}', { name: '${name}' }) also matches "${longer.name}": add exact: true`);
+      if (longer) at(`getByRole('${role}', { name: '${name}' }) also matches "${longer.name}": add exact: true`);
     }
   }
   return out;
@@ -251,6 +261,10 @@ export function lintErrors(suite: GeneratedSuite, known: readonly KnownElement[]
     const all = code.join("\n");
     const mouse = clickOn(mouseAliases(all));
     const forceSet = FORCE_TRUE.test(all);
+    for (const [at, d] of ambiguousLocators(f.content, known)) {
+      const i = f.content.slice(0, at).split("\n").length - 1;
+      if (code[i]?.trim()) out.push({ file: f.path, kind: "ambiguous-locator", detail: `${d} (line ${i + 1}: ${snippet(lines[i] ?? "")})` });
+    }
     let aboveReason = false; // the line above is a comment that says something
     code.forEach((c, i) => {
       const where = `line ${i + 1}: ${snippet(lines[i] ?? "")}`;
@@ -259,9 +273,6 @@ export function lintErrors(suite: GeneratedSuite, known: readonly KnownElement[]
       }
       if (FORCE.test(c) || (forceSet && FORCE_SHORTHAND.test(c))) {
         out.push({ file: f.path, kind: "force-click", detail: `force: true skips the actionability checks, so it clicks what is hidden or covered — wait for the element instead (${where})` });
-      }
-      for (const d of c.trim() ? ambiguousLocators(lines[i] ?? "", known) : []) {
-        out.push({ file: f.path, kind: "ambiguous-locator", detail: `${d} (line ${i + 1}: ${snippet(lines[i] ?? "")})` });
       }
       const position = POSITION.test(c) || strings[i]!.some((t) => SELECTOR_POSITION.test(t));
       if (position && !isReason(comment[i]!) && !aboveReason) {

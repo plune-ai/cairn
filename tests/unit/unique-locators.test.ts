@@ -57,6 +57,35 @@ describe("codegen uses only locators that resolve to one visible element (#279)"
   });
 });
 
+describe("lint judges only calls on page (#279)", () => {
+  const known: KnownElement[] = [el("button", "Close", { count: 2, ambiguous: true }), el("paragraph", "Close"), el("link", "Menu"), el("link", "Select Menu")];
+  const kinds = (code: string): string[] => lintErrors(suite(code), known).map((f) => f.kind);
+
+  it("a link that is not on the page (the snapshot has only paragraph: Close) is a finding", () => {
+    expect(kinds("await page.getByRole('link', { name: 'Close' }).click();")).toEqual(["ambiguous-locator"]);
+    expect(kinds("await page.getByRole('link', { name: 'Menu', exact: true }).click();")).toEqual([]);
+  });
+  it("skips a call scoped through a locator held in a variable", () => {
+    expect(kinds("const dialog = page.getByRole('dialog');
+await dialog.getByRole('button', { name: 'Close' }).click();")).toEqual([]);
+  });
+  it("skips a call scoped through .locator(...)", () => {
+    expect(kinds("await page.locator('#box').getByRole('button', { name: 'Close' }).click();")).toEqual([]);
+  });
+  it("skips a chain split over lines, and still judges a page call split over lines", () => {
+    expect(kinds("await page
+  .getByRole('dialog')
+  .getByRole('button', { name: 'Close' })
+  .click();")).toEqual([]);
+    expect(kinds("await page
+  .getByRole('button', { name: 'Close' })
+  .click();")).toEqual(["ambiguous-locator"]);
+  });
+  it("does not read a comment", () => {
+    expect(kinds("// page.getByRole('link', { name: 'Close' })")).toEqual([]);
+  });
+});
+
 describe("repair treats a strict-mode violation or an off-viewport target as a locator error (#279)", () => {
   const strict = "Error: strict mode violation: getByRole('button', { name: 'Close' }) resolved to 2 elements";
   const offscreen = "Error: locator.click: Timeout 30000ms exceeded.\n  - element is outside of the viewport";
