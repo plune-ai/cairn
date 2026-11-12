@@ -12,8 +12,8 @@ import { V, caseFlips, changesServer, decoded, recordedPath, recordedUrl, secret
  * - the `request` fixture and each test context's `request` (which `page.request` and `route.fetch()` use) refuse the
  *   same requests before sending them;
  * - after each test, a write it sent to a guarded origin (the target's, the studied pages', the API's) fails it, with
- *   the method and URL. One to any other origin (analytics, say) fails nothing: it was aborted, and a test that needed it
- *   fails on its own assertions. A test runs alone in its worker, so what its worker blocked while it ran is its own.
+ *   the method and URL. One to any other origin (analytics, say), and a beacon or CSP report to any origin, fails
+ *   nothing: it was aborted, and a test that needed it fails on its own assertions. A test runs alone in its worker, so what its worker blocked while it ran is its own.
  * Each block goes into `log` as it happens, with a line per worker the guard loaded in (`runSpecs` fails a run in which a
  * test ran where it did not). The re-exported `chromium`, `firefox` and `webkit` refuse to launch or connect: a browser
  * of a spec's own would have no guard.
@@ -39,19 +39,24 @@ const originOf = (url) => { try { return new URL(url).origin; } catch { return u
 // a URL that does not parse (a relative one) counts as the target's
 const ours = (url) => { const o = originOf(url); return o === undefined || ORIGINS.length === 0 || ORIGINS.includes(o); };
 const note = (line) => { try { appendFileSync(LOG, line + '\\n'); } catch {} };
-/** Record one blocked write: the target's go to the test that sent them; the rest are only logged, by origin. */
-const block = (sent, method, url) => {
+/**
+ * Record one blocked write: the target's go to the test that sent them (unless \`fails\` is false); the rest are only
+ * logged, by origin.
+ */
+const block = (sent, method, url, fails = true) => {
   const m = String(method).toUpperCase();
   if (ours(url)) {
     const named = m + ' ' + recordedUrl(String(url));
     note('T ' + named);
-    sent.push(named);
+    if (fails) sent.push(named);
     return named;
   }
   note('O ' + m + ' ' + originOf(url));
   return m + ' ' + originOf(url);
 };
 const failure = (named) => new Error('The write guard blocked ' + named + ': validation sends no writes unless the run allows them (--allow-mutations).');
+/** A beacon (sendBeacon, <a ping>) or a CSP report: the page sends it on its own, so it is aborted and logged, and fails no test. */
+const SENT_ON_ITS_OWN = new Set(['Ping', 'CSPViolationReport']);
 const SENDS = { post: 'POST', put: 'PUT', patch: 'PATCH', delete: 'DELETE' };
 /** An API request context that refuses writes; reads, and everything else, go to it unchanged. */
 const guardedRequest = (ctx, sent) => new Proxy(ctx, {
@@ -81,12 +86,12 @@ const test = pw.test.extend({
   cairnWriteGuard: [async ({ browser }, use, workerInfo) => {
     const sent = [];
     const cdp = await browser.newBrowserCDPSession();
-    cdp.on('Fetch.requestPaused', ({ requestId, request }) => {
+    cdp.on('Fetch.requestPaused', ({ requestId, request, resourceType }) => {
       if (!changesServer(request.method)) {
         cdp.send('Fetch.continueRequest', { requestId }).catch(() => undefined);
         return;
       }
-      block(sent, request.method, request.url);
+      block(sent, request.method, request.url, !SENT_ON_ITS_OWN.has(resourceType));
       // "Aborted" (net::ERR_ABORTED): a stopped form post leaves the page where it was, with no error page over it
       cdp.send('Fetch.failRequest', { requestId, errorReason: 'Aborted' }).catch(() => undefined);
     });

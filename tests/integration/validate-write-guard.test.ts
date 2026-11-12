@@ -56,7 +56,9 @@ describe("#285 validation runs under the write guard", () => {
     ({ server: app, url } = await serve(writes, (path) =>
       path === "/spa"
         ? `<button onclick="fetch('${apiUrl}/items', { method: 'POST', body: 'x' }).catch(() => {}); this.textContent = 'Sent'">Save</button>`
-        : `<form method="post" action="/submit"><input name="q" value="1"><button>Send</button></form>`,
+        : path === "/beacon"
+          ? `<button onclick="navigator.sendBeacon('/collect', 'x'); this.textContent = 'Counted'">Count</button>`
+          : `<form method="post" action="/submit"><input name="q" value="1"><button>Send</button></form>`,
     ));
   });
   beforeEach(() => {
@@ -117,6 +119,31 @@ test('saves', async ({ page }) => {
     expect(apiWrites).toEqual([]);
     expect(report.results.map((r) => r.status)).toEqual(["passed"]);
     expect(log.filter((l) => l.includes(apiUrl))).toEqual([`validate — write guard: blocked POST to another origin, ${apiUrl} (2×; aborted, fails no test)`]);
+  }, 120_000);
+
+  it("Validate · validateSuite · a same-origin sendBeacon is aborted and logged, and fails no test", async () => {
+    const run = await new ArtifactStore(BASE).openRun("beacon");
+    await run.writeSuite({
+      files: [
+        {
+          path: "beacon.spec.ts",
+          content: `import { test, expect } from '@playwright/test';
+test('counts', async ({ page }) => {
+  await page.goto('${url}/beacon');
+  await page.getByRole('button', { name: 'Count' }).click();
+  await page.waitForTimeout(500);
+  await expect(page.getByRole('button', { name: 'Counted' })).toBeVisible();
+});`,
+        },
+      ],
+    });
+    const log: string[] = [];
+
+    const report = await validateSuite(run.dir, { reruns: 1, workers: 1, guardOrigins: [url], log: (l) => log.push(l) });
+
+    expect(writes).toEqual([]);
+    expect(report.results.map((r) => r.status)).toEqual(["passed"]);
+    expect(log.some((l) => l.includes(`blocked POST ${url}/collect`))).toBe(true);
   }, 120_000);
 
   it("Validate · validateSuite --allow-mutations · the writes reach the servers and the tests pass", async () => {
