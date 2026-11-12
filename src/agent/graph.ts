@@ -525,7 +525,7 @@ export async function runExploreGraph(
     },
     maxRepair: deps.maxRepair,
     onProgress: deps.onProgress,
-    errors: lintErrors, // #226: pointer clicks, forced clicks and blind positions are repaired before the run
+    errors: (s) => lintErrors(s, verified), // #226: pointer clicks, forced clicks and blind positions; #279: locators that are not one visible element; repaired before the run
     triage: deps.decider?.uses.has("repair-triage") ? makeTriage(deps.decider, heal) : undefined,
     heal,
   });

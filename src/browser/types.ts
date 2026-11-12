@@ -76,6 +76,8 @@ export interface VerifiedElement extends ElementRef {
    * row, card or section narrows it to one). Not clicked; reported as a finding.
    */
   ambiguous?: true;
+  /** The one visible element lies wholly outside the page (above or left of its origin, say a skip link at `top: -10em`): it cannot be scrolled to or clicked. */
+  offViewport?: true;
   /** #226: the container whose name narrows several matches down to this one. */
   narrowedBy?: OverlayScope;
   /** If the element is hidden behind a tab/view — which switcher to click first (multi-state). */

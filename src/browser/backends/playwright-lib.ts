@@ -691,10 +691,21 @@ export class PlaywrightLibBackend implements BrowserBackend {
       let count = -1;
       try {
         const found = await findOne(page, el);
+        // outside the page, where no scrolling reaches: a skip link parked at `top: -10em`
+        const offViewport =
+          found.count === 1 &&
+          (await found.locator
+            .evaluate((n: unknown) => {
+              const w = globalThis as unknown as { scrollX: number; scrollY: number };
+              const r = (n as { getBoundingClientRect(): { right: number; bottom: number } }).getBoundingClientRect();
+              return r.right + w.scrollX <= 0 || r.bottom + w.scrollY <= 0;
+            }, undefined, { timeout: 1_000 })
+            .catch(() => false));
         out.push({
           ...el,
           count: found.count,
           verified: found.count === 1 || found.narrowedBy !== undefined,
+          ...(offViewport ? { offViewport: true as const } : {}),
           ...(found.narrowedBy ? { narrowedBy: found.narrowedBy } : {}),
           ...(found.ambiguous ? { ambiguous: true as const } : {}),
         });

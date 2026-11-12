@@ -1,7 +1,7 @@
 import type { GeneratedSuite } from "./schema.js";
 
 /** #226: kinds that are errors, not advice: they go into the repair loop before the suite is even run. */
-export type ERROR_KIND = "mouse-click" | "force-click" | "blind-position";
+export type ERROR_KIND = "mouse-click" | "force-click" | "blind-position" | "ambiguous-locator";
 
 export interface LintFinding {
   file: string;
@@ -199,6 +199,42 @@ function mouseAliases(code: string): string[] {
   return [...out];
 }
 
+/** What the lint knows of the page's elements: a verified element, reduced to what it checks. */
+export interface KnownElement {
+  role: string;
+  name?: string;
+  count: number;
+  ambiguous?: true;
+  narrowedBy?: unknown;
+  offViewport?: true;
+}
+
+const GET_BY_ROLE_CALL = /getByRole\(\s*(['"])(\w+)\1\s*,\s*\{\s*name:\s*(['"])((?:\.|(?!\3).)*)\3([^}]*)\}\s*\)/g;
+
+/**
+ * Why a `getByRole(role, { name })` on `line` does not resolve to one visible element, judged by the elements read from
+ * the page: several visible ones that nothing narrows, one outside the viewport, or a name that is part of another
+ * element's name without `exact: true`. A call reached through another locator (`getByRole('dialog').getByRole(...)`)
+ * is scoped, so it is left alone.
+ */
+function ambiguousLocators(line: string, known: readonly KnownElement[]): string[] {
+  const out: string[] = [];
+  for (const m of line.matchAll(GET_BY_ROLE_CALL)) {
+    if (/\)\s*\.\s*$/.test(line.slice(0, m.index))) continue;
+    const role = m[2]!;
+    const name = m[4]!.replace(/\\(.)/g, "$1");
+    const same = known.filter((k) => k.role === role && k.name === name);
+    const bad = same.find((k) => k.ambiguous || (k.count > 1 && !k.narrowedBy));
+    if (bad) out.push(`getByRole('${role}', { name: '${name}' }) matches ${bad.count} visible elements and nothing narrows it: reach it through its dialog, row or section`);
+    else if (same.some((k) => k.offViewport)) out.push(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
+    else if (same.length > 0 && !/exact:\s*true/.test(m[5] ?? "")) {
+      const longer = known.find((k) => k.role === role && k.name && k.name.length > name.length && k.name.toLowerCase().includes(name.toLowerCase()));
+      if (longer) out.push(`getByRole('${role}', { name: '${name}' }) also matches "${longer.name}": add exact: true`);
+    }
+  }
+  return out;
+}
+
 /**
  * #226: errors in generated code, found before the suite is run. A pointer click at coordinates (also through an alias
  * of `page.mouse`), a click forced past the actionability checks (also through a quoted key or a shorthand of a true
@@ -207,7 +243,7 @@ function mouseAliases(code: string): string[] {
  * the same line or on the line above that says why the position is the point of the check (sorting, say). Strings and
  * comments are not read as code.
  */
-export function lintErrors(suite: GeneratedSuite): LintFinding[] {
+export function lintErrors(suite: GeneratedSuite, known: readonly KnownElement[] = []): LintFinding[] {
   const out: LintFinding[] = [];
   for (const f of suite.files) {
     const lines = f.content.split("\n");
@@ -223,6 +259,9 @@ export function lintErrors(suite: GeneratedSuite): LintFinding[] {
       }
       if (FORCE.test(c) || (forceSet && FORCE_SHORTHAND.test(c))) {
         out.push({ file: f.path, kind: "force-click", detail: `force: true skips the actionability checks, so it clicks what is hidden or covered — wait for the element instead (${where})` });
+      }
+      for (const d of c.trim() ? ambiguousLocators(lines[i] ?? "", known) : []) {
+        out.push({ file: f.path, kind: "ambiguous-locator", detail: `${d} (line ${i + 1}: ${snippet(lines[i] ?? "")})` });
       }
       const position = POSITION.test(c) || strings[i]!.some((t) => SELECTOR_POSITION.test(t));
       if (position && !isReason(comment[i]!) && !aboveReason) {
