@@ -129,7 +129,7 @@ export function clickFailure(message: string): ClickFailure | undefined {
   return message.includes("locator resolved to") ? "timeout" : "not-found";
 }
 
-const V = "‹v›";
+export const V = "‹v›";
 
 /** How often a run of letters switches case: random text flips about every other letter, a CamelCase word rarely. */
 export function caseFlips(run: string): number {
@@ -150,7 +150,7 @@ export function secretShaped(s: string): boolean {
     .some((run) => (run.length >= 8 && /\d/.test(run) && /[A-Za-z]/.test(run)) || (run.length >= 16 && caseFlips(run) >= run.length / 3));
 }
 
-const decoded = (s: string): string => {
+export const decoded = (s: string): string => {
   try {
     return decodeURIComponent(s);
   } catch {
@@ -191,6 +191,12 @@ export function recordedUrl(url: string): string {
 export function changesServer(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
 }
+
+/**
+ * #225 review 4: the one API seen sending where the browser's own Fetch interception does not look (full Chromium and
+ * Chrome; the headless shell has none): it does not exist in a browser under the write guard (presses, #285 validation).
+ */
+export const SENDS_PAST_FETCH = "BackgroundFetch";
 
 /** The page-side watch lives under this key of the page's window while one click is watched; it is removed after. */
 export const WATCH_KEY = "__cairnClickWatch";

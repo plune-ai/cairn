@@ -3,9 +3,10 @@ import { promisify } from "node:util";
 import { createRequire } from "node:module";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { SENDS_PAST_FETCH } from "../browser/click-effect.js";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
 import { stepsFromTrace } from "./trace-chapters.js";
-import { installWriteGuard } from "./write-guard.js";
+import { installWriteGuard, type GuardRecord } from "./write-guard.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -46,7 +47,9 @@ export function configContent(
   secretsInRun = false,
   guardTsconfig?: string,
 ): string {
-  const launchOpts = `launchOptions: { args: ['--disable-blink-features=AutomationControlled'] }`;
+  // #285: under the write guard, without the one API seen sending past the browser's Fetch interception (as observe's press browser)
+  const blinkOff = guardTsconfig ? `AutomationControlled,${SENDS_PAST_FETCH}` : "AutomationControlled";
+  const launchOpts = `launchOptions: { args: ['--disable-blink-features=${blinkOff}'] }`;
   const parts = ["headless: true"];
   if (storageStatePath) parts.push(`storageState: ${JSON.stringify(storageStatePath)}`);
   // FIX B (0.3.3): when a channel is set, the runner drives the SYSTEM browser (chrome/msedge) —
@@ -101,10 +104,10 @@ export interface RunSpecsOptions {
   secretsInRun?: boolean;
   /** #285: send the suite's writes to the target. Off: the write guard blocks them (see write-guard.ts). */
   allowWrites?: boolean;
-  /** #285: the origins the guard keeps writes from (the target's, the API's); none given: every origin. */
+  /** #285: the origins a blocked write fails its test on (the target's, the API's); none given: every origin. */
   guardOrigins?: string[];
-  /** #285: called once per request the guard blocked, `METHOD url`. */
-  onBlockedWrite?: (request: string) => void;
+  /** #285: what the guard blocked in this run. */
+  onWriteGuard?: (record: GuardRecord) => void;
 }
 
 /** #94: one chapter marker — a scenario step title at its offset (ms) from the start of the `.webm`. */
@@ -369,7 +372,8 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
     stderr = err.stderr ?? "";
   }
   await scrubErrorContexts(outputDirOf(absRunDir, screencastDir));
-  for (const request of (await guard?.blocked()) ?? []) opts.onBlockedWrite?.(request);
+  const record = await guard?.read();
+  if (record) opts.onWriteGuard?.(record);
 
   // #94: when recording, drop the step-chapter sidecar next to the .webm files. The reporter writes the
   // video paths into stdout AFTER the run, so this runs post-parse. Best-effort: a recorder/IO failure
@@ -383,7 +387,36 @@ export async function runSpecs(runDir: string, opts: RunSpecsOptions = {}): Prom
     }
   }
 
-  return resultsFromRunnerOutput(stdout, stderr);
+  const results = resultsFromRunnerOutput(stdout, stderr);
+  // #285: fail closed. A spec that got Playwright some other way ran in a worker the guard never loaded in.
+  const unguarded = record ? ranWithout(stdout, record.workers) : 0;
+  if (unguarded > 0) {
+    throw new Error(
+      `Validation stopped: ${unguarded} test(s) ran without the write guard, so their writes were not blocked. ` +
+        "Specs must take test from '@playwright/test' (or 'playwright/test').",
+    );
+  }
+  return results;
+}
+
+/** #285: how many test attempts that ran (not skipped) did so in a worker outside `workers`. */
+function ranWithout(stdout: string, workers: Set<number>): number {
+  let report: { suites?: unknown[] };
+  try {
+    report = JSON.parse(stdout.slice(Math.max(0, stdout.indexOf("{")))) as { suites?: unknown[] };
+  } catch {
+    return 0; // no report: resultsFromRunnerOutput has said what went wrong, or there were no tests
+  }
+  type Suite = { specs?: { tests?: { results?: { status?: string; workerIndex?: number }[] }[] }[]; suites?: Suite[] };
+  let n = 0;
+  const walk = (s: Suite): void => {
+    for (const spec of s.specs ?? [])
+      for (const t of spec.tests ?? [])
+        for (const r of t.results ?? []) if (r.status !== "skipped" && !workers.has(r.workerIndex ?? -1)) n += 1;
+    for (const child of s.suites ?? []) walk(child);
+  };
+  for (const s of (report.suites ?? []) as Suite[]) walk(s);
+  return n;
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   REQUEST_ANSWER_MS,
   WATCH_KEY,
   clickEffect,
+  SENDS_PAST_FETCH,
   changesServer,
   clickFailure,
   recordedPath,
@@ -135,11 +136,6 @@ const RECORDED_REQUESTS = new Set(["document", "fetch", "xhr"]);
 
 /** The Blink features every browser of this backend runs without. */
 const BLINK_OFF = "AutomationControlled";
-/**
- * #225 review 4: the one API seen sending where the browser's own Fetch interception does not look (full Chromium and
- * Chrome; the headless shell has none): it does not exist in the browser that presses.
- */
-const SENDS_PAST_FETCH = "BackgroundFetch";
 
 /**
  * #225 review 5: how long reading the crawler's session for the write guard may take. `storageState()` with IndexedDB has
