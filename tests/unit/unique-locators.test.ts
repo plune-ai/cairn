@@ -66,20 +66,20 @@ describe("lint judges only calls on page (#279)", () => {
     expect(kinds("await page.getByRole('link', { name: 'Menu', exact: true }).click();")).toEqual([]);
   });
   it("skips a call scoped through a locator held in a variable", () => {
-    expect(kinds("const dialog = page.getByRole('dialog');
-await dialog.getByRole('button', { name: 'Close' }).click();")).toEqual([]);
+    expect(kinds(`const dialog = page.getByRole('dialog');
+await dialog.getByRole('button', { name: 'Close' }).click();`)).toEqual([]);
   });
   it("skips a call scoped through .locator(...)", () => {
     expect(kinds("await page.locator('#box').getByRole('button', { name: 'Close' }).click();")).toEqual([]);
   });
   it("skips a chain split over lines, and still judges a page call split over lines", () => {
-    expect(kinds("await page
+    expect(kinds(`await page
   .getByRole('dialog')
   .getByRole('button', { name: 'Close' })
-  .click();")).toEqual([]);
-    expect(kinds("await page
+  .click();`)).toEqual([]);
+    expect(kinds(`await page
   .getByRole('button', { name: 'Close' })
-  .click();")).toEqual(["ambiguous-locator"]);
+  .click();`)).toEqual(["ambiguous-locator"]);
   });
   it("does not read a comment", () => {
     expect(kinds("// page.getByRole('link', { name: 'Close' })")).toEqual([]);
