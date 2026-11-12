@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Combobox — Fixture</title>
+    <style>
+      [hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Select menu</h1>
+      <input id="colour" type="text" role="combobox" aria-label="Pick a colour" aria-haspopup="listbox" aria-expanded="false" aria-controls="colours" />
+      <ul id="colours" role="listbox" aria-label="Colours" hidden>
+        <li role="option">Red</li>
+        <li role="option">Green</li>
+        <li role="option">Blue</li>
+      </ul>
+    </main>
+    <script>
+      const box = document.getElementById("colour");
+      const list = document.getElementById("colours");
+      box.addEventListener("click", () => {
+        list.hidden = false;
+        box.setAttribute("aria-expanded", "true");
+      });
+    </script>
+  </body>
+</html>

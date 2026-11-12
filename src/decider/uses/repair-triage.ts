@@ -35,6 +35,22 @@ export const TRIAGE_QUESTION: Question = {
   options: FAILURE_CATEGORIES,
 };
 
+/**
+ * Playwright says these in so many words, and what they mean is the locator, not the app: more than one element
+ * matched, or the target lies outside the viewport (the click then waits out its whole timeout). Read from the error,
+ * so a model's different answer cannot keep such a test out of repair.
+ */
+export function locatorErrorKind(error: string | undefined): { category: FailureCategory; hint: string } | undefined {
+  const text = (error ?? "").replace(/\u001b\[[0-9;]*m/g, "");
+  if (/strict mode violation/.test(text)) {
+    return { category: "locator-ambiguous", hint: "locator error: it matched several elements; make it match one visible element (exact: true, or reach it through its dialog, row or section)" };
+  }
+  if (/outside of the viewport/.test(text)) {
+    return { category: "locator-missing", hint: "locator error: the target is outside the viewport and cannot be clicked; use an element that is visible on the page" };
+  }
+  return undefined;
+}
+
 export interface TriageResult {
   test: string;
   category: FailureCategory;
@@ -63,9 +79,11 @@ interface Asked {
   reason?: string;
 }
 
-function asCategory(a: Answer | undefined): { category: FailureCategory; confidence: number } | undefined {
+function asCategory(a: Answer | undefined, error?: string): { category: FailureCategory; confidence: number } | undefined {
   if (a?.type !== "choice" || !Object.hasOwn(FAILURE_CATEGORIES, a.value)) return undefined; // never trust an unoffered label
-  return { category: a.value as FailureCategory, confidence: a.confidence };
+  // what Playwright's own error says about the locator wins over a model's other answer
+  const byError = locatorErrorKind(error);
+  return { category: byError?.category ?? (a.value as FailureCategory), confidence: a.confidence };
 }
 
 /**
@@ -93,7 +111,7 @@ export function makeTriage(
         try {
           state = triageState(r, maxChars, decider.scrub); // inside the try: a scrubbing failure is a fallback
           const answers = await decider.decide("repair-triage", state, { cause: TRIAGE_QUESTION });
-          const c = asCategory(answers.cause);
+          const c = asCategory(answers.cause, r.error);
           return { r, state, latencyMs: Date.now() - t0, ...(c ? { c } : { reason: "an answer outside the offered categories" }) };
         } catch (e) {
           return { r, state, latencyMs: Date.now() - t0, reason: e instanceof Error ? e.message : String(e) };

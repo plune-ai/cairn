@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { meteredInvoker, structuredInvoker, CallBudget } from "../../src/llm/structured.js";
+import { meteredInvoker, structuredInvoker, CallBudget, StructuredOutputError, retryInvoke } from "../../src/llm/structured.js";
 import { resolveRoleTier, RoleRouter, KNOWN_ROLES } from "../../src/llm/routing.js";
+import { DesignResultSchema } from "../../src/design/schema.js";
+import { PageAnalysisSchema } from "../../src/analyze/index.js";
 import type { AppConfig, ModelTier } from "../../src/config/index.js";
 
 const vision: ModelTier = { provider: "anthropic", model: "claude-haiku-4-5", supportsVision: true };
@@ -47,6 +49,38 @@ describe("meteredInvoker", () => {
       "m",
     );
     await expect(invoke(okSchema, [])).resolves.toEqual({ ok: 2 });
+  });
+});
+
+describe("meteredInvoker: parsed is null (LangChain swallowed a parse error)", () => {
+  const designSchema = z.object({ testCases: z.array(z.string()) }).describe("DesignResult");
+  const bad = { content: '{"testCases": "not-an-array"', tool_calls: [], usage_metadata: { input_tokens: 1, output_tokens: 1 } };
+
+  it("throws StructuredOutputError naming the schema, with the parse error and the raw text capped", async () => {
+    const big = { ...bad, content: "x".repeat(50_000) };
+    const invoke = meteredInvoker(fakeModel(null, big), () => undefined, "m");
+    const err = await invoke(designSchema, []).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(StructuredOutputError);
+    const e = err as StructuredOutputError;
+    expect(e.message).toContain("DesignResult");
+    expect(e.parseError).not.toBe("");
+    expect(e.raw.length).toBeLessThanOrEqual(2100);
+  });
+
+  it("names the real design and analysis schemas, and looks through zod wrappers", async () => {
+    const name = async (schema: z.ZodType<unknown>): Promise<string> =>
+      ((await meteredInvoker(fakeModel(null, bad), () => undefined, "m")(schema, []).catch((e: unknown) => e)) as StructuredOutputError).schemaName;
+    expect(await name(DesignResultSchema)).toBe("DesignResult");
+    expect(await name(PageAnalysisSchema)).toBe("PageAnalysis");
+    expect(await name(DesignResultSchema.optional())).toBe("DesignResult");
+    expect(await name(DesignResultSchema.transform((x) => x))).toBe("DesignResult");
+  });
+
+  it("a retrying caller still gets the typed error, and does not retry it as transient", async () => {
+    let calls = 0;
+    const inner = meteredInvoker(fakeModel(null, bad), () => { calls += 1; }, "m");
+    await expect(retryInvoke(inner, { baseDelayMs: 1 })(designSchema, [])).rejects.toBeInstanceOf(StructuredOutputError);
+    expect(calls).toBe(1);
   });
 });
 

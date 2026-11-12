@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Overlay on load — Fixture</title>
+    <style>
+      #modal { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.5); }
+      #window { margin: 15vh auto; width: 40%; background: #fff; padding: 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Entry ad</h1>
+      <p>The page behind the ad.</p>
+    </main>
+    <!-- a plain div modal, open on load, with no dialog role and no trigger -->
+    <div id="modal">
+      <div id="window">
+        <h3>This is a modal window</h3>
+        <p>It is shown as soon as the page loads.</p>
+        <p id="close">Close</p>
+      </div>
+    </div>
+    <script>
+      document.getElementById("close").addEventListener("click", () => document.getElementById("modal").remove());
+    </script>
+  </body>
+</html>

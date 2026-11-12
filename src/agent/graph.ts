@@ -21,7 +21,7 @@ import {
 } from "../documentarian/index.js";
 import { findConsentDismiss, describeObserveError } from "./observe-guard.js";
 import { runRepairLoop } from "./repair-loop.js";
-import { lintErrors } from "../codegen/lint.js";
+import { lintErrors, knownFromOverlays } from "../codegen/lint.js";
 import { makeTriage, type TriageResult } from "../decider/uses/repair-triage.js";
 import { makeHeal, type HealRecord } from "../decider/uses/locator-heal.js";
 import type { Decider } from "../decider/types.js";
@@ -525,7 +525,7 @@ export async function runExploreGraph(
     },
     maxRepair: deps.maxRepair,
     onProgress: deps.onProgress,
-    errors: lintErrors, // #226: pointer clicks, forced clicks and blind positions are repaired before the run
+    errors: (s) => lintErrors(s, [...verified, ...knownFromOverlays(overlays ?? []), ...(flowGraph?.nodes.flatMap((n) => n.verified) ?? [])]), // #226: pointer clicks, forced clicks and blind positions; #279: locators that are not one visible element; repaired before the run
     triage: deps.decider?.uses.has("repair-triage") ? makeTriage(deps.decider, heal) : undefined,
     heal,
   });

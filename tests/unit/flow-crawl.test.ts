@@ -120,6 +120,29 @@ describe("crawlFlow (#59)", () => {
     expect(graph.nodes.map((n) => n.url)).toEqual(["http://app/home", "http://app/output-uk", "http://app/output-ru"]);
   });
 
+  it("follows a page named 'Add/Remove Elements' but not a 'Remove item' link (#280)", async () => {
+    const clicked: string[] = [];
+    const pages: Record<string, FakePage> = {
+      home: {
+        url: "http://app/home",
+        aria: aria(['- link "Add/Remove Elements"', '- link "Remove item"', '- link "Add and Remove Users"']),
+        links: { e1: "elements", e2: "home", e3: "users" },
+      },
+      elements: { url: "http://app/add_remove_elements", aria: aria(['- heading "Add/Remove Elements"']), links: {} },
+      users: { url: "http://app/users", aria: aria(['- heading "Users"']), links: {} },
+    };
+    const gw = fakeGateway(pages, "home");
+    const realAct = gw.act;
+    gw.act = async (a) => {
+      if (a.kind === "click" && a.ref) clicked.push(a.ref);
+      return realAct(a);
+    };
+    const graph = await crawlFlow(nodeFrom(pages.home!), { gateway: gw }, { maxPages: 5 });
+
+    expect(clicked).toEqual(["e1", "e3"]);
+    expect(graph.nodes.map((n) => n.url)).toEqual(["http://app/home", "http://app/add_remove_elements", "http://app/users"]);
+  });
+
   it("dedupes revisits and stays in-app (external links skipped)", async () => {
     const pages: Record<string, FakePage> = {
       home: {
