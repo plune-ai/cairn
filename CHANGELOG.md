@@ -454,7 +454,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--screencast` keeps a Playwright trace beside each video (#210).** The validation config now records
   `trace: 'on'` next to `video: 'on'`, so `runs/<id>/screencasts/` holds a `trace.zip` per scenario, and each
   `screencasts.json` entry names it in `trace` (relative to the run dir, with `/`). A trace weighs about six times the
-  video: 2.19 MiB against 359 KiB for four scenarios on a local Plune stand (plune-ai/plune#1880). Runs without
+  video: 2.19 MiB against 359 KiB for four scenarios on a local Plune stand. Runs without
   `--screencast` are unchanged. A run with a session, Basic Auth, environment secrets or a mailbox keeps the video
   alone: Playwright writes the Basic Auth password in the clear, every request's headers and cookies and every typed
   value into a trace. With a trace the video moves at about 5 frames a second between actions (Playwright 1.61 holds
