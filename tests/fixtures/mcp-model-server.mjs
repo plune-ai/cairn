@@ -259,7 +259,7 @@ async function main() {
       const msg = JSON.parse(line);
       if (msg.id !== undefined) {
         const message = env.FIXTURE_ERROR_ENV ? "e".repeat(Number(env.FIXTURE_ERROR_PAD ?? 0)) + env[env.FIXTURE_ERROR_ENV] : "\u001b[2J\n::error::x";
-        const error = { code: -32603, message };
+        const error = { code: Number(env.FIXTURE_ERROR_CODE ?? -32603), message };
         process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: msg.id, error })}\n`);
       }
     });

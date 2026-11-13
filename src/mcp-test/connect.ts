@@ -69,6 +69,10 @@ export interface McpConnection {
   invokeTool(name: string, args: Record<string, unknown>, opts: { timeoutMs: number; maxBytes?: number; signal?: AbortSignal }): Promise<unknown>;
   /** Bytes read from the server since the connection was made (stdout of the child, or response bodies). */
   readonly bytesRead: number;
+  /** The transport reported that it closed, or the stdio child was stopped for an oversized message: no request can be answered any more. */
+  readonly dead: boolean;
+  /** Whether the stdio per-message size counter is installed (`unavailable`: only the transport's own limit applies). HTTP is always `active`. */
+  readonly sizeCounter: "active" | "unavailable";
   /** What the server wrote to stderr, as is (the caller masks it). */
   stderrText(): string;
   /** Ends the session and makes sure the server process is gone. */
@@ -79,6 +83,8 @@ const STDERR_CAP = 64 * 1024;
 /** The stdio reader refuses a message above this even when no limit is set (the SDK's own default is 10 MiB). */
 const MIN_MESSAGE_CAP = 1024 * 1024;
 export const DEFAULT_RESPONSE_BYTES = 256 * 1024;
+/** The most bytes of one response to `initialize`, a list page or an SSE stream over HTTP (the limit of a call is separate). */
+export const HANDSHAKE_LIMIT_BYTES = 8 * 1024 * 1024;
 const REDIRECT_MESSAGE = "The server answered with a redirect; redirects are not followed.";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -156,7 +162,7 @@ function metadataOrigin(header: string | null): string | undefined {
   }
 }
 
-function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }): McpTestError {
+function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }, local?: "timeout" | "closed"): McpTestError {
   if (e instanceof McpTestError) return e;
   if (o.signal?.aborted) return new McpTestError("cancelled", "Interrupted.");
   const err = e as { code?: unknown; message?: string; name?: string };
@@ -176,13 +182,15 @@ function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }
       `The server requires authentication (HTTP 401).${other} OAuth is not supported here; pass a token with --header "Authorization: Bearer <token>".`,
     );
   }
-  if (err.code === -32001) {
+  // Only a fact on this side says the server did not answer or closed the connection; a code in what it sent never does.
+  if (local === "timeout") {
     return new McpTestError("no-response", `The server did not answer within ${Math.round(o.timeoutMs / 1000)} s (--timeout).`);
   }
-  if (err.code === -32000 || /Connection closed/i.test(message)) {
+  if (local === "closed") {
     return new McpTestError("server-exited", "The server closed the connection before it answered initialize.");
   }
-  return new McpTestError("protocol", `The server's reply to initialize was not usable: ${safeText(maskSecrets(message, o.secrets ?? []), 300)}`);
+  const code = typeof err.code === "number" ? ` (code ${err.code})` : "";
+  return new McpTestError("protocol", `The server's reply to initialize was not usable${code}: ${safeText(maskSecrets(message, o.secrets ?? []), 300)}`);
 }
 
 /** Connects, runs `initialize`, and returns what discovery needs. Any failure leaves no server process behind. */
@@ -201,7 +209,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   };
   const isStdio = o.command !== undefined;
   // What this side saw, read by `invokeTool`: the limit of the call in flight, an answer that passed it, bytes read.
-  const state: { limit: number | undefined; tooLarge: boolean; bytesRead: number; closed: boolean } = { limit: undefined, tooLarge: false, bytesRead: 0, closed: false };
+  const state: { limit: number | undefined; tooLarge: boolean; bytesRead: number; closed: boolean; tripped: boolean; counterMissing: boolean; abortCall: (() => void) | undefined } = { limit: undefined, tooLarge: false, bytesRead: 0, closed: false, tripped: false, counterMissing: false, abortCall: undefined };
   let transport: any;
   let messageCap = MIN_MESSAGE_CAP;
   if (isStdio) {
@@ -222,35 +230,41 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
       if (target.origin !== url.origin) throw new Error(`refused to send a request to another origin (${target.origin})`);
       // Not followed, whatever the SDK's own policy: a redirect could carry the headers to another origin.
       const res = await fetch(input, { ...init, redirect: "manual" });
+      const isStream = init?.method === "GET";
       if (res.status >= 300 && res.status < 400) {
         await res.body?.cancel();
         throw new McpTestError("protocol", REDIRECT_MESSAGE);
       }
       if (res.status === 401) auth.header = res.headers.get("www-authenticate");
-      return limitBody(res);
+      return limitBody(res, isStream);
     };
-    // Reads the body through a counter: past the limit of the call in flight it stops reading and fails the stream.
-    const limitBody = (res: Response): Response => {
-      const limit = state.limit;
+    // Reads every body through a counter: past the limit of the call in flight (or the handshake limit for everything else) it
+    // stops reading, fails the stream and ends the call that waits for it.
+    const limitBody = (res: Response, isStream: boolean): Response => {
+      const limit = state.limit ?? HANDSHAKE_LIMIT_BYTES;
       const source = res.body;
       if (!source) return res;
       const declared = Number(res.headers.get("content-length"));
       const reader = source.getReader();
       let seen = 0;
       const fail = async (): Promise<never> => {
-        state.tooLarge = true;
+        // A long-lived notification stream is cut too, but it is not the cause of a failed call.
+        if (!isStream) {
+          state.tooLarge = true;
+          state.abortCall?.();
+        }
         await reader.cancel().catch(() => undefined);
         throw new Error("the answer is over the size limit");
       };
       const body = new ReadableStream<Uint8Array>({
         async pull(ctrl) {
-          if (limit !== undefined && declared > limit && seen === 0) await fail().catch((e) => ctrl.error(e));
+          if (declared > limit && seen === 0) await fail().catch((e) => ctrl.error(e));
           else {
             const { done, value } = await reader.read();
             if (done) return ctrl.close();
             seen += value.byteLength;
             state.bytesRead += value.byteLength;
-            if (limit !== undefined && seen > limit) return void (await fail().catch((e) => ctrl.error(e)));
+            if (seen > limit) return void (await fail().catch((e) => ctrl.error(e)));
             ctrl.enqueue(value);
           }
         },
@@ -274,15 +288,17 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
       // It also stops the flood: the SDK's reader only refuses to buffer, and its close waits for the child, which goes on writing.
       // A message (the bytes since the last newline) past the cap makes this side stop reading and kill the child at once.
       let line = 0;
-      let tripped = false;
       const stdout = transport._process?.stdout;
+      // The counter reads a private field of the SDK transport; a version without it leaves only the transport's own limit.
+      if (!stdout) state.counterMissing = true;
       stdout?.on("data", (chunk: Buffer) => {
         state.bytesRead += chunk.length;
         const nl = chunk.lastIndexOf(10);
         line = nl === -1 ? line + chunk.length : chunk.length - nl - 1;
-        if (line > messageCap && !tripped) {
-          tripped = true;
+        if (line > messageCap && !state.tripped) {
+          state.tripped = true;
           state.tooLarge = true;
+          state.abortCall?.();
           stdout.destroy();
           if (pid !== null) killTree(pid);
         }
@@ -320,20 +336,33 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     await reap(pid);
   };
 
+  // `initialize` is timed by this side's own timer, so "did not answer" never rests on an error code the server sent.
+  const initStop = new AbortController();
+  let initTimedOut = false;
+  const initTimer = setTimeout(() => {
+    initTimedOut = true;
+    initStop.abort();
+  }, o.timeoutMs);
+  const initForward = (): void => initStop.abort();
+  o.signal?.addEventListener("abort", initForward, { once: true });
   try {
-    await client.connect(transport, { timeout: o.timeoutMs, ...(o.signal ? { signal: o.signal } : {}) });
+    await client.connect(transport, { timeout: o.timeoutMs + 60_000, signal: initStop.signal });
   } catch (e) {
     pid = transport.pid ?? pid;
+    // Read before our own close, which also sets the flag.
+    const local = initTimedOut ? "timeout" : state.closed ? "closed" : undefined;
     await close();
-    const mapped = mapError(startError ?? e, o, auth);
+    const mapped = mapError(startError ?? e, o, auth, local);
     mapped.pid = pid;
     mapped.stderr = stderrText();
     throw mapped;
+  } finally {
+    clearTimeout(initTimer);
+    o.signal?.removeEventListener("abort", initForward);
   }
   pid = transport.pid ?? null;
 
   const info = client.getServerVersion() ?? { name: "", version: "" };
-  const reqOpts = { timeout: o.timeoutMs, ...(o.signal ? { signal: o.signal } : {}) };
   const source: DiscoverSource = {
     serverInfo: {
       name: String(info.name ?? ""),
@@ -344,16 +373,25 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     capabilities: client.getServerCapabilities() ?? {},
     async listPage(kind: McpListKind, cursor: string | undefined): Promise<ListPage> {
       const params = cursor === undefined ? undefined : { cursor };
+      // A page that passes the handshake limit ends this request at once (the body counter calls `abortCall`).
+      const stop = new AbortController();
+      state.abortCall = () => stop.abort();
+      const opts = { timeout: o.timeoutMs, signal: o.signal ? AbortSignal.any([o.signal, stop.signal]) : stop.signal };
       // tools/list goes through `request`: the SDK's own listTools also compiles every outputSchema, and one schema it
       // cannot compile would hide the whole list.
-      const res =
-        kind === "tools"
-          ? await client.request({ method: "tools/list", params: params ?? {} }, sdk.ListToolsResultSchema, reqOpts)
-          : kind === "resources"
-            ? await client.listResources(params, reqOpts)
-            : kind === "resourceTemplates"
-              ? await client.listResourceTemplates(params, reqOpts)
-              : await client.listPrompts(params, reqOpts);
+      let res;
+      try {
+        res =
+          kind === "tools"
+            ? await client.request({ method: "tools/list", params: params ?? {} }, sdk.ListToolsResultSchema, opts)
+            : kind === "resources"
+              ? await client.listResources(params, opts)
+              : kind === "resourceTemplates"
+                ? await client.listResourceTemplates(params, opts)
+                : await client.listPrompts(params, opts);
+      } finally {
+        state.abortCall = undefined;
+      }
       const items = (res[kind === "resourceTemplates" ? "resourceTemplates" : kind] ?? []) as unknown[];
       return { items, nextCursor: res.nextCursor };
     },
@@ -367,6 +405,12 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     get bytesRead() {
       return state.bytesRead;
     },
+    get dead() {
+      return state.closed || state.tripped;
+    },
+    get sizeCounter() {
+      return state.counterMissing ? "unavailable" : "active";
+    },
     async invokeTool(name, args, opts) {
       const stop = new AbortController();
       let timedOut = false;
@@ -378,18 +422,22 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
       opts.signal?.addEventListener("abort", forward, { once: true });
       state.limit = opts.maxBytes;
       state.tooLarge = false;
+      state.abortCall = () => stop.abort();
       try {
         // The SDK's own timeout is set well past ours, so ours is the one that fires; an error code is never read as a timeout.
         return await client.request({ method: TOOL_CALL_METHOD, params: { name, arguments: args } }, sdk.ResultSchema, { signal: stop.signal, timeout: opts.timeoutMs + 60_000 });
       } catch (e) {
+        // An error is a server answer ONLY when no local cause is set: size cap, closed transport, this side's abort, own timer.
         if (state.tooLarge) throw new LocalFailure("too-large", "the answer passed the size limit while it was read");
         if (state.closed) throw new LocalFailure("closed", "the connection was closed before an answer");
+        if (opts.signal?.aborted && !timedOut) throw new LocalFailure("aborted", "the run was interrupted during the call");
         if (timedOut) throw new LocalFailure("timeout", "no answer within the call timeout");
         throw e;
       } finally {
         clearTimeout(timer);
         opts.signal?.removeEventListener("abort", forward);
         state.limit = undefined;
+        state.abortCall = undefined;
       }
     },
     stderrText,

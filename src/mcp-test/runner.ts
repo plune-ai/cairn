@@ -74,6 +74,8 @@ export interface CaseResult {
   observations: string[];
   advice: AdviceFinding[];
   humanOracle?: boolean;
+  /** The JSON-RPC error code the server answered, when it answered one. */
+  rpcCode?: number;
   /** The server was started again earlier in this run: it had lost whatever state the earlier cases made. */
   afterRestart?: true;
 }
@@ -82,6 +84,8 @@ export interface CaseResult {
 export interface Link {
   invokeTool: ToolRpc["invokeTool"];
   transport: "stdio" | "streamable-http";
+  /** The transport closed (or the stdio child was stopped): the connection cannot answer any more. */
+  dead?: () => boolean;
   /** Reads this connection's tool list again (a new connection brings its own). */
   relist?: () => Promise<McpToolEntry[]>;
 }
@@ -92,7 +96,7 @@ export interface RunnerOptions {
   tools: readonly McpToolEntry[];
   link: Link;
   /** Starts a stdio server again after it died; returns the new link, or undefined when it cannot. */
-  restart?: () => Promise<Link | undefined>;
+  restart?: () => Promise<Link | { error: string } | undefined>;
   /** Reads the tool list again (called before the first case of each tool, and after a restart). */
   relist?: () => Promise<McpToolEntry[]>;
   callTimeoutMs: number;
@@ -113,6 +117,7 @@ export interface RunResult {
 type Anomaly = "process-exit" | "connection-closed" | "timeout" | "http-5xx";
 
 type Answer =
+  | { kind: "aborted" }
   | { kind: "too-large" }
   | { kind: "result"; result: Obj; bytes: number; truncated: boolean }
   | { kind: "rpc-error"; code: number; message: string }
@@ -120,6 +125,7 @@ type Answer =
   | { kind: "unjudgeable"; message: string };
 
 function classify(transport: Link["transport"], outcome: string, error: CallError | undefined, response: unknown, max: number): Answer {
+  if (outcome === "aborted") return { kind: "aborted" };
   if (outcome === "too-large") return { kind: "too-large" };
   if (outcome === "timeout") return { kind: "anomaly", anomaly: "timeout", message: "no answer within the call timeout" };
   if (outcome === "process-exit") {
@@ -196,6 +202,27 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
   let restarts = 0;
   let stopped: string | undefined;
 
+  /** The server process is gone (it exited, or was stopped for an oversized message): one restart budget for every cause. */
+  const lose = async (): Promise<void> => {
+    crashes += 1;
+    if (crashes >= 2) {
+      stopped = "the server process was lost twice (exited or stopped); the run was stopped";
+      return;
+    }
+    if (link.transport !== "stdio" || !o.restart) {
+      stopped = "the server connection is gone; the run was stopped";
+      return;
+    }
+    const next = await o.restart();
+    if (next && !("error" in next)) {
+      link = next;
+      restarts += 1;
+      afterRestart = true;
+      alive = true;
+      silent = 0;
+    } else stopped = next ? `the server could not be started again (${safeText(maskSecrets(next.error, secrets), 200)}); the run was stopped` : "the server process could not be started again; the run was stopped";
+  };
+
   const finish = (c: RunnableCase, state: CaseState, reason: string, extra: Partial<CaseResult> = {}): void => {
     results.push({
       name: c.name,
@@ -257,12 +284,21 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       // The tool is read again before EVERY call: one that changed since the user looked is refused by the guard, and a list
       // that cannot be read (or is cut short) means the call is not sent. The read takes a rate slot but no call of the budget.
       const relist = link.relist ?? o.relist;
-      if (relist && o.guard.decide({ tool: c.tool, ...(c.style ? { style: c.style } : {}) }).allowed) {
+      // Not when a budget is already spent: the guard refuses the call below, and a re-read first would only make that late.
+      if (relist && o.guard.budgetLeft() && o.guard.decide({ tool: c.tool, ...(c.style ? { style: c.style } : {}) }).allowed) {
         await o.guard.waitSlot();
         try {
           o.guard.observe(await relist());
         } catch {
-          finish(c, "not-sent", "the tool list could not be re-read, so the call was not sent");
+          // A re-read that fails is a local failure, never a refusal by the guard: the case did not run, and a dead connection
+          // is handled as the process failure it is (the one restart, then stop).
+          finish(c, "could-not-run", "the tool list could not be re-read, so the call was not sent");
+          if (o.signal?.aborted) stopped = "interrupted";
+          else if (link.dead?.()) await lose();
+          else {
+            silent += 1;
+            if (silent >= MAX_SILENT_IN_A_ROW) stopped = `${MAX_SILENT_IN_A_ROW} cases in a row got no answer; the run was stopped`;
+          }
           continue;
         }
       }
@@ -282,19 +318,18 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       const answer = classify(link.transport, call.entry.result, call.error, call.response, max);
       const base: Partial<CaseResult> = { durationMs: call.entry.durationMs, request: call.entry.arguments };
 
+      if (answer.kind === "aborted") {
+        finish(c, "could-not-run", "the run was interrupted during the call", base);
+        stopped = "interrupted";
+        continue;
+      }
       if (answer.kind === "too-large") {
         // The server did answer; the answer was cut off while it was read. A stdio connection was closed to stop the flood.
         alive = true;
         silent = 0;
         finish(c, "needs-review", "the answer is larger than the limit and was not read to the end", { ...base, truncated: true, observations: [`answer passed the ${max} byte limit while it was read`] });
-        if (link.transport === "stdio") {
-          const next = o.restart ? await o.restart() : undefined;
-          if (next) {
-            link = next;
-            restarts += 1;
-            afterRestart = true;
-          } else stopped = "the server connection was closed to stop an oversized answer and could not be started again; the run was stopped";
-        }
+        // A stdio child was stopped to end the flood: that is a lost process, with the same one restart as an exit.
+        if (link.transport === "stdio") await lose();
         continue;
       }
       if (answer.kind === "anomaly") {
@@ -305,20 +340,8 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
         // The case is at fault only if the server was answering just before it (a process exit counts for every case).
         const atFault = aliveBefore && (answer.anomaly === "process-exit" || failedWhen.includes(answer.anomaly));
         finish(c, atFault ? "failed" : "could-not-run", atFault ? `${answer.message} (the server was answering before this case)` : `${answer.message}${aliveBefore ? "" : "; the server was not answering before this case"}`, { ...base, error: safeText(maskSecrets(answer.message, secrets), 200) });
-        if (answer.anomaly === "process-exit") {
-          crashes += 1;
-          if (crashes >= 2) stopped = "the server process exited twice; the run was stopped";
-          else if (link.transport === "stdio" && o.restart) {
-            const next = await o.restart();
-            if (next) {
-              link = next;
-              restarts += 1;
-              afterRestart = true;
-              alive = true;
-              silent = 0;
-            } else stopped = "the server process could not be started again; the run was stopped";
-          } else stopped = "the server connection is gone; the run was stopped";
-        } else if (silent >= MAX_SILENT_IN_A_ROW) stopped = `${MAX_SILENT_IN_A_ROW} cases in a row got no answer; the run was stopped`;
+        if (answer.anomaly === "process-exit") await lose();
+        else if (silent >= MAX_SILENT_IN_A_ROW) stopped = `${MAX_SILENT_IN_A_ROW} cases in a row got no answer; the run was stopped`;
         continue;
       }
       if (answer.kind === "unjudgeable") {
@@ -339,7 +362,7 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       if (answer.kind === "rpc-error") {
         const text = evidenceText({ code: answer.code, message: answer.message }, secrets);
         const advice = adviceOf(text);
-        const extra = { response: text, advice };
+        const extra = { response: text, advice, rpcCode: answer.code };
         const e = c.expect;
         if (e.outcome === "rejected") {
           const listed = rejectionForms(e.forms).codes;

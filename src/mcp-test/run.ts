@@ -15,7 +15,7 @@ import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
 import { MCP_ADVERSARIAL_STYLES, parseAdversarialStyles, resolveLimits } from "./adversarial.js";
-import { buildEvidence, buildMcpTestCaseDocs, buildReportJson, countStates, mcpExitCode, NOTHING_PROVEN_EXIT_CODE, renderMcpReportMd, settle, type Finding } from "./report.js";
+import { STDIO_COUNTER_LINE, countInternalErrors, buildEvidence, buildMcpTestCaseDocs, buildReportJson, countStates, mcpExitCode, NOTHING_PROVEN_EXIT_CODE, renderMcpReportMd, settle, type Finding } from "./report.js";
 import { computeMcpCoverage, evaluateMcpGate, renderMcpCoverage } from "./coverage.js";
 import { type CaseResult, DEFAULT_MAX_RESPONSE_BYTES, type Link, type RunnableCase, runAnonymousProbe, runCases } from "./runner.js";
 import { discoverTools } from "./discover.js";
@@ -382,6 +382,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const linkOf = (c: McpConnection): Link => ({
       // The connection's own method, handed over as it is (it does not use `this`); the call site is in call.ts.
       invokeTool: c.invokeTool,
+      dead: () => c.dead,
       transport: c.transport,
       relist: () => discoverTools(c.source, limits),
     });
@@ -395,15 +396,15 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       return { exitCode: 1, outDir, model, pid };
     }
     pid = conn.pid ?? pid;
-    const restart = async (): Promise<Link | undefined> => {
+    const restart = async (): Promise<Link | { error: string }> => {
       try {
         await conn?.close();
         conn = await open(headers);
         pid = conn.pid ?? pid;
         return linkOf(conn);
-      } catch {
+      } catch (e) {
         conn = undefined;
-        return undefined;
+        return { error: e instanceof McpTestError ? e.message : (e as Error).message };
       }
     };
     const run = await runCases(runnable, {
@@ -417,6 +418,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       logDir: outDir,
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
+    const sizeCounter = conn?.transport === "stdio" ? conn.sizeCounter : "active";
+    if (sizeCounter === "unavailable") err(`⚠ ${STDIO_COUNTER_LINE}.\n`);
     const results: CaseResult[] = [...run.results];
     const findings: Finding[] = [];
     const lost: string[] = [];
@@ -463,6 +466,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       findings,
       ...(run.stopped ? { stopped: run.stopped } : {}),
       restarts: run.restarts,
+      stdioSizeCounter: sizeCounter,
       lost,
     };
     const put = (name: string, text: string | undefined): Promise<void> => (text === undefined ? Promise.resolve() : writeFiles([[name, maskSecrets(text, secrets)]]));
@@ -477,6 +481,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const counts = countStates(results);
     out(`=== Run: ${counts.passed} passed, ${counts.failed} failed, ${counts["needs-review"]} need review, ${counts["could-not-run"]} could not run, ${counts["not-sent"]} not sent ===\n`);
     if (counts["needs-review"]) out(`  ${counts["needs-review"]} case(s) were answered but not judged: a person has to look.\n`);
+    const internalErrors = countInternalErrors(results);
+    if (internalErrors) out(`  Advice: ${internalErrors} adversarial case(s) got JSON-RPC -32603 (internal error) on hostile input; this changes no state and no exit code.\n`);
     if (run.stopped) err(`✗ The run was stopped early: ${safeText(run.stopped, 200)}. The rest was not measured.\n`);
     for (const f of findings) out(`  Finding: ${f.kind} (${safeText(f.tool, 60)})\n`);
     for (const l of lost) err(`⚠ Not built: ${l}\n`);

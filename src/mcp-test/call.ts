@@ -19,7 +19,7 @@ const ARGUMENT_DEPTH_LIMIT = 8;
 /** The method name of a tool call. It is written here and nowhere else; the connection takes it from here. */
 export const TOOL_CALL_METHOD = "tools/call";
 
-export type CallOutcome = "ok" | "error" | "timeout" | "process-exit" | "too-large";
+export type CallOutcome = "ok" | "error" | "timeout" | "process-exit" | "too-large" | "aborted";
 
 /**
  * A call that failed because of something this side saw or did: its own timer fired, the connection was closed (the
@@ -29,7 +29,7 @@ export type CallOutcome = "ok" | "error" | "timeout" | "process-exit" | "too-lar
  */
 export class LocalFailure extends Error {
   constructor(
-    readonly kind: "timeout" | "closed" | "too-large",
+    readonly kind: "timeout" | "closed" | "too-large" | "aborted",
     message: string,
   ) {
     super(message);
@@ -96,7 +96,7 @@ export function describeArguments(args: unknown, secrets: readonly string[] = []
 /** Only a failure this side observed is a timeout, a closed connection or a too large answer; the code and text of an error the server sent decide nothing. */
 function outcomeOf(e: unknown): CallOutcome {
   if (!(e instanceof LocalFailure)) return "error";
-  return e.kind === "timeout" ? "timeout" : e.kind === "closed" ? "process-exit" : "too-large";
+  return e.kind === "timeout" ? "timeout" : e.kind === "closed" ? "process-exit" : e.kind === "aborted" ? "aborted" : "too-large";
 }
 
 /**

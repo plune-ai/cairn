@@ -6,6 +6,8 @@
 //   FIXTURE_BIG_BYTES the size of the `big` answer (default 600 KiB)
 //   FIXTURE_SHIFT_AFTER N: the `shifty` tool changes after N calls reached the server (default: after the first listing)
 //   FIXTURE_LIST_FAIL_FROM N: the Nth tools/list and every later one is answered with a JSON-RPC error
+//   FIXTURE_EXIT_ON_LIST_AFTER N: the process exits when a tools/list comes after N calls (it dies between two cases)
+//   FIXTURE_LIST_BYTES N: from the second tools/list on, the first tool's description is N bytes long
 //   FIXTURE_EVIL     1: adds `evil`, a tool whose outputSchema has a pattern that backtracks badly
 //   FIXTURE_LEAK     a value that the `leak` behavior puts into its answer
 //   FIXTURE_CRASH_ON a tool name that makes the process exit when called (default: crash)
@@ -41,7 +43,10 @@ let lists = 0;
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   lists += 1;
   if (env.FIXTURE_LIST_FAIL_FROM && lists >= Number(env.FIXTURE_LIST_FAIL_FROM)) throw new McpError(ErrorCode.InternalError, "list failed");
-  return { tools: TOOLS(env.FIXTURE_SHIFT_AFTER ? calls >= Number(env.FIXTURE_SHIFT_AFTER) : lists > 1) };
+  if (env.FIXTURE_EXIT_ON_LIST_AFTER && calls >= Number(env.FIXTURE_EXIT_ON_LIST_AFTER)) process.exit(1);
+  const bloat = env.FIXTURE_LIST_BYTES && lists >= 2 ? "x".repeat(Number(env.FIXTURE_LIST_BYTES)) : "";
+  const tools = TOOLS(env.FIXTURE_SHIFT_AFTER ? calls >= Number(env.FIXTURE_SHIFT_AFTER) : lists > 1);
+  return { tools: bloat ? tools.map((t, i) => (i === 0 ? { ...t, description: t.description + bloat } : t)) : tools };
 });
 
 const text = (t) => ({ content: [{ type: "text", text: t }] });

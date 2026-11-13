@@ -18,6 +18,13 @@ export interface Finding {
   tool: string;
 }
 
+/** Cases of an adversarial style that the server answered with JSON-RPC -32603 (internal error): advice, no state and no exit code. */
+export function countInternalErrors(results: readonly CaseResult[]): number {
+  return results.filter((r) => r.style !== undefined && r.rpcCode === -32603).length;
+}
+
+export const STDIO_COUNTER_LINE = "the stdio size counter is unavailable with this SDK version: only the transport's own limit applies";
+
 export function countStates(results: readonly CaseResult[]): Record<CaseState, number> {
   const out = Object.fromEntries(CASE_STATES.map((s) => [s, 0])) as Record<CaseState, number>;
   for (const r of results) out[r.state] += 1;
@@ -54,6 +61,7 @@ export function buildEvidence(results: readonly CaseResult[]): unknown[] {
     ...(r.responseBytes !== undefined ? { responseBytes: r.responseBytes } : {}),
     ...(r.truncated ? { truncated: true } : {}),
     ...(r.afterRestart ? { afterRestart: true } : {}),
+    ...(r.rpcCode !== undefined ? { rpcCode: r.rpcCode } : {}),
     observations: r.observations,
     advice: r.advice,
     ...(r.humanOracle ? { humanOracle: true } : {}),
@@ -74,6 +82,8 @@ export interface ReportInput {
   stopped?: string;
   /** How many times the server was started again during the run. */
   restarts?: number;
+  /** The stdio per-message size counter (`unavailable`: only the transport's own limit applied). */
+  stdioSizeCounter?: "active" | "unavailable";
   /** Parts that could not be built, by name. */
   lost: readonly string[];
 }
@@ -103,6 +113,8 @@ export function buildReportJson(r: ReportInput): unknown {
     })),
     ...(r.coverage ? { coverage: r.coverage } : {}),
     ...(r.gate ? { coverageGate: r.gate } : {}),
+    ...(r.stdioSizeCounter ? { stdioSizeCounter: r.stdioSizeCounter } : {}),
+    advice: { internalErrorsOnHostileInput: countInternalErrors(r.results) },
     findings: r.findings,
     ...(r.stopped ? { stopped: r.stopped } : {}),
     ...(r.restarts ? { restarts: r.restarts } : {}),
@@ -121,13 +133,16 @@ export function renderMcpReportMd(r: ReportInput): string {
   if (r.stopped) lines.push(`- **Stopped early:** ${safeText(r.stopped, 200)}`);
   if (r.restarts) lines.push(`- **The server was started again ${r.restarts} time(s):** the cases after that ran against a server that lost the state the earlier cases made (marked afterRestart in mcp-evidence.json).`);
   if (n["needs-review"]) lines.push(`- **${n["needs-review"]} case(s) were answered but not judged: a person has to look.**`);
+  if (r.stdioSizeCounter === "unavailable") lines.push(`- **Note:** ${STDIO_COUNTER_LINE}.`);
   if (r.lost.length) lines.push(`- **Not built:** ${r.lost.join(", ")}`);
   lines.push("", `## Cases (${r.results.length})`, "", "| state | tool | case | why |", "|---|---|---|---|");
   for (const x of r.results) lines.push(`| ${ICON[x.state]} ${x.state} | ${safeText(x.tool, 60)} | ${safeText(x.name, 120)} | ${safeText(x.reason, 160)} |`);
   lines.push("");
   const advice = r.results.filter((x) => x.advice.length);
-  if (advice.length) {
+  const internal = countInternalErrors(r.results);
+  if (advice.length || internal) {
     lines.push("## Advice (heuristics; they change no state and no exit code)", "");
+    if (internal) lines.push(`- ${internal} case(s) of an adversarial style got JSON-RPC -32603 (internal error) on hostile input.`);
     for (const x of advice) lines.push(`- ${safeText(x.name, 120)}: ${x.advice.map((a) => `${a.kind} (line ${a.line})`).join(", ")}`);
     lines.push("");
   }

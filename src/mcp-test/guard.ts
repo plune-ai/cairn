@@ -300,6 +300,12 @@ export class McpCallGuard {
     for (const name of this.snapshot.keys()) if (!seen.has(name)) this.changedSet.add(name);
   }
 
+  /** Whether a call could still be admitted: the time budget and the call budget are not spent. */
+  budgetLeft(): boolean {
+    if (this.timeBudgetMs !== undefined && this.now() - this.startedAt >= this.timeBudgetMs) return false;
+    return this.used < this.maxCalls;
+  }
+
   /** Takes one rate slot without taking a call of the budget: a read of the tool list before a call counts toward --rps only. */
   async waitSlot(): Promise<void> {
     const now = this.now();

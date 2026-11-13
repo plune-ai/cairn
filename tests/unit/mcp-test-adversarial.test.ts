@@ -258,7 +258,8 @@ describe("CLI · mcp-test · adversarial · advice (AC-6, part)", () => {
     expect(findAdvice(lines.join("\n"))).toEqual([]);
     const start = Date.now();
     findAdvice(`${"at ".repeat(150000)}\n`.repeat(50));
-    // Loose on purpose: the exact-limit checks above pin the cuts; this one only catches a pattern that backtracks.
+    // Loose on purpose (2 s, not 300 ms): a loaded machine is slow and a tight bound flakes. The exact-limit checks above pin
+    // the cuts; this one only catches a pattern that backtracks.
     expect(Date.now() - start).toBeLessThan(2000);
   });
 });

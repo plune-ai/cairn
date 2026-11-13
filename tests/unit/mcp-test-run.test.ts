@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runMcpTest, type McpTestOptions } from "../../src/mcp-test/run.js";
+import { noProcessImporter } from "./helpers/no-process-importer.js";
 import { computeMcpCoverage, evaluateMcpGate } from "../../src/mcp-test/coverage.js";
 import { mcpExitCode } from "../../src/mcp-test/report.js";
 import type { CaseResult } from "../../src/mcp-test/runner.js";
@@ -263,5 +264,34 @@ describe("CLI · mcp-test · --max-response-bytes and the stop", () => {
     } finally {
       await fx.close();
     }
+  });
+});
+
+describe("CLI · mcp-test · second review, command level", () => {
+  it("4 · when the stdio size counter cannot be installed, the console and report.json say so", async () => {
+    const x = await run({}, { allowTools: "echo", maxCalls: 50, importer: noProcessImporter });
+    expect(err.join("")).toMatch(/the stdio size counter is unavailable with this SDK version: only the transport's own limit applies/);
+    expect(JSON.parse(x.read("report.json")).stdioSizeCounter).toBe("unavailable");
+  });
+
+  it("4 · with the counter, no such line and the flag says active", async () => {
+    const x = await run({}, { allowTools: "echo", maxCalls: 50 });
+    expect(err.join("")).not.toMatch(/size counter is unavailable/);
+    expect(JSON.parse(x.read("report.json")).stdioSizeCounter).toBe("active");
+  });
+
+  it("7 · a server that answers initialize with -32000 is reported as what it answered, not as 'closed' or 'did not answer'", async () => {
+    const o = dir();
+    const r = await runMcpTest({ command: [process.execPath, resolve(here, "..", "fixtures", "mcp-model-server.mjs")], out: o, env: ["FIXTURE_MODE=init-error", "FIXTURE_ERROR_CODE=-32000"], timeout: 20 }, io);
+    expect(r.exitCode).not.toBe(0);
+    const text = err.join("");
+    expect(text).toContain("-32000");
+    expect(text).not.toMatch(/closed the connection before it answered|did not answer within/);
+  });
+
+  it("8 · the summary counts internal errors on hostile input, and they change no exit code", async () => {
+    const x = await run({ FIXTURE_ECHO: "errtext" }, { allowTools: "echo", allowMutations: true, adversarial: true, maxCalls: 400, rps: 1000, maxCasesPerTool: 200, adversarialMaxString: 50 });
+    expect(out.join("")).toMatch(/internal error/i);
+    expect(JSON.parse(x.read("report.json")).advice.internalErrorsOnHostileInput).toBeGreaterThan(0);
   });
 });

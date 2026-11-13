@@ -356,8 +356,8 @@ With any of the three flags the command also sends the generated cases, one call
 | --- | --- |
 | `passed` | the server answered as the case expects |
 | `failed` | the server's own answer broke a rule written in the case (or its process exited during the call while it was answering before) |
-| `not-sent` | the call guard refused it (a tool not allowed, a budget, a tool that changed since permission, a tool list that could not be re-read) |
-| `could-not-run` | no answer: timeout, closed connection, server gone, or the run stopped or ran out of `--time-budget` before it |
+| `not-sent` | the call guard refused it (a tool not allowed, a budget, a tool that changed since permission); only the guard's refusal is `not-sent` |
+| `could-not-run` | no answer: timeout, closed connection, server gone, an interrupt during the call, a tool list that could not be re-read, or the run stopped or ran out of `--time-budget` before it |
 | `needs-review` | answered, but a person has to judge (an `isError` on a made-up valid value, an error the case does not list, an answer over `--max-response-bytes`, a payload only a person can judge) |
 
 Rules. A valid case passes on a success (and, when the tool declares an `outputSchema`, a `structuredContent` that fits it;
@@ -366,25 +366,31 @@ error on a valid case fails. A case that breaks the schema passes only on what i
 the listed codes (-32602), or an `isError` result. Any other error code (-32603, -32601, -32700, ...) is `needs-review` with
 the code named: the server refused, but not for the stated reason. It fails when the server accepts the value. A robustness
 case (adversarial) follows its own `accepts` list literally. Observations (empty content, text only, time, size,
-stack-trace-like text) are listed in `mcp-evidence.json` and never change a state or the exit code.
+stack-trace-like text) are listed in `mcp-evidence.json` and never change a state or the exit code. The JSON-RPC code a server
+answered is kept in the evidence (`rpcCode`); adversarial cases answered with -32603 (internal error) are counted in the summary
+and `report.json` (`advice.internalErrorsOnHostileInput`) as advice only.
 
 How a lost connection is told from a server's answer: only a fact on this side counts. "Timeout" is this side's own timer
 firing; "the connection is gone" is the transport reporting that it closed (for stdio the child's exit). The code or text of
 an error the server sent never counts: a live server that answers -32000, -32001 or the text "Connection closed" gave an
 ordinary error answer, judged by the case's rule. A stdio server that exits fails that case; the run starts it once more and a
-second exit stops the run (the rest is `could-not-run`). Every result after the restart carries `afterRestart: true`, because
+second loss stops the run (the rest is `could-not-run`). One restart budget covers every cause of a lost child: an exit, or the child being stopped for an oversized message. An interrupt (the run's signal) during a call is `could-not-run` and stops the run; it is never read as a server answer. Every result after the restart carries `afterRestart: true`, because
 the server lost the state the earlier cases made.
 
 Before every call the tool is read again (`tools/list`); a tool that changed since you looked (its schema, its description or
 its `readOnlyHint`) is refused as "changed since permission", and when the list cannot be read or is cut short the call is not
-sent. Each read takes a rate slot (`--rps`) but no call of `--max-calls`.
+sent: that case is `could-not-run` (never `not-sent`), and a connection found dead by the re-read is the lost process above (one restart, then stop). The read is skipped once a budget is spent. Each read takes a rate slot (`--rps`) but no call of `--max-calls`.
 
 Size. `--max-response-bytes` (default 262144; a plain decimal whole number from 1 to 67108864) limits one answer, counted in
-bytes. Over HTTP the response body is read through a counter and reading stops once the limit is passed. Over stdio the child's
+bytes. Over HTTP every response body is read through a counter and reading stops once its limit is passed: the call's limit
+for a call, and 8 MiB for `initialize`, one `tools/list` page or a notification stream. A call whose body is cut for size ends at once. Over stdio the child's
 output is counted per message: the reader refuses to buffer more than the larger of the limit and 1 MiB, and the child is
 stopped when one message passes that cap (the run starts it again, as after an exit). What remains unbounded: a message
 between the limit and the cap (up to 1 MiB) is parsed before it is judged, and a `tools/list` page above the cap ends the
-connection. An answer over the limit is `needs-review` and is not stored; what is stored is masked first and cut after.
+connection (a re-read that fails that way is the lost process above). The stdio counter reads a private field of the SDK
+transport; with an SDK version that lacks it the run prints "the stdio size counter is unavailable with this SDK version: only
+the transport's own limit applies", `report.json` has `stdioSizeCounter: "unavailable"`, and the child keeps writing until the
+transport's own refusal closes it. An answer over the limit is `needs-review` and is not stored; what is stored is masked first and cut after.
 
 `--min-coverage <percent>` and `--count-partial` gate the share of tools that were covered (a tool is covered when every
 declared parameter was sent by a case that was sent and judged; a tool with no such case is listed as not measured).

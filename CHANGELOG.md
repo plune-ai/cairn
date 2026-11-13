@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message cap that stops the child); the tool is read again before every call and a failed read means no call; a Negative case
   passes only on an error its `expect` lists, any other code is `needs-review`; an output schema is compiled once per tool;
   `--max-response-bytes` is a whole number from 1 to 67108864.
+  Second review: an interrupt during a call is `could-not-run` and stops the run (an error is a server answer only when no local
+  cause is set); a failed re-read is `could-not-run`, and a dead connection found by it is the one restart; every HTTP response
+  has a byte limit (8 MiB for handshake and list pages); a missing stdio size counter is reported (`stdioSizeCounter`); one
+  restart budget for every cause of a lost child; budgets are checked before the re-read; `initialize` errors are described by
+  what the server answered; JSON-RPC codes are kept in the evidence and -32603 on hostile input is counted as advice.
 - **`cairn mcp-test --adversarial` (MCP-E3).** Adds `psycho` and `hacker` cases for tool arguments (extreme numbers, long,
   empty, zero-byte and unpaired-surrogate strings, a deep array, a forbidden extra property, a `__proto__` key, and four
   harmless injection strings with their WSTG ids) and tags the `normal` and `curious` ones. Cases are written to
