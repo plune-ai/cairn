@@ -200,6 +200,8 @@ export function buildProgram(): Command {
     .option("--rps <n>", "tool calls: calls per second (default 2)")
     .option("--call-timeout <seconds>", "tool calls: how long to wait for one call (default 30)")
     .option("--time-budget <seconds>", "tool calls: time for the whole run of calls; exit code 4 when it runs out")
+    .option("--max-cases-per-tool <n>", "cases: most cases kept per tool (default 12); the rest are listed as cut with a count")
+    .option("--examples <file>", "cases: JSON file {\"tool\": {arguments}} giving the arguments of the valid case; a value the tool's inputSchema refuses is an error")
     .action(async (command: string[], opts: Record<string, unknown>) => {
       await runModality("mcp-test", { ...opts, command });
     });
