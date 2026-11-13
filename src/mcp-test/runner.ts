@@ -16,7 +16,7 @@
 import { SENSITIVE } from "../api/guard.js";
 import type { ApiCaseTechnique } from "../api/cases.js";
 import { findAdvice, type AdviceFinding } from "./advice.js";
-import { describeArguments, guardedToolCall, appendCallLog, type CallError, type ToolRpc } from "./call.js";
+import { guardedToolCall, appendCallLog, type CallError, type ToolRpc } from "./call.js";
 import type { McpCallGuard } from "./guard.js";
 import { safeText, type McpToolEntry } from "./model.js";
 import { OracleHost, scanSchema } from "./schema.js";

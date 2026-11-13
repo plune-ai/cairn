@@ -21,6 +21,8 @@ import {
 import {
   CannotBuild,
   MAX_ARRAY_ITEMS,
+  ORACLE_TIME_LIMIT_MS,
+  OracleTimeout,
   MAX_STRING_LENGTH,
   SchemaBuilder,
   OracleHost,
@@ -532,7 +534,7 @@ function paramType(builder: SchemaBuilder, raw: unknown): string | undefined {
   }
 }
 
-function adversarialFor(
+export function adversarialFor(
   tool: McpToolEntry,
   adv: { styles: readonly AdversarialStyle[]; limits: AdversarialLimits },
   oracle: Oracle,
@@ -567,8 +569,15 @@ function adversarialFor(
       passes = oracle.check(c.args).valid;
     } catch (e) {
       if (!(e instanceof CannotBuild)) throw e;
-      broken = { keyword: e.keyword, reason: safeText(e.message, 200) };
-      skipped.push({ tool: tool.name, kind: "adversarial", detail: `${c.style} · ${c.kind}`, ...broken });
+      const detail = `${c.style} · ${c.kind}`;
+      if (e instanceof OracleTimeout) {
+        // The time of this tool's schema check is spent: the rest are not tried against it one by one.
+        broken = { keyword: e.keyword, reason: `the schema check of this tool took too long (more than ${ORACLE_TIME_LIMIT_MS} ms; a pattern may backtrack badly), so its adversarial cases were skipped` };
+        skipped.push({ tool: tool.name, kind: "adversarial", detail, ...broken });
+      } else {
+        // This one candidate cannot be checked; the next may be.
+        skipped.push({ tool: tool.name, kind: "adversarial", detail, keyword: e.keyword, reason: safeText(e.message, 200) });
+      }
       continue;
     }
     out.push({
