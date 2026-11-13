@@ -17,8 +17,9 @@ Commands:
   api [options]                    Generate API tests from an OpenAPI 3.x spec;
                                    with --base-url, run them and assert
                                    responses
-  mcp-test [options] [command...]  Connect to an MCP server and write a model of
-                                   it (tools, resources, prompts): cairn
+  mcp-test [options] [command...]  Connect to an MCP server, write a model of it
+                                   and test cases from its schemas, and, only
+                                   with an --allow-* flag, run them: cairn
                                    mcp-test -- <command> [args] | --url
                                    <address>
   collect-docs|docs [options]      Walk the app's screens and overlays and write

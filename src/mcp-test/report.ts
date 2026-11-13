@@ -83,7 +83,7 @@ export interface ReportInput {
   /** How many times the server was started again during the run. */
   restarts?: number;
   /** The stdio per-message size counter (`unavailable`: only the transport's own limit applied). */
-  stdioSizeCounter?: "active" | "unavailable";
+  stdioSizeCounter?: "active" | "unavailable" | "unknown";
   /** Parts that could not be built, by name. */
   lost: readonly string[];
 }

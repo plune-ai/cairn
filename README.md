@@ -201,7 +201,7 @@ const result = await runDesign({ url, config, sessionName: "myapp", checklistTex
 ## Documentation
 
 - **[Getting started](docs/getting-started.md)** — step-by-step onboarding (session → design → review → promote → automate → validate).
-- **[Authenticated targets](docs/sessions.md)** · **[Configuration & role routing](docs/configuration.md)** · **[Prompts & styles](docs/prompts-and-styles.md)** · **[Interactive TUI](docs/tui.md)** · **[MCP server](docs/mcp.md)**
+- **[Authenticated targets](docs/sessions.md)** · **[Configuration & role routing](docs/configuration.md)** · **[Prompts & styles](docs/prompts-and-styles.md)** · **[Interactive TUI](docs/tui.md)** · **[MCP server](docs/mcp.md)** · **[Test an MCP server](docs/mcp-test.md)**
 - **[Metrics](docs/metrics.md)** · **[Cost benchmark](docs/cost.md)** · **[Langfuse](docs/langfuse.md)**
 - **[Decision layer](docs/decider.md)** — an optional System One model (Jev in the cloud, Laya on your machine) for repair triage, checklist coverage and healing a broken locator; off by default, with a shadow mode to judge it first.
 - **[Architecture overview](docs/architecture/overview.md)** — the plain async pipeline, locator grounding, self-improvement.

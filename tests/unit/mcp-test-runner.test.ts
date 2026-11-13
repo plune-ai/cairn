@@ -534,3 +534,38 @@ describe("CLI · mcp-test · connect · second review", () => {
     expect(real.sizeCounter).toBe("active");
   }, 30000);
 });
+
+describe("CLI · mcp-test · connect · a server that answers initialize with an error", () => {
+  /** A loopback Streamable HTTP server whose answer to initialize is a JSON-RPC error with `code`. */
+  async function erroringHttp(code: number): Promise<{ url: string; close: () => Promise<void> }> {
+    const server: Server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (d: Buffer) => chunks.push(d));
+      req.on("end", () => {
+        const msg = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { id?: number }) : {};
+        res.setHeader("content-type", "application/json");
+        if (msg.id === undefined) {
+          res.statusCode = req.method === "POST" ? 202 : 405;
+          res.end();
+        } else res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code, message: "no thanks" } }));
+      });
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    const { port } = server.address() as { port: number };
+    return { url: `http://127.0.0.1:${port}/mcp`, close: () => new Promise((ok) => (server.closeAllConnections(), server.close(() => ok()))) };
+  }
+
+  it.each([-32000, -32001, -32603])("over HTTP, an initialize error answer with code %i is reported as what the server answered, not as a closed connection", async (code) => {
+    const srv = await erroringHttp(code);
+    try {
+      const err = await connectMcp({ url: srv.url, headers: {}, env: {}, timeoutMs: 5000 }).then(
+        () => undefined,
+        (e: Error) => e,
+      );
+      expect(err?.message).toContain(String(code));
+      expect(err?.message).not.toMatch(/closed the connection|did not answer within/);
+    } finally {
+      await srv.close();
+    }
+  });
+});
