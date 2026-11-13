@@ -87,6 +87,19 @@ describe("CLI · mcp-test · runner · command level", () => {
     expect(existsSync(join(x.o, "report.json"))).toBe(false);
   });
 
+  it("--call-timeout bounds a call that gets no answer, and --timeout (the handshake and lists) does not decide it", async () => {
+    const t0 = Date.now();
+    const x = await run({}, { allowTools: "hang", timeout: 20, callTimeout: 1, maxCalls: 1 });
+    const evidence = JSON.parse(x.read("mcp-evidence.json")) as { state: string; durationMs?: number }[];
+    const sent = evidence.filter((e) => e.durationMs !== undefined);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.state).toBe("could-not-run");
+    expect(sent[0]?.durationMs).toBeGreaterThanOrEqual(900);
+    expect(sent[0]?.durationMs).toBeLessThan(5000);
+    expect(Date.now() - t0).toBeLessThan(15000);
+    expect(evidence.some((e) => e.state === "failed")).toBe(false);
+  });
+
   it("sends one call per case through the guard and writes the artifacts (AC-2, AC-9, AC-10)", async () => {
     const x = await run({}, { allowTools: "echo,typed", maxCalls: 50 });
     const report = JSON.parse(x.read("report.json"));
