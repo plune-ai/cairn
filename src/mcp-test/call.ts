@@ -38,7 +38,14 @@ export interface SentCall {
 
 export type GuardedCall =
   | { sent: false; decision: McpCallDecision }
-  | { sent: true; decision: McpCallDecision; entry: SentCall; response?: unknown };
+  | { sent: true; decision: McpCallDecision; entry: SentCall; response?: unknown; error?: CallError };
+
+/** What a failed call threw: the SDK's error name (a JSON-RPC error from the server is an `McpError`), its code and text. */
+export interface CallError {
+  name: string;
+  code?: number | string;
+  message: string;
+}
 
 export interface CallOptions {
   callTimeoutMs: number;
@@ -88,6 +95,7 @@ export async function guardedToolCall(
   const started = now();
   let result: CallOutcome = "ok";
   let response: unknown;
+  let error: CallError | undefined;
   try {
     response = await rpc.request(
       { method: "tools/call", params: { name: call.tool, arguments: call.arguments ?? {} } },
@@ -96,6 +104,12 @@ export async function guardedToolCall(
     if ((response as { isError?: unknown } | null)?.isError === true) result = "error";
   } catch (e) {
     result = outcomeOf(e);
+    const x = (e ?? {}) as { name?: unknown; code?: unknown; message?: unknown };
+    error = {
+      name: typeof x.name === "string" ? x.name : "Error",
+      ...(typeof x.code === "number" || typeof x.code === "string" ? { code: x.code } : {}),
+      message: typeof x.message === "string" ? x.message : String(e),
+    };
   }
   const entry: SentCall = {
     time: new Date(started).toISOString(),
@@ -108,7 +122,7 @@ export async function guardedToolCall(
     result,
   };
   await opts.log?.(entry);
-  return { sent: true, decision, entry, ...(response !== undefined ? { response } : {}) };
+  return { sent: true, decision, entry, ...(response !== undefined ? { response } : {}), ...(error ? { error } : {}) };
 }
 
 /** Appends a sent call to `<dir>/mcp-calls.jsonl`. */

@@ -58,6 +58,8 @@ export interface McpConnection {
   transport: "stdio" | "streamable-http";
   /** The stdio server's process id (null for HTTP). */
   pid: number | null;
+  /** One request on this connection; the answer is whatever object the server sent. Only `call.ts` names a method to call a tool. */
+  request(req: { method: string; params: Record<string, unknown> }, opts: { timeout: number; signal?: AbortSignal }): Promise<unknown>;
   /** What the server wrote to stderr, as is (the caller masks it). */
   stderrText(): string;
   /** Ends the session and makes sure the server process is gone. */
@@ -68,7 +70,7 @@ const STDERR_CAP = 64 * 1024;
 const REDIRECT_MESSAGE = "The server answered with a redirect; redirects are not followed.";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Sdk = { Client: any; StdioClientTransport: any; StreamableHTTPClientTransport: any; ListToolsResultSchema: any };
+type Sdk = { Client: any; StdioClientTransport: any; StreamableHTTPClientTransport: any; ListToolsResultSchema: any; ResultSchema: any };
 
 const MISSING_HELP = "`cairn mcp-test` needs the MCP client package, which is not installed.\n  Install:  npm i @modelcontextprotocol/sdk";
 
@@ -85,6 +87,7 @@ async function loadSdk(importer: (s: string) => Promise<unknown>): Promise<Sdk> 
       StdioClientTransport: stdio.StdioClientTransport,
       StreamableHTTPClientTransport: http.StreamableHTTPClientTransport,
       ListToolsResultSchema: types.ListToolsResultSchema,
+      ResultSchema: types.ResultSchema,
     };
   } catch (e) {
     const { code, message } = e as { code?: string; message?: string };
@@ -291,6 +294,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     get pid() {
       return pid;
     },
+    request: (req, opts) => client.request(req, sdk.ResultSchema, opts),
     stderrText,
     close,
   };

@@ -18,7 +18,7 @@ export const ARTIFACT_SCHEMA_VERSION = 1;
  * infer the kind from which optional keys happen to be present, which is a guess that silently starts
  * returning the wrong answer the moment a key becomes optional.
  */
-export type RunMode = "explore" | "design" | "api";
+export type RunMode = "explore" | "design" | "api" | "mcp";
 
 /**
  * A stable, content-derived identity for a generated case.
