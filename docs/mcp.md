@@ -142,3 +142,36 @@ If `cairn` isn't on `PATH`, run it through `npx`:
   pass `session: "<name>"`. See [Authenticated targets](sessions.md).
 - The server is a thin adapter: each tool validates input, calls the same `runExploration` /
   `runDesign` core entry points the CLI uses, and returns a structured result. No new generation logic.
+
+## Reading someone else's MCP server: `cairn mcp-test`
+
+The other direction. `cairn mcp` serves Cairn; `cairn mcp-test` connects to a server you name and writes a model of it.
+It only connects and lists: no tool is called and no case is generated.
+
+```bash
+cairn mcp-test -- node ./my-server.js            # stdio: the command after `--`
+cairn mcp-test --env API_KEY=... --cwd ./srv -- node server.js
+cairn mcp-test --url http://127.0.0.1:3000/mcp --header "Authorization: Bearer ..."   # Streamable HTTP
+```
+
+Options: `--timeout <seconds>` for one request (default 30), `--out <dir>` (default `runs/mcp-<id>/`), and
+`--max-pages` / `--max-entries` to bound each list (defaults 20 pages, 1000 entries).
+
+`mcp-model.json` holds the server's `serverInfo`, the protocol revision it agreed to, its `capabilities` and its `tools`
+(name, title, description, `inputSchema`, `outputSchema`, `annotations`), `resources`, `resourceTemplates` and `prompts`.
+Lists are in name order and keys are sorted, so two reads of the same server give the same bytes. A list that was cut by a
+limit is never passed off as whole: the model says `complete: false` and `truncated` names the list and the reason.
+
+- Header and environment values are never stored; the model keeps their names only. Values of sensitive names
+  (`Authorization`, `*key*`, `*token*`, `*secret*`, `*password*`, cookies) are also masked in the console, the error
+  messages and the saved `server-stderr.log`.
+- The server process gets the SDK's small default environment plus your `--env` values, not Cairn's provider keys.
+  It is stopped whatever way the run ends (success, error, timeout, Ctrl-C).
+- A request goes to the origin you named only. If the server answers 401 and points to authentication metadata on another
+  origin, that address is not visited, no token is sent there, and the run stops with "authentication required".
+  OAuth flows are not supported; pass a token with `--header`.
+- Exit codes: `0` read; `1` the server did not start, did not answer `initialize`, wants authentication or spoke
+  something else; `5` it was read but has no tools (nothing to test, not a pass).
+- What a server writes (names, descriptions) is untrusted text: it is printed with control characters removed and is
+  never run or handed to a model as an instruction.
+- Needs the MCP client package (`npm i @modelcontextprotocol/sdk`); without it the command says so.

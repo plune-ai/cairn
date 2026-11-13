@@ -11,6 +11,7 @@ import { exploreModality } from "./modalities/explore.js";
 import { apiModality } from "./modalities/api.js";
 import { collectDocsModality } from "./modalities/collect-docs.js";
 import { checkDocsModality } from "./modalities/check-docs.js";
+import { mcpTestModality } from "./modalities/mcp-test.js";
 
 export const MODALITIES: Modality[] = [
   exploreModality,
@@ -29,6 +30,8 @@ export const MODALITIES: Modality[] = [
   collectDocsModality,
   // #231: the same walk, compared with docs in that format.
   checkDocsModality,
+  // MCP-E1: read a foreign MCP server and record its model (no cases yet).
+  mcpTestModality,
 ];
 
 /** Look up a modality by its name or one of its aliases (e.g. `e2e` → the `ui` modality). */

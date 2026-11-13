@@ -180,6 +180,23 @@ export function buildProgram(): Command {
       await runModality("api", opts);
     });
 
+  // MCP-E1: read a foreign MCP server. `cairn mcp` (no subcommand) stays "run Cairn as a server", so this is its own command.
+  program
+    .command("mcp-test")
+    .description("Connect to an MCP server and write a model of it (tools, resources, prompts): cairn mcp-test -- <command> [args] | --url <address>")
+    .argument("[command...]", "stdio: the server command and its arguments, after `--`")
+    .option("--url <address>", "Streamable HTTP: the server address (instead of a command)")
+    .option("--header <header>", "Streamable HTTP: request header 'Name: Value' (repeatable); values are never saved or printed", (val: string, prev: string[] = []) => [...prev, val])
+    .option("--env <KEY=VALUE>", "stdio: environment variable for the server (repeatable); values are never saved or printed", (val: string, prev: string[] = []) => [...prev, val])
+    .option("--cwd <dir>", "stdio: working directory of the server")
+    .option("--timeout <seconds>", "how long to wait for one request (default 30)")
+    .option("--out <dir>", "where to write mcp-model.json (default runs/mcp-<id>/)")
+    .option("--max-pages <n>", "most pages to read from one list (default 20); a list cut short is marked complete: false")
+    .option("--max-entries <n>", "most entries to keep from one list (default 1000); a list cut short is marked complete: false")
+    .action(async (command: string[], opts: Record<string, unknown>) => {
+      await runModality("mcp-test", { ...opts, command });
+    });
+
   // #24: the docs modality. `cairn docs` is its alias, as `login` is `session capture`'s.
   program
     .command("collect-docs")
