@@ -22,6 +22,7 @@ Start at the [root README](../README.md) for the 30-second pitch; this page is t
 | To change the house style of generated cases | [`prompts-and-styles.md`](./prompts-and-styles.md) |
 | To drive it from a terminal UI | [`tui.md`](./tui.md) |
 | To call it from another agent (Claude Code, Cursor) | [`mcp.md`](./mcp.md) |
+| To test an MCP server (read it, build cases from its schemas, run them on a test account) | [`mcp-test.md`](./mcp-test.md) |
 | To read the run metrics and scores | [`metrics.md`](./metrics.md) |
 | To know what a run costs | [`cost.md`](./cost.md) |
 | To wire up tracing and experiments | [`langfuse.md`](./langfuse.md) |
@@ -49,6 +50,7 @@ Operational procedures, each self-contained:
 [run an exploration](./runbooks/run-exploration.md) ·
 [design then automate](./runbooks/design-and-automate.md) ·
 [run API cases](./runbooks/run-api-cases.md) ·
+[test an MCP server](./runbooks/test-an-mcp-server.md) ·
 [smoke a real site](./runbooks/real-site-smoke.md) ·
 [curate a dataset](./runbooks/curate-dataset.md) ·
 [run an experiment](./runbooks/run-experiment.md) ·

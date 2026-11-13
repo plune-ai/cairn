@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docs for `cairn mcp-test`.** A guide ([`docs/mcp-test.md`](docs/mcp-test.md)) that goes from reading a server to running cases on a test
+  account and reading the report, with real outputs, the permission levels, the limits of what a pass proves and a
+  troubleshooting table; a [runbook](docs/runbooks/test-an-mcp-server.md); `docs/mcp.md` now covers `cairn mcp` only and points to
+  the guide. The help text of `cairn mcp-test` no longer says that adversarial cases are never sent.
 - **`cairn mcp-test` sends the cases (MCP-E5).** With `--allow-tools`, `--allow-read-only-hints` or `--allow-mutations` the
   generated and adversarial cases are sent through the call guard, one call per case, with five states (`passed`, `failed`,
   `not-sent`, `could-not-run`, `needs-review`), per-tool coverage (`--min-coverage`, `--count-partial`), `--max-response-bytes`

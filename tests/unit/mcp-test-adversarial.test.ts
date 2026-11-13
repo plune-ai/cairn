@@ -393,7 +393,7 @@ describe("CLI · mcp-test · adversarial · after review", () => {
 
 describe("CLI · mcp-test · adversarial · docs say what the code does", () => {
   it("3, 9 · noCredentials is written whenever hacker is on over HTTP with headers; the SQL payload is explained", () => {
-    const text = readFileSync(resolve(here, "..", "..", "docs", "mcp.md"), "utf8");
+    const text = readFileSync(resolve(here, "..", "..", "docs", "mcp-test.md"), "utf8");
     expect(text).not.toMatch(/with `--expect-auth`, an HTTP run/);
     expect(text).toMatch(/always true/);
     expect(text).toMatch(/test account/);
