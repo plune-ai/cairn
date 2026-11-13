@@ -170,3 +170,52 @@ describe("#214 chapter offsets from the trace", () => {
     }
   });
 });
+
+describe("screencast entries name their case by stableId, not by test title", () => {
+  // A spec as the JSON reporter writes it: `annotations` sit on the test, beside its results.
+  const spec = (title: string, file: string, annotations: { type: string; description?: string }[]) => ({
+    title,
+    file,
+    tests: [
+      {
+        annotations,
+        results: [{ status: "passed", steps: [], attachments: [{ name: "video", path: `/runs/r/screencasts/${file}/video.webm` }] }],
+      },
+    ],
+  });
+
+  it("a generated spec's entry carries the stableId its annotation names; a hand-written one gets none", () => {
+    const [generated, handWritten] = screencastsFromJson(
+      {
+        suites: [
+          {
+            specs: [
+              spec("opens the cart", "cart.spec.ts", [{ type: "stableId", description: "c-1a2b" }]),
+              spec("my own check", "mine.spec.ts", [{ type: "issue", description: "x" }]),
+            ],
+          },
+        ],
+      },
+      "/runs/r",
+    );
+    expect(generated).toMatchObject({ test: "opens the cart", stableId: "c-1a2b" });
+    expect(handWritten).not.toHaveProperty("stableId");
+    expect(handWritten!.test).toBe("my own check");
+  });
+
+  it("two tests with the same title in different cases keep distinct ids", () => {
+    const entries = screencastsFromJson(
+      {
+        suites: [
+          { specs: [spec("submits the form", "a.spec.ts", [{ type: "stableId", description: "c-aaa" }])] },
+          { specs: [spec("submits the form", "b.spec.ts", [{ type: "stableId", description: "c-bbb" }])] },
+        ],
+      },
+      "/runs/r",
+    );
+    expect(entries.map((e) => [e.test, e.stableId])).toEqual([
+      ["submits the form", "c-aaa"],
+      ["submits the form", "c-bbb"],
+    ]);
+  });
+});

@@ -89,7 +89,11 @@ sidecar mapping each scenario's step chapters (step → timecode). The timecodes
 from the video's first frame (`"timing": "trace"`); when a trace cannot be read they are estimated from the step
 durations (`"timing": "estimated"`). A run with a session, Basic Auth, environment secrets, a mailbox or API flows keeps no
 trace, since Playwright would write them into it in the clear: its timecodes are estimated, and in the first
-scenario of a worker they can run seconds late. It's a review-gate affordance — watch what the agent did before
+scenario of a worker they can run seconds late. Each entry of a generated test also carries its case's
+`"stableId"` (the one in `testcases/<id>.md`), so a tool matches a screencast to its case by id rather than by the test
+title, which the model picks: cairn writes the id onto the test as a Playwright annotation (`type: "stableId"`), and
+reads it back from the run. A hand-written spec, or a test the model did not map to a listed case, has no `stableId`;
+`test` (the title) stays in every entry. It's a review-gate affordance — watch what the agent did before
 approving a case. Off by default; the recorded `.webm` paths are linked from the run summary and the TUI result screen.
 
 ### Watch a run offline: `cairn view`

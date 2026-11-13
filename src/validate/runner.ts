@@ -5,6 +5,7 @@ import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { SENDS_PAST_FETCH } from "../browser/click-effect.js";
 import { isMissingBrowserError, missingBrowsersError } from "../browser/preflight.js";
+import { CASE_ANNOTATION } from "../codegen/schema.js";
 import { stepsFromTrace } from "./trace-chapters.js";
 import { installWriteGuard, type GuardRecord } from "./write-guard.js";
 
@@ -119,7 +120,13 @@ export interface ScreencastChapter {
 }
 /** #94: a recorded scenario screencast — the `.webm` (relative to runDir) + its step chapters. */
 export interface ScreencastEntry {
+  /** The Playwright test title, as the model wrote it. */
   test: string;
+  /**
+   * The case's `stableId`, from the annotation cairn writes onto each generated test: match a screencast to its case
+   * by this, not by `test`. Absent for a hand-written spec and for a test the model did not map to a listed case.
+   */
+  stableId?: string;
   /** Path to the `.webm`, relative to runDir (the artifact travels with the run dir), with `/` on any OS (#214). */
   video: string;
   /** #210: the Playwright trace of the same test, relative to runDir with `/`; absent when none was written. */
@@ -151,7 +158,7 @@ interface PwResult {
 }
 interface PwSpec {
   title: string;
-  tests?: { projectName?: string; results?: PwResult[] }[];
+  tests?: { projectName?: string; annotations?: { type?: string; description?: string }[]; results?: PwResult[] }[];
 }
 interface PwSuite {
   specs?: PwSpec[];
@@ -177,6 +184,7 @@ export function screencastsFromJson(json: PwJson, runDir: string): ScreencastEnt
   const walk = (s: PwSuite): void => {
     for (const spec of s.specs ?? []) {
       const result = spec.tests?.[0]?.results?.[0];
+      const stableId = spec.tests?.[0]?.annotations?.find((a) => a.type === CASE_ANNOTATION && a.description)?.description;
       const videoPath = result?.attachments?.find((a) => a.name === "video" && a.path)?.path;
       if (!videoPath) continue; // no recording for this test → nothing to link
       const tracePath = result?.attachments?.find((a) => a.name === "trace" && a.path)?.path;
@@ -189,7 +197,7 @@ export function screencastsFromJson(json: PwJson, runDir: string): ScreencastEnt
         atMs += step.duration ?? 0; // hooks still advance the clock so offsets stay aligned to the video
       }
       const fromRun = (p: string): string => relative(runDir, p).split(sep).join("/");
-      out.push({ test: spec.title, video: fromRun(videoPath), ...(tracePath ? { trace: fromRun(tracePath) } : {}), timing: "estimated", chapters });
+      out.push({ test: spec.title, ...(stableId ? { stableId } : {}), video: fromRun(videoPath), ...(tracePath ? { trace: fromRun(tracePath) } : {}), timing: "estimated", chapters });
     }
     for (const child of s.suites ?? []) walk(child);
   };
