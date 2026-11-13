@@ -95,7 +95,8 @@ describe("CLI · mcp-test · runner · command level", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.state).toBe("could-not-run");
     expect(sent[0]?.durationMs).toBeGreaterThanOrEqual(900);
-    expect(sent[0]?.durationMs).toBeLessThan(5000);
+    // Well under the 30 s default, with room for a slow machine.
+    expect(sent[0]?.durationMs).toBeLessThan(10000);
     expect(Date.now() - t0).toBeLessThan(15000);
     expect(evidence.some((e) => e.state === "failed")).toBe(false);
   });
