@@ -35,6 +35,22 @@ export interface DiscoverSource {
 export interface DiscoverLimits {
   maxPages: number;
   maxEntries: number;
+  /** When it aborts, reading stops and what was read so far is returned, marked incomplete. */
+  signal?: AbortSignal;
+}
+
+/** Values nested deeper than this are replaced by {@link TOO_DEEP}: a server's schema must not decide how deep we recurse. */
+export const MAX_NESTING = 64;
+export const TOO_DEEP = "[nesting too deep]";
+
+function capDepth(v: unknown, depth: number, hit: { cut: boolean }): unknown {
+  if (!v || typeof v !== "object") return v;
+  if (depth >= MAX_NESTING) {
+    hit.cut = true;
+    return TOO_DEEP;
+  }
+  if (Array.isArray(v)) return v.map((x) => capDepth(x, depth + 1, hit));
+  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, capDepth(x, depth + 1, hit)]));
 }
 
 type Obj = Record<string, unknown>;
@@ -48,21 +64,22 @@ function pickStrings(o: Obj, keys: string[]): Obj {
 
 const asObj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
 
-function toTool(raw: unknown): McpToolEntry {
+function toTool(raw: unknown, hit: { cut: boolean }): McpToolEntry {
   const o = asObj(raw);
-  const t: McpToolEntry = { ...(pickStrings(o, ["name", "title", "description"]) as { name: string }), inputSchema: asObj(o["inputSchema"]) };
-  if (o["outputSchema"] !== undefined) t.outputSchema = asObj(o["outputSchema"]);
-  if (o["annotations"] !== undefined) t.annotations = asObj(o["annotations"]);
+  const obj = (v: unknown): Obj => asObj(capDepth(v, 0, hit));
+  const t: McpToolEntry = { ...(pickStrings(o, ["name", "title", "description"]) as { name: string }), inputSchema: obj(o["inputSchema"]) };
+  if (o["outputSchema"] !== undefined) t.outputSchema = obj(o["outputSchema"]);
+  if (o["annotations"] !== undefined) t.annotations = obj(o["annotations"]);
   return t;
 }
 
 const toResource = (raw: unknown): McpResourceEntry => pickStrings(asObj(raw), ["uri", "name", "title", "description", "mimeType"]) as unknown as McpResourceEntry;
 const toTemplate = (raw: unknown): McpResourceTemplateEntry =>
   pickStrings(asObj(raw), ["uriTemplate", "name", "title", "description", "mimeType"]) as unknown as McpResourceTemplateEntry;
-function toPrompt(raw: unknown): McpPromptEntry {
+function toPrompt(raw: unknown, hit: { cut: boolean }): McpPromptEntry {
   const o = asObj(raw);
   const p = pickStrings(o, ["name", "title", "description"]) as unknown as McpPromptEntry;
-  if (Array.isArray(o["arguments"])) p.arguments = o["arguments"].map(asObj);
+  if (Array.isArray(o["arguments"])) p.arguments = o["arguments"].map((a) => asObj(capDepth(a, 0, hit)));
   return p;
 }
 
@@ -79,11 +96,12 @@ async function readList(src: DiscoverSource, kind: McpListKind, limits: Discover
   const seen = new Set<string>();
   let cursor: string | undefined;
   for (let page = 1; ; page++) {
+    if (limits.signal?.aborted) return { items, truncation: { list: kind, reason: "interrupted", kept: items.length } };
     let res: ListPage;
     try {
       res = await src.listPage(kind, cursor);
     } catch (e) {
-      const reason = `page ${page} could not be read: ${(e as Error).message}`;
+      const reason = limits.signal?.aborted ? "interrupted" : `page ${page} could not be read: ${(e as Error).message}`;
       return { items, truncation: { list: kind, reason, kept: items.length } };
     }
     const room = limits.maxEntries - items.length;
@@ -127,10 +145,24 @@ export async function discoverModel(
     if (r.truncation) truncated.push(r.truncation);
     return r.items;
   };
-  const tools = (await read("tools")).map(toTool);
+  /** Entries whose nesting was cut, by list. */
+  const deep: Partial<Record<McpListKind, string[]>> = {};
+  const convert = <T extends { name?: string }>(kind: McpListKind, items: unknown[], f: (raw: unknown, hit: { cut: boolean }) => T): T[] =>
+    items.map((raw) => {
+      const hit = { cut: false };
+      const e = f(raw, hit);
+      if (hit.cut) (deep[kind] ??= []).push(String(e.name ?? ""));
+      return e;
+    });
+  const tools = convert("tools", await read("tools"), toTool);
   const resources = (await read("resources")).map(toResource);
   const resourceTemplates = (await read("resourceTemplates")).map(toTemplate);
-  const prompts = (await read("prompts")).map(toPrompt);
+  const prompts = convert("prompts", await read("prompts"), toPrompt);
+  for (const [kind, names] of Object.entries(deep) as Array<[McpListKind, string[]]>) {
+    const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+    const kept = kind === "tools" ? tools.length : prompts.length;
+    truncated.push({ list: kind, reason: `nesting deeper than ${MAX_NESTING} levels was cut in: ${shown}`, kept });
+  }
   return {
     schemaVersion: 1,
     serverInfo: src.serverInfo,

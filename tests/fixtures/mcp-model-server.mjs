@@ -10,10 +10,16 @@
 //   FIXTURE_PID_FILE      the process id is written here (so a test can look for a leftover process)
 //   FIXTURE_ENV_FILE      the names of the environment variables the process received are written here, as JSON
 //   FIXTURE_STDERR_TEXT   written to stderr at start
+//   FIXTURE_STDERR_PAD    that many "x" characters are written to stderr first, without a newline
+//   FIXTURE_SERVER_NAME   the serverInfo name (default fixture-server)
+//   FIXTURE_ECHO_ENV      the name of an environment variable whose value is put into the description of `ping`
+//   FIXTURE_LIST_DELAY_MS wait this long before each tools/list answer; FIXTURE_LIST_MARK is a file created at the first one
+//   FIXTURE_MODE=init-error answers every request with a JSON-RPC error whose message holds control characters
 // HTTP option `echoAuth` puts the received Authorization header into the description of `ping`, like a server that leaks it.
 // The tools are never run by the tests; they exist to be listed.
 
 import { writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -114,7 +120,7 @@ export function buildFixtureServer(opts = {}) {
   const reverse = opts.order === "reverse";
   const arrange = (list) => (reverse ? reverseKeys([...list].reverse()) : list);
   const capabilities = mode === "no-tools" ? { prompts: {} } : { tools: {}, resources: {}, prompts: {} };
-  const server = new Server({ name: "fixture-server", version: "1.2.3" }, { capabilities });
+  const server = new Server({ name: opts.serverName ?? "fixture-server", version: "1.2.3" }, { capabilities });
 
   const page = (list, cursor, endless = false) => {
     const start = cursor ? Number(cursor) : 0;
@@ -125,7 +131,13 @@ export function buildFixtureServer(opts = {}) {
   const withEcho = (list) => list.map((t) => (t.name === "ping" && opts.echo ? { ...t, description: `Answers pong. Called with: ${opts.echo}` } : t));
   const toolsList = mode === "empty-tools" ? [] : mode === "endless" ? Array.from({ length: 500 }, (_, i) => ({ name: `tool_${String(i).padStart(3, "0")}`, inputSchema: { type: "object" } })) : withEcho(TOOLS);
   if (mode !== "no-tools") {
+    let marked = false;
     server.setRequestHandler(ListToolsRequestSchema, async (req) => {
+      if (opts.listMark && !marked) {
+        marked = true;
+        writeFileSync(opts.listMark, "listing");
+      }
+      if (opts.listDelayMs) await new Promise((r) => setTimeout(r, Number(opts.listDelayMs)));
       const { items, next } = page(arrange(toolsList), req.params?.cursor, mode === "endless");
       return { tools: items, ...(next ? { nextCursor: next } : {}) };
     });
@@ -153,14 +165,20 @@ export function buildFixtureServer(opts = {}) {
 export async function startHttpFixture(opts = {}) {
   const seen = [];
   const http = createServer(async (req, res) => {
-    seen.push({ method: req.method, url: req.url, authorization: req.headers.authorization });
+    seen.push({ method: req.method, url: req.url, authorization: req.headers.authorization, headers: req.headers });
+    if (opts.redirectTo) {
+      res.writeHead(302, { Location: opts.redirectTo });
+      res.end();
+      return;
+    }
     if (opts.requireAuth && req.headers.authorization !== opts.requireAuth) {
       const meta = opts.metadataUrl ? ` resource_metadata="${opts.metadataUrl}"` : "";
       res.writeHead(401, { "WWW-Authenticate": `Bearer${meta}`, "content-type": "application/json" });
       res.end(JSON.stringify({ error: "unauthorized" }));
       return;
     }
-    const server = buildFixtureServer({ ...opts, echo: opts.echoAuth ? req.headers.authorization : undefined });
+    const echo = opts.echoHeader ? req.headers[String(opts.echoHeader).toLowerCase()] : opts.echoAuth ? req.headers.authorization : undefined;
+    const server = buildFixtureServer({ ...opts, echo });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       void transport.close();
@@ -183,7 +201,7 @@ export async function startHttpFixture(opts = {}) {
 export async function startWatchServer() {
   const seen = [];
   const http = createServer((req, res) => {
-    seen.push({ method: req.method, url: req.url, authorization: req.headers.authorization });
+    seen.push({ method: req.method, url: req.url, authorization: req.headers.authorization, headers: req.headers });
     res.writeHead(404).end();
   });
   await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
@@ -195,6 +213,7 @@ async function main() {
   const env = process.env;
   if (env.FIXTURE_PID_FILE) writeFileSync(env.FIXTURE_PID_FILE, String(process.pid));
   if (env.FIXTURE_ENV_FILE) writeFileSync(env.FIXTURE_ENV_FILE, JSON.stringify(Object.keys(env).sort()));
+  if (env.FIXTURE_STDERR_PAD) process.stderr.write("x".repeat(Number(env.FIXTURE_STDERR_PAD)));
   if (env.FIXTURE_STDERR_TEXT) process.stderr.write(`${env.FIXTURE_STDERR_TEXT}\n`);
   const mode = env.FIXTURE_MODE ?? "normal";
   if (mode === "exit-early") process.exit(1);
@@ -203,7 +222,25 @@ async function main() {
     setInterval(() => {}, 1000);
     return;
   }
-  const server = buildFixtureServer({ pageSize: env.FIXTURE_PAGE_SIZE, mode, order: env.FIXTURE_ORDER });
+  if (mode === "init-error") {
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const msg = JSON.parse(line);
+      if (msg.id !== undefined) {
+        const error = { code: -32603, message: "\u001b[2J\n::error::x" };
+        process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: msg.id, error })}\n`);
+      }
+    });
+    return;
+  }
+  const server = buildFixtureServer({
+    pageSize: env.FIXTURE_PAGE_SIZE,
+    mode,
+    order: env.FIXTURE_ORDER,
+    serverName: env.FIXTURE_SERVER_NAME,
+    echo: env.FIXTURE_ECHO_ENV ? env[env.FIXTURE_ECHO_ENV] : undefined,
+    listDelayMs: env.FIXTURE_LIST_DELAY_MS,
+    listMark: env.FIXTURE_LIST_MARK,
+  });
   await server.connect(new StdioServerTransport());
 }
 

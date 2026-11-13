@@ -14,6 +14,8 @@
 import { spawnSync } from "node:child_process";
 import type { McpListKind } from "./model.js";
 import type { DiscoverSource, ListPage } from "./discover.js";
+import { safeText } from "./model.js";
+import { maskCutTail, maskSecrets } from "./secrets.js";
 
 export type McpTestErrorKind = "sdk-missing" | "spawn-failed" | "server-exited" | "no-response" | "auth-required" | "protocol" | "cancelled";
 
@@ -44,6 +46,8 @@ export interface ConnectOptions {
   /** Limit for one request, in milliseconds. */
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Values to mask in what the server writes to stderr. */
+  secrets?: readonly string[];
   /** Replaces `import()`; a test uses it to make the SDK look uninstalled. */
   importer?: (specifier: string) => Promise<unknown>;
 }
@@ -60,6 +64,7 @@ export interface McpConnection {
 }
 
 const STDERR_CAP = 64 * 1024;
+const REDIRECT_MESSAGE = "The server answered with a redirect; redirects are not followed.";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Sdk = { Client: any; StdioClientTransport: any; StreamableHTTPClientTransport: any; ListToolsResultSchema: any };
@@ -141,7 +146,7 @@ function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }
     return new McpTestError("spawn-failed", `Could not start the server: "${o.command[0]}" was not found${win}.`);
   }
   if (err.code === "EACCES" || err.code === "EPERM" || err.code === "ENOTDIR") {
-    return new McpTestError("spawn-failed", `Could not start the server: ${message}`);
+    return new McpTestError("spawn-failed", `Could not start the server: ${safeText(message, 300)}`);
   }
   if (err.code === 401 || err.name === "UnauthorizedError") {
     const origin = metadataOrigin(auth.header);
@@ -157,7 +162,7 @@ function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }
   if (err.code === -32000 || /Connection closed/i.test(message)) {
     return new McpTestError("server-exited", "The server closed the connection before it answered initialize.");
   }
-  return new McpTestError("protocol", `The server's reply to initialize was not usable: ${message}`);
+  return new McpTestError("protocol", `The server's reply to initialize was not usable: ${safeText(message, 300)}`);
 }
 
 /** Connects, runs `initialize`, and returns what discovery needs. Any failure leaves no server process behind. */
@@ -165,14 +170,21 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   const sdk = await loadSdk(o.importer ?? ((s) => import(s)));
   if (o.signal?.aborted) throw new McpTestError("cancelled", "Interrupted.");
   const auth: { header: string | null } = { header: null };
-  let stderr = "";
+  const secrets = o.secrets ?? [];
+  // Read a little past the cap, mask, then cut: a secret that straddles the cap is masked whole, never left as a prefix.
+  const rawCap = STDERR_CAP + secrets.reduce((n, s) => Math.max(n, s.length), 0);
+  let rawStderr = "";
+  const stderrText = (): string => {
+    const masked = maskSecrets(rawStderr, secrets);
+    return (rawStderr.length >= rawCap ? maskCutTail(masked, secrets) : masked).slice(0, STDERR_CAP);
+  };
   const isStdio = o.command !== undefined;
   let transport: any;
   if (isStdio) {
     const [command, ...args] = o.command as string[];
     transport = new sdk.StdioClientTransport({ command, args, env: o.env, ...(o.cwd ? { cwd: o.cwd } : {}), stderr: "pipe" });
     transport.stderr?.on("data", (chunk: Buffer) => {
-      if (stderr.length < STDERR_CAP) stderr += chunk.toString("utf8").slice(0, STDERR_CAP - stderr.length);
+      if (rawStderr.length < rawCap) rawStderr += chunk.toString("utf8").slice(0, rawCap - rawStderr.length);
     });
   } else {
     const url = new URL(o.url as string);
@@ -180,7 +192,12 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     const guardedFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const target = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
       if (target.origin !== url.origin) throw new Error(`refused to send a request to another origin (${target.origin})`);
-      const res = await fetch(input, init);
+      // Not followed, whatever the SDK's own policy: a redirect could carry the headers to another origin.
+      const res = await fetch(input, { ...init, redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        await res.body?.cancel();
+        throw new McpTestError("protocol", REDIRECT_MESSAGE);
+      }
       if (res.status === 401) auth.header = res.headers.get("www-authenticate");
       return res;
     };
@@ -218,7 +235,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     await close();
     const mapped = mapError(startError ?? e, o, auth);
     mapped.pid = pid;
-    mapped.stderr = stderr;
+    mapped.stderr = stderrText();
     throw mapped;
   }
   pid = transport.pid ?? null;
@@ -255,7 +272,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     get pid() {
       return pid;
     },
-    stderrText: () => stderr,
+    stderrText,
     close,
   };
 }

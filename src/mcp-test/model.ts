@@ -71,21 +71,29 @@ export interface McpModel {
   prompts: McpPromptEntry[];
 }
 
-/** The same value with every object key in code-point order (arrays keep their order). */
-export function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
+/** Past this depth {@link sortKeys} stops descending (discovery already cuts at 64; this is the backstop). */
+const SORT_DEPTH_LIMIT = 100;
+
+/**
+ * The same value with every object key sorted by UTF-16 code unit (JavaScript's default string order; arrays keep
+ * their order). Nesting beyond {@link SORT_DEPTH_LIMIT} becomes a mark instead of a stack overflow.
+ */
+export function sortKeys(value: unknown, depth = 0): unknown {
   if (value && typeof value === "object") {
+    if (depth >= SORT_DEPTH_LIMIT) return "[nesting too deep]";
+    if (Array.isArray(value)) return value.map((x) => sortKeys(x, depth + 1));
     const o = value as Record<string, unknown>;
-    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, sortKeys(o[k])]));
+    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, sortKeys(o[k], depth + 1)]));
   }
   return value;
 }
 
-const byKey = <T>(key: (x: T) => string) => (a: T, b: T): number => {
-  const x = key(a);
-  const y = key(b);
-  return x < y ? -1 : x > y ? 1 : 0;
-};
+const cmp = (x: string, y: string): number => (x < y ? -1 : x > y ? 1 : 0);
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+const canon = (v: unknown): string => JSON.stringify(sortKeys(v));
+
+/** Order by the key (a missing or non-string key counts as ""); equal keys are told apart by the entry's canonical JSON. */
+const byKey = <T>(key: (x: T) => unknown) => (a: T, b: T): number => cmp(text(key(a)), text(key(b))) || cmp(canon(a), canon(b));
 
 /** The model with its lists in name order, ready to be written. */
 export function canonicalModel(m: McpModel): McpModel {
@@ -133,7 +141,7 @@ export function renderModelSummary(m: McpModel): string[] {
     `  Tools that declared readOnlyHint: ${readOnly.length} (${names(readOnly)})`,
   ];
   for (const t of m.truncated) {
-    lines.push(`  ⚠ The ${t.list} list is INCOMPLETE: ${t.reason} (${t.kept} kept). The model has complete: false.`);
+    lines.push(`  ⚠ The ${t.list} list is INCOMPLETE: ${safeText(t.reason, 300)} (${t.kept} kept). The model has complete: false.`);
   }
   for (const n of m.notes) lines.push(`  Note: ${n}`);
   return lines;

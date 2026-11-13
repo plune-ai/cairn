@@ -162,16 +162,27 @@ Options: `--timeout <seconds>` for one request (default 30), `--out <dir>` (defa
 Lists are in name order and keys are sorted, so two reads of the same server give the same bytes. A list that was cut by a
 limit is never passed off as whole: the model says `complete: false` and `truncated` names the list and the reason.
 
-- Header and environment values are never stored; the model keeps their names only. Values of sensitive names
-  (`Authorization`, `*key*`, `*token*`, `*secret*`, `*password*`, cookies) are also masked in the console, the error
-  messages and the saved `server-stderr.log`.
+- Header and environment values are never stored; the model keeps their names only. Every `--header` and `--env` value
+  of 4 characters or more is masked in the console, the error messages, the model and the saved `server-stderr.log`,
+  whatever its name, also in its URL-encoded form and, for `Authorization`-like headers, the credential part. Values
+  shorter than 4 characters are not masked. Not covered: other encodings of a secret (base64, HTML), and a secret that
+  is part of the address path (only the user, password and sensitive query values of `--url` are masked). The command
+  arguments after `--` are not masked either: pass secrets with `--env`.
 - The server process gets the SDK's small default environment plus your `--env` values, not Cairn's provider keys.
   It is stopped whatever way the run ends (success, error, timeout, Ctrl-C).
 - A request goes to the origin you named only. If the server answers 401 and points to authentication metadata on another
   origin, that address is not visited, no token is sent there, and the run stops with "authentication required".
-  OAuth flows are not supported; pass a token with `--header`.
+  A redirect answer (3xx) is an error and is not followed. OAuth flows are not supported; pass a token with `--header`.
 - Exit codes: `0` read; `1` the server did not start, did not answer `initialize`, wants authentication or spoke
   something else; `5` it was read but has no tools (nothing to test, not a pass).
 - What a server writes (names, descriptions) is untrusted text: it is printed with control characters removed and is
-  never run or handed to a model as an instruction.
+  never run or handed to a model as an instruction. A line that would start with `::` or `##[` is prefixed, so a CI log
+  does not read it as a workflow command. Values nested deeper than 64 levels are replaced by a mark and the list is
+  marked `complete: false`.
+- An interrupt (Ctrl-C) while the lists are read exits with `1` and keeps the model read so far, marked `complete: false`.
 - Needs the MCP client package (`npm i @modelcontextprotocol/sdk`); without it the command says so.
+- Limits. The server is asked to stop (stdin closed), then killed. On Windows its process tree is killed if it is still
+  running then; on Linux and macOS only the direct child is, so a grandchild the server started (a shell wrapper, `npx`)
+  can outlive the run. The size of an HTTP response is not
+  limited. The time is bounded per request (`--timeout`, 30 s by default) and a list by `--max-pages` (20), so one list
+  can take up to 20 pages times 30 s, and the four lists add up.

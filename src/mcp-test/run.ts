@@ -8,7 +8,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { collectSecrets, maskSecrets, parsePositiveInt, parsePositiveNumber, parseBaseUrl, tooShortSecrets } from "../api/guard.js";
+import { maskDeep, parsePositiveInt, parsePositiveNumber, parseBaseUrl, tooShortSecrets } from "../api/guard.js";
+import { buildSecrets, maskSecrets } from "./secrets.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
@@ -95,16 +96,15 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   if (opts.url && (Object.keys(env).length || opts.cwd)) throw new Error("--env and --cwd apply to a stdio command only.");
 
   // Every value that could be a secret, gathered before anything is printed or written.
-  const secrets = [...collectSecrets(headers), ...collectSecrets(env)];
+  const urlSecrets: string[] = [];
   let url = opts.url;
   if (url !== undefined) {
     try {
       const p = parseBaseUrl(url);
       url = p.baseUrl;
-      secrets.push(...p.secrets);
+      urlSecrets.push(...p.secrets);
       if (p.basicAuth && !Object.keys(headers).some((k) => k.toLowerCase() === "authorization")) {
         headers["Authorization"] = p.basicAuth;
-        secrets.push(...collectSecrets({ Authorization: p.basicAuth }));
       }
     } catch (e) {
       throw new Error((e as Error).message.replace(/--base-url/g, "--url"));
@@ -112,9 +112,13 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   }
   const weak = [...tooShortSecrets(headers), ...tooShortSecrets(env)];
   if (weak.length) io.err(`⚠ The secret in ${weak.join(", ")} is shorter than 4 characters and will NOT be masked in the output.\n`);
+  // One list from every source, longest first (see secrets.ts); applied before anything is shortened or printed.
+  const secrets = buildSecrets(headers, env, urlSecrets);
   const mask = (s: string): string => maskSecrets(s, secrets);
-  const err = (s: string): void => io.err(mask(s));
-  const out = (s: string): void => io.out(mask(s));
+  // A line that starts with `::` or `##[` would be read as a workflow command in a CI log; nothing printed may begin so.
+  const printable = (s: string): string => mask(s).replace(/^(\s*)(::|##\[)/gm, "$1- $2");
+  const err = (s: string): void => io.err(printable(s));
+  const out = (s: string): void => io.out(printable(s));
 
   const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `mcp-${randomUUID()}`);
   const timeoutMs = Math.round(timeoutSeconds * 1000);
@@ -133,6 +137,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
         env,
         ...(opts.cwd ? { cwd: resolve(opts.cwd) } : {}),
         timeoutMs,
+        secrets,
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(opts.importer ? { importer: opts.importer } : {}),
       });
@@ -148,11 +153,13 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       return { exitCode: 1, pid };
     }
     pid = conn.pid;
-    const model = await discoverModel(conn.source, { maxPages, maxEntries }, {
+    const found = await discoverModel(conn.source, { maxPages, maxEntries, ...(opts.signal ? { signal: opts.signal } : {}) }, {
       transport: conn.transport,
       headerNames: Object.keys(headers),
       envNames: Object.keys(env),
     });
+    // Masked first, then rendered: safeText cuts long values, and a cut must not leave the start of a secret.
+    const model = maskDeep(found, secrets);
     const stderrLog = conn.stderrText();
     await writeFiles([
       [MODEL_FILE, serializeModel(model)],
@@ -160,6 +167,10 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     ]);
     for (const line of renderModelSummary(model)) out(`${line}\n`);
     out(`  Model: ${join(outDir, MODEL_FILE).replace(/\\/g, "/")}\n`);
+    if (opts.signal?.aborted) {
+      err("✗ Interrupted while reading the lists; the model written is incomplete.\n");
+      return { exitCode: 1, outDir, model, pid };
+    }
     if (model.tools.length === 0) {
       err(`✗ Nothing to test: the server has no tools (${basename(outDir)}). This is not a pass.\n`);
       return { exitCode: NOTHING_TO_TEST_EXIT_CODE, outDir, model, pid };

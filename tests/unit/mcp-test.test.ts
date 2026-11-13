@@ -241,13 +241,13 @@ describe("CLI · mcp-test · secrets (AC-5, AC-6)", () => {
     expect(r.exitCode).toBe(1);
     const all = everything(o);
     expect(all).not.toContain(ENVSECRET);
-    expect(readFileSync(join(o, "server-stderr.log"), "utf8")).toContain("starting with key ***");
-    expect(err.join("")).toContain("starting with key ***");
+    expect(readFileSync(join(o, "server-stderr.log"), "utf8")).toContain("***");
+    expect(err.join("")).toContain("***");
 
     const o2 = dir();
     await runMcpTest(stdioOpts(o2, { API_KEY: ENVSECRET, FIXTURE_STDERR_TEXT: `ok ${ENVSECRET}` }), io);
     expect(everything(o2)).not.toContain(ENVSECRET);
-    expect(readFileSync(join(o2, "server-stderr.log"), "utf8")).toContain("ok ***");
+    expect(readFileSync(join(o2, "server-stderr.log"), "utf8")).toContain("***");
     expect(readModel(o2).connection.envNames).toContain("API_KEY");
   });
 
@@ -269,7 +269,7 @@ describe("CLI · mcp-test · secrets (AC-5, AC-6)", () => {
   });
 
   it("AC-6: the server process does not receive the provider keys of the parent's environment", async () => {
-    const keys = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "LANGFUSE_SECRET_KEY", "LAYA_API_KEY", "TYPESAFE_API_KEY"];
+    const keys = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "EXAMPLE_SECRET_KEY", "SAMPLE_API_KEY", "DEMO_API_KEY"];
     for (const k of keys) vi.stubEnv(k, `parent-${k}-value`);
     const o = dir();
     const envFile = join(o, "env-seen.json");
@@ -460,10 +460,149 @@ describe("CLI · mcp-test · wiring (AC-11, AC-12)", () => {
     expect(readModel(o).tools).toHaveLength(7);
   });
 
-  it("AC-12: nothing imports a competitor package or adds a dependency", () => {
+  it("AC-12: the only packages imported are the four client entry points of the SDK; no dependency is added", () => {
     const root = resolve(here, "..", "..");
-    const banned = ["@mcp" + "jam"];
-    const files = [...readdirSync(join(root, "src", "mcp-test")).map((f) => join(root, "src", "mcp-test", f)), join(root, "src", "core", "modalities", "mcp-test.ts"), fixture, join(root, "package.json")];
-    for (const f of files) for (const b of banned) expect(readFileSync(f, "utf8"), f).not.toContain(b);
+    const files = [...readdirSync(join(root, "src", "mcp-test")).map((f) => join(root, "src", "mcp-test", f)), join(root, "src", "core", "modalities", "mcp-test.ts")];
+    const used = new Set<string>();
+    for (const f of files) for (const m of readFileSync(f, "utf8").matchAll(/["'](@modelcontextprotocol\/[^"']+)["']/g)) used.add(m[1] as string);
+    expect([...used].sort()).toEqual(
+      ["@modelcontextprotocol/sdk/client/index.js", "@modelcontextprotocol/sdk/client/stdio.js", "@modelcontextprotocol/sdk/client/streamableHttp.js", "@modelcontextprotocol/sdk/types.js"].sort(),
+    );
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { dependencies: Record<string, string> };
+    expect(Object.keys(pkg.dependencies).filter((d) => d.startsWith("@modelcontextprotocol"))).toEqual([]);
+  });
+});
+
+describe("CLI · mcp-test · review fixes", () => {
+  const prefixes = (secret: string): string[] => Array.from({ length: secret.length - 3 }, (_, i) => secret.slice(0, i + 4));
+  const expectNoPrefix = (text: string, secret: string): void => {
+    for (const p of prefixes(secret)) expect(text, `prefix "${p}"`).not.toContain(p);
+  };
+
+  it("a redirect is an error: nothing is sent to the other origin, no header goes there, the target is not named", async () => {
+    const fxm = await loadFixture();
+    const watch = await fxm.startWatchServer();
+    const fx = await fxm.startHttpFixture({ redirectTo: `${watch.origin}/elsewhere` });
+    try {
+      const r = await runMcpTest({ url: fx.url, out: dir(), timeout: 10, header: ["X-Api-Key: key-abcd1234"] }, io);
+      expect(r.exitCode).toBe(1);
+      expect(watch.seen).toEqual([]);
+      const text = err.join("");
+      expect(text).toMatch(/redirect/i);
+      expect(text).not.toContain(watch.origin);
+      expect(text).not.toContain(new URL(watch.origin).port);
+    } finally {
+      await fx.close();
+      await watch.close();
+    }
+  });
+
+  it("every --header and --env value of 4 characters or more is masked, whatever its name, also when the server repeats it", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ echoHeader: "x-auth" });
+    try {
+      const o = dir();
+      await runMcpTest({ url: fx.url, out: o, timeout: 20, header: ["X-Auth: abc12345"] }, io);
+      expect(readFileSync(join(o, "mcp-model.json"), "utf8")).toContain("Called with: ***");
+      expect(everything(o)).not.toContain("abc12345");
+    } finally {
+      await fx.close();
+    }
+    const o2 = dir();
+    const dbUrl = "postgres://user:pw0rd77@db.local/app";
+    await runMcpTest(stdioOpts(o2, { DB_URL: dbUrl, FIXTURE_ECHO_ENV: "DB_URL", FIXTURE_STDERR_TEXT: `connecting to ${dbUrl}` }), io);
+    const all = everything(o2);
+    expect(all).not.toContain("pw0rd77");
+    expect(all).not.toContain(dbUrl);
+    expect(readFileSync(join(o2, "mcp-model.json"), "utf8")).toContain("Called with: ***");
+  });
+
+  it("masking comes before cutting: no 4-character prefix of a token survives in a 190-character stderr line, a long server name, or at the 64 KB stderr limit", async () => {
+    const TOKEN = "tkn-QzXwVuTs-90817";
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { API_TOKEN: TOKEN, FIXTURE_MODE: "exit-early", FIXTURE_STDERR_TEXT: `${"y".repeat(190)}${TOKEN}` }), io);
+    expectNoPrefix(everything(o), TOKEN);
+
+    const o2 = dir();
+    await runMcpTest(stdioOpts(o2, { API_TOKEN: TOKEN, FIXTURE_SERVER_NAME: `${"n".repeat(74)}${TOKEN}` }), io);
+    expectNoPrefix(everything(o2), TOKEN);
+
+    const o3 = dir();
+    await runMcpTest(stdioOpts(o3, { API_TOKEN: TOKEN, FIXTURE_STDERR_PAD: String(64 * 1024 - 6), FIXTURE_STDERR_TEXT: TOKEN }), io);
+    expectNoPrefix(everything(o3), TOKEN);
+  });
+
+  it("one list, longest first: an env value that is the start of another does not leave the rest of the longer one", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { A: "abcd", B: "abcdefgh", FIXTURE_STDERR_TEXT: "got abcdefgh and abcd" }), io);
+    const all = everything(o);
+    expect(all).not.toContain("efgh");
+    expect(all).not.toContain("abcd");
+  });
+
+  it("the error a server answers to initialize is printed safely: no control characters, no line that starts a workflow command", async () => {
+    const r = await runMcpTest(stdioOpts(dir(), { FIXTURE_MODE: "init-error" }), io);
+    expect(r.exitCode).toBe(1);
+    const text = [...out, ...err].join("");
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    for (const line of text.split("\n")) expect(line).not.toMatch(/^\s*(::|##\[)/);
+  });
+
+  it("the reason a list was cut, which can carry the server's text, is printed safely", async () => {
+    const src: DiscoverSource = {
+      serverInfo: { name: "s", version: "1" },
+      protocolVersion: "p",
+      capabilities: { tools: {} },
+      listPage: async () => {
+        throw new Error("\u001b[2J\n::error::boom");
+      },
+    };
+    const m = await discoverModel(src, { maxPages: 2, maxEntries: 10 }, { transport: "stdio", headerNames: [], envNames: [] });
+    const text = renderModelSummary(m).join("\n");
+    expect(text).toContain("boom");
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    for (const line of text.split("\n")) expect(line).not.toMatch(/^\s*(::|##\[)/);
+    expect(text).not.toContain("::error::boom\n");
+  });
+
+  it("an interrupt while the lists are being read exits non-zero and leaves the model with complete: false", async () => {
+    const o = dir();
+    const mark = join(o, "listing.mark");
+    const ac = new AbortController();
+    const run = runMcpTest(stdioOpts(o, { FIXTURE_LIST_DELAY_MS: "700", FIXTURE_LIST_MARK: mark, FIXTURE_PAGE_SIZE: "1" }, { signal: ac.signal }), io);
+    for (let i = 0; i < 100 && !existsSync(mark); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(mark)).toBe(true);
+    ac.abort();
+    const r = await run;
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/Interrupted/);
+    const m = readModel(o);
+    expect(m.complete).toBe(false);
+    expect(m.tools.length).toBeLessThan(7);
+  }, 30000);
+
+  it("a schema nested 10 000 levels deep is cut with a mark and a truncated entry, not a stack overflow", async () => {
+    let deep: Record<string, unknown> = { type: "string" };
+    for (let i = 0; i < 10_000; i++) deep = { items: deep };
+    const src: DiscoverSource = {
+      serverInfo: { name: "s", version: "1" },
+      protocolVersion: "p",
+      capabilities: { tools: {} },
+      listPage: async () => ({ items: [{ name: "deep", inputSchema: deep }] }),
+    };
+    const m = await discoverModel(src, { maxPages: 2, maxEntries: 10 }, { transport: "stdio", headerNames: [], envNames: [] });
+    expect(() => serializeModel(m)).not.toThrow();
+    expect(m.complete).toBe(false);
+    expect(m.truncated.some((t) => /nesting/.test(t.reason) && /deep/.test(t.reason))).toBe(true);
+    expect(serializeModel(m)).toContain("nesting too deep");
+  });
+
+  it("two tools with the same name come out in the same bytes in either order; a missing name counts as empty", () => {
+    const t1 = { name: "same", description: "first", inputSchema: {} };
+    const t2 = { name: "same", description: "second", inputSchema: { type: "object" } };
+    const m = (tools: unknown[]) =>
+      ({ schemaVersion: 1, serverInfo: { name: "s", version: "1" }, protocolVersion: "p", capabilities: {}, complete: true, truncated: [], notes: [], connection: { transport: "stdio", headerNames: [], envNames: [] }, tools, resources: [], resourceTemplates: [], prompts: [] }) as unknown as McpModel;
+    expect(serializeModel(m([t1, t2]))).toBe(serializeModel(m([t2, t1])));
+    expect(() => serializeModel(m([{ inputSchema: {} }, t1]))).not.toThrow();
+    expect(serializeModel(m([{ inputSchema: {} }, t1]))).toBe(serializeModel(m([t1, { inputSchema: {} }])));
   });
 });
