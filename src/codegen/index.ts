@@ -8,11 +8,11 @@ import { formatTransitions, type Transition } from "../probe/index.js";
 import { repeatedHint, uniquenessHint } from "../observe/locator-hints.js";
 import { detectLanguage } from "../checklist/index.js";
 import type { ParsedTestCase, ParsedApiCase } from "../artifacts/testcase-md.js";
-import { GeneratedSuiteSchema, type GeneratedSuite } from "./schema.js";
+import { CASE_ANNOTATION, CodegenReplySchema, type CodegenReply, type GeneratedSuite } from "./schema.js";
 import { FLOW_FIXTURE_FILE } from "../api/flows.js";
 
 export type { GeneratedSuite, FileBlob } from "./schema.js";
-export { GeneratedSuiteSchema, FileBlobSchema } from "./schema.js";
+export { GeneratedSuiteSchema, FileBlobSchema, CodegenReplySchema, CASE_ANNOTATION } from "./schema.js";
 export { MAILBOX_FIXTURE_FILE, mailboxPromptSection, renderMailboxSteps, withMailboxFixture } from "./mailbox.js";
 
 export interface CodegenInput {
@@ -49,6 +49,38 @@ function sanitizePath(p: string): string {
   return cleaned.length > 0 ? cleaned : "test.spec.ts";
 }
 
+/**
+ * A `test('<title>',` call whose title is a plain quoted literal and that has no details object yet.
+ * ponytail: a test with its own details object, a computed title or another name for `test` keeps no id.
+ */
+const TEST_CALL = /(?<![\w$.])test\s*\(\s*(['"`])((?:\\[\s\S]|(?!\1)[^\\])*)\1\s*,(?!\s*\{)/g;
+
+/** Write each mapped test's case stableId into the spec as a Playwright annotation (the reporter reads it back). */
+function annotateCases(content: string, byTitle: Map<string, string>): string {
+  if (byTitle.size === 0) return content;
+  return content.replace(TEST_CALL, (call: string, quote: string, raw: string) => {
+    const stableId = quote === "`" && raw.includes("${") ? undefined : byTitle.get(raw.replace(/\\([\s\S])/g, "$1"));
+    return stableId ? `${call} { annotation: { type: ${JSON.stringify(CASE_ANNOTATION)}, description: ${JSON.stringify(stableId)} } },` : call;
+  });
+}
+
+/**
+ * The model's reply as a suite: safe paths, and each test the reply maps to a listed case annotated with that case's
+ * stableId. The map is a field of the reply keyed by the ids the prompt listed, never read out of a test title.
+ */
+function suiteFromReply(reply: CodegenReply, stableIdOf: Map<string, string>): GeneratedSuite {
+  return {
+    files: reply.files.map((f) => {
+      const byTitle = new Map<string, string>();
+      for (const c of f.cases ?? []) { // a reply that skipped the schema's default has none
+        const stableId = stableIdOf.get(c.caseId);
+        if (stableId) byTitle.set(c.test, stableId);
+      }
+      return { path: sanitizePath(f.path), content: annotateCases(f.content, byTitle) };
+    }),
+  };
+}
+
 /** Generate a runnable `@playwright/test` suite from test cases (ADR-0005). */
 export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Promise<GeneratedSuite> {
   const els: VerifiedElement[] =
@@ -80,8 +112,8 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
   const text = input.repairHint
     ? `${base}\n\nREPAIR: the previous generation failed the tests: ${input.repairHint}\nFix the locators/navigation/assertions so the tests pass.`
     : base;
-  const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(text)]);
-  return { files: suite.files.map((f) => ({ path: sanitizePath(f.path), content: f.content })) };
+  const reply = await deps.invoke(CodegenReplySchema, [new HumanMessage(text)]);
+  return suiteFromReply(reply, new Map(input.testCases.map((tc) => [tc.id, tc.stableId])));
 }
 
 /**
@@ -131,8 +163,9 @@ export async function automateCases(
   const text = repairHint
     ? `${base}\n\nREPAIR: the previous generation failed the tests: ${repairHint}\nFix the locators/navigation/assertions so the tests pass.`
     : base;
-  const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(text)]);
-  return { files: suite.files.map((f) => ({ path: sanitizePath(f.path), content: f.content })) };
+  const reply = await deps.invoke(CodegenReplySchema, [new HumanMessage(text)]);
+  // The prompt lists the cases as TC-1, TC-2, … in this order.
+  return suiteFromReply(reply, new Map(cases.map((c, i) => [`TC-${i + 1}`, c.stableId])));
 }
 
 /** Substitute `{name}` path params with their synthesised value (mirrors `api/runner.ts`'s buildUrl). */

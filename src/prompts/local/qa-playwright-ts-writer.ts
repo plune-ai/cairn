@@ -41,4 +41,4 @@ FILE STRUCTURE:
 - All STATIC cases (visibility/state checks, no actions) → ONE file static-checks.spec.ts (each case = a separate test() inside).
 - Each ACTIVE case (with actions) → a SEPARATE file, named after the case (e.g. add-user-flow.spec.ts).
 
-Return files: an array of objects { path: '<name>.spec.ts', content: '<full file code>' }.`;
+Return files: an array of objects { path: '<name>.spec.ts', content: '<full file code>', cases: [{ test: '<the exact title of a test() in this file>', caseId: '<the id of the case it covers, as listed above>' }] } — one cases entry per test().`;

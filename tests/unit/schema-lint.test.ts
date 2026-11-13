@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { lintZodSchema, assertStrictSchema } from "../../src/llm/schema-lint.js";
-import { GeneratedSuiteSchema } from "../../src/codegen/schema.js";
+import { GeneratedSuiteSchema, CodegenReplySchema } from "../../src/codegen/schema.js";
 import { PageAnalysisSchema } from "../../src/analyze/index.js";
 import { CritiqueResultSchema } from "../../src/design/critique.js";
 import { SetupPlanSchema, StructuredPreconditionSchema } from "../../src/flow/setup.js";
@@ -21,6 +21,7 @@ import { ScreenDescriptionSchema } from "../../src/documentarian/docs.js";
  */
 const STRUCTURED_SCHEMAS: Record<string, z.ZodType> = {
   GeneratedSuiteSchema,
+  CodegenReplySchema,
   PageAnalysisSchema,
   CritiqueResultSchema,
   SetupPlanSchema,

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Screencasts name the case they belong to.** Each entry of `screencasts.json` (and `ScreencastEntry`) of a generated
+  test carries `stableId`, the case's id across runs, so a consumer matches a screencast and its trace to the case by id
+  instead of by the Playwright test title, which the model picks. The model now returns, per spec file, which listed
+  case each `test()` covers (`CodegenReplySchema`); cairn writes that case's `stableId` onto the test as a Playwright
+  annotation (`{ type: "stableId" }`) and reads it back from the run. A hand-written spec, an unmapped test or a case
+  without a `stableId` gets none; `test` is unchanged.
+
 ## [0.11.0] - 2026-11-13
 
 ### Added

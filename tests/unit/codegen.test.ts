@@ -181,3 +181,87 @@ describe("automateApiCases (API-7, #144 — no LLM, request fixture)", () => {
     expect(content).toContain('.replace(/\\/+$/, "")');
   });
 });
+
+describe("the generator, not the model, writes each case's stableId onto its test", () => {
+  const annotated = (id: string): string => `{ annotation: { type: "stableId", description: ${JSON.stringify(id)} } }`;
+  const reply = (files: { path: string; content: string; cases: { test: string; caseId: string }[] }[]): StructuredInvoke =>
+    async (schema) => schema.parse({ files });
+
+  it("generateSuite: the test the model maps to a case carries that case's stableId, whatever its title", async () => {
+    const cases: TestCase[] = [
+      { ...testCases[0]!, id: "tc-1", stableId: "c-111" },
+      { ...testCases[0]!, id: "tc-2", stableId: "c-222" },
+    ];
+    const content = [
+      "import { test, expect } from '@playwright/test';",
+      "test('user can\\'t sign in blank', async ({ page }) => {});",
+      'test("shows the button", async ({ page }) => {});',
+      "test('an extra check', async ({ page }) => {});",
+    ].join("\n");
+    const suite = await generateSuite(
+      { study, pageSemantics: "x", testCases: cases },
+      {
+        invoke: reply([
+          {
+            path: "static-checks.spec.ts",
+            content,
+            cases: [
+              { test: "user can't sign in blank", caseId: "tc-2" },
+              { test: "shows the button", caseId: "tc-1" },
+              { test: "a test that is not in the file", caseId: "tc-1" },
+              { test: "an extra check", caseId: "tc-9" }, // no such case
+            ],
+          },
+        ]),
+        prompts: new PromptRegistry(),
+      },
+    );
+    const out = suite.files[0]!.content;
+    expect(out).toContain(`test('user can\\'t sign in blank', ${annotated("c-222")}, async`);
+    expect(out).toContain(`test("shows the button", ${annotated("c-111")}, async`);
+    expect(out).toContain("test('an extra check', async"); // unknown case id: left as written
+    expect(suite.files[0]).not.toHaveProperty("cases");
+  });
+
+  it("automateCases: TC-n maps to the parsed case's stableId; same title in two files keeps distinct ids", async () => {
+    const parsed = (stableId: string): ParsedTestCase => ({
+      id: "ATC-1",
+      stableId,
+      execution: "auto",
+      title: "Submit",
+      steps: ["Click Submit"],
+      expected: ["Sent"],
+      selectors: [],
+    });
+    const body = "import { test } from '@playwright/test';\ntest('submits the form', async ({ page }) => {});";
+    const suite = await automateCases(
+      [parsed("c-aaa"), parsed("c-bbb")],
+      { baseUrl: "http://x", pageSemantics: "p" },
+      {
+        invoke: reply([
+          { path: "a.spec.ts", content: body, cases: [{ test: "submits the form", caseId: "TC-1" }] },
+          { path: "b.spec.ts", content: body, cases: [{ test: "submits the form", caseId: "TC-2" }] },
+        ]),
+        prompts: new PromptRegistry(),
+      },
+    );
+    expect(suite.files[0]!.content).toContain(annotated("c-aaa"));
+    expect(suite.files[1]!.content).toContain(annotated("c-bbb"));
+  });
+
+  it("a test that already has a details object, or a case without a stableId, is left as written", async () => {
+    const content = "import { test } from '@playwright/test';\ntest('tagged', { tag: '@smoke' }, async () => {});\ntest('old', async () => {});";
+    const suite = await automateCases(
+      [
+        { id: "ATC-1", stableId: "c-1", execution: "auto", title: "a", steps: [], expected: [], selectors: [] },
+        { id: "ATC-2", stableId: "", execution: "auto", title: "b", steps: [], expected: [], selectors: [] },
+      ],
+      { baseUrl: "http://x", pageSemantics: "p" },
+      {
+        invoke: reply([{ path: "a.spec.ts", content, cases: [{ test: "tagged", caseId: "TC-1" }, { test: "old", caseId: "TC-2" }] }]),
+        prompts: new PromptRegistry(),
+      },
+    );
+    expect(suite.files[0]!.content).toBe(content);
+  });
+});
