@@ -12,6 +12,7 @@
  *   (a `WWW-Authenticate` header) is never visited and no token is sent there; the run stops with "authentication required".
  */
 import { spawnSync } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { McpListKind } from "./model.js";
 import type { DiscoverSource, ListPage } from "./discover.js";
 import { safeText } from "./model.js";
@@ -146,7 +147,7 @@ function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }
     return new McpTestError("spawn-failed", `Could not start the server: "${o.command[0]}" was not found${win}.`);
   }
   if (err.code === "EACCES" || err.code === "EPERM" || err.code === "ENOTDIR") {
-    return new McpTestError("spawn-failed", `Could not start the server: ${safeText(message, 300)}`);
+    return new McpTestError("spawn-failed", `Could not start the server: ${safeText(maskSecrets(message, o.secrets ?? []), 300)}`);
   }
   if (err.code === 401 || err.name === "UnauthorizedError") {
     const origin = metadataOrigin(auth.header);
@@ -162,7 +163,7 @@ function mapError(e: unknown, o: ConnectOptions, auth: { header: string | null }
   if (err.code === -32000 || /Connection closed/i.test(message)) {
     return new McpTestError("server-exited", "The server closed the connection before it answered initialize.");
   }
-  return new McpTestError("protocol", `The server's reply to initialize was not usable: ${safeText(message, 300)}`);
+  return new McpTestError("protocol", `The server's reply to initialize was not usable: ${safeText(maskSecrets(message, o.secrets ?? []), 300)}`);
 }
 
 /** Connects, runs `initialize`, and returns what discovery needs. Any failure leaves no server process behind. */
@@ -174,6 +175,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   // Read a little past the cap, mask, then cut: a secret that straddles the cap is masked whole, never left as a prefix.
   const rawCap = STDERR_CAP + secrets.reduce((n, s) => Math.max(n, s.length), 0);
   let rawStderr = "";
+  const decoder = new StringDecoder("utf8");
   const stderrText = (): string => {
     const masked = maskSecrets(rawStderr, secrets);
     return (rawStderr.length >= rawCap ? maskCutTail(masked, secrets) : masked).slice(0, STDERR_CAP);
@@ -184,7 +186,8 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     const [command, ...args] = o.command as string[];
     transport = new sdk.StdioClientTransport({ command, args, env: o.env, ...(o.cwd ? { cwd: o.cwd } : {}), stderr: "pipe" });
     transport.stderr?.on("data", (chunk: Buffer) => {
-      if (rawStderr.length < rawCap) rawStderr += chunk.toString("utf8").slice(0, rawCap - rawStderr.length);
+      const text = decoder.write(chunk);
+      if (rawStderr.length < rawCap) rawStderr += text.slice(0, rawCap - rawStderr.length);
     });
   } else {
     const url = new URL(o.url as string);

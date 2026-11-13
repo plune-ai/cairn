@@ -46,7 +46,8 @@ export type McpListKind = "tools" | "resources" | "resourceTemplates" | "prompts
 
 /** A list that stopped before the server's last page. */
 export interface McpTruncation {
-  list: McpListKind;
+  /** A list, or `capabilities` when its nesting was cut. */
+  list: McpListKind | "capabilities";
   reason: string;
   /** How many entries were kept. */
   kept: number;
@@ -108,9 +109,14 @@ export function canonicalModel(m: McpModel): McpModel {
   };
 }
 
-/** The exact text of `mcp-model.json`. */
+/** The text of `mcp-model.json` for a model whose lists are already in order (keys are sorted here). */
+export function serializeCanonical(m: McpModel): string {
+  return `${JSON.stringify(sortKeys(m), null, 2)}\n`;
+}
+
+/** The exact text of `mcp-model.json`: lists in order, keys sorted. */
 export function serializeModel(m: McpModel): string {
-  return `${JSON.stringify(sortKeys(canonicalModel(m)), null, 2)}\n`;
+  return serializeCanonical(canonicalModel(m));
 }
 
 /** Text from a server made printable: control characters (escape sequences included) become a space, length is capped. */
@@ -141,7 +147,8 @@ export function renderModelSummary(m: McpModel): string[] {
     `  Tools that declared readOnlyHint: ${readOnly.length} (${names(readOnly)})`,
   ];
   for (const t of m.truncated) {
-    lines.push(`  ⚠ The ${t.list} list is INCOMPLETE: ${safeText(t.reason, 300)} (${t.kept} kept). The model has complete: false.`);
+    if (t.list === "capabilities") lines.push(`  ⚠ The capabilities were cut: ${safeText(t.reason, 300)}. The model has complete: false.`);
+    else lines.push(`  ⚠ The ${t.list} list is INCOMPLETE: ${safeText(t.reason, 300)} (${t.kept} kept). The model has complete: false.`);
   }
   for (const n of m.notes) lines.push(`  Note: ${n}`);
   return lines;

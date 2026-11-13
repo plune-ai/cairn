@@ -8,12 +8,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import { maskDeep, parsePositiveInt, parsePositiveNumber, parseBaseUrl, tooShortSecrets } from "../api/guard.js";
-import { buildSecrets, maskSecrets } from "./secrets.js";
+import { parsePositiveInt, parsePositiveNumber, parseBaseUrl, tooShortSecrets } from "../api/guard.js";
+import { buildSecrets, maskSecrets, maskStrings } from "./secrets.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
-import { renderModelSummary, safeText, serializeModel, type McpModel } from "./model.js";
+import { canonicalModel, renderModelSummary, safeText, serializeCanonical, type McpModel } from "./model.js";
 
 export const NOTHING_TO_TEST_EXIT_CODE = 5;
 export const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -124,9 +124,10 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const timeoutMs = Math.round(timeoutSeconds * 1000);
   let conn: McpConnection | undefined;
   let pid: number | null = null;
+  /** Writes files as given: whatever must be masked is masked before it gets here. */
   const writeFiles = async (files: Array<[string, string]>): Promise<void> => {
     await mkdir(outDir, { recursive: true });
-    for (const [name, text] of files) await writeFile(join(outDir, name), mask(text), "utf8");
+    for (const [name, text] of files) await writeFile(join(outDir, name), text, "utf8");
   };
 
   try {
@@ -148,7 +149,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       if (e.stderr) {
         err("  The server's stderr (last lines):\n");
         for (const line of stderrTail(e.stderr)) err(`${line}\n`);
-        await writeFiles([[STDERR_FILE, e.stderr]]);
+        await writeFiles([[STDERR_FILE, mask(e.stderr)]]);
       }
       return { exitCode: 1, pid };
     }
@@ -158,11 +159,19 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       headerNames: Object.keys(headers),
       envNames: Object.keys(env),
     });
-    // Masked first, then rendered: safeText cuts long values, and a cut must not leave the start of a secret.
-    const model = maskDeep(found, secrets);
-    const stderrLog = conn.stderrText();
+    // Lists are put in order by their own names, THEN string values are masked (so the order does not depend on --env),
+    // then the summary is rendered: safeText cuts long values, and a cut must not leave the start of a secret.
+    const model = maskStrings(canonicalModel(found), secrets);
+    const modelText = serializeCanonical(model);
+    try {
+      JSON.parse(modelText);
+    } catch {
+      err("✗ The model could not be written as valid JSON; nothing was saved.\n");
+      return { exitCode: 1, pid };
+    }
+    const stderrLog = mask(conn.stderrText());
     await writeFiles([
-      [MODEL_FILE, serializeModel(model)],
+      [MODEL_FILE, modelText],
       ...(stderrLog ? ([[STDERR_FILE, stderrLog]] as Array<[string, string]>) : []),
     ]);
     for (const line of renderModelSummary(model)) out(`${line}\n`);

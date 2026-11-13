@@ -7,6 +7,7 @@ import { runModality, getModality, MODALITIES } from "../../src/core/registry.js
 import { runMcpTest, type McpTestOptions } from "../../src/mcp-test/run.js";
 import { discoverModel, type DiscoverSource } from "../../src/mcp-test/discover.js";
 import { renderModelSummary, serializeModel, type McpModel } from "../../src/mcp-test/model.js";
+import { maskStrings } from "../../src/mcp-test/secrets.js";
 
 /**
  * MCP-E1: `cairn mcp-test` reads a foreign MCP server and writes its model. The server is a fixture on the same SDK
@@ -236,18 +237,18 @@ describe("CLI · mcp-test · secrets (AC-5, AC-6)", () => {
 
   it("AC-5: an --env secret the server writes to stderr is masked in the console and in the saved log, also when it fails", async () => {
     const o = dir();
-    const vars = { API_KEY: ENVSECRET, FIXTURE_STDERR_TEXT: `starting with key ${ENVSECRET}`, FIXTURE_MODE: "exit-early" };
+    const vars = { API_KEY: ENVSECRET, FIXTURE_STDERR_ENV: "API_KEY", FIXTURE_MODE: "exit-early" };
     const r = await runMcpTest(stdioOpts(o, vars), io);
     expect(r.exitCode).toBe(1);
     const all = everything(o);
     expect(all).not.toContain(ENVSECRET);
-    expect(readFileSync(join(o, "server-stderr.log"), "utf8")).toContain("***");
-    expect(err.join("")).toContain("***");
+    expect(readFileSync(join(o, "server-stderr.log"), "utf8")).toContain("starting with key ***");
+    expect(err.join("")).toContain("starting with key ***");
 
     const o2 = dir();
-    await runMcpTest(stdioOpts(o2, { API_KEY: ENVSECRET, FIXTURE_STDERR_TEXT: `ok ${ENVSECRET}` }), io);
+    await runMcpTest(stdioOpts(o2, { API_KEY: ENVSECRET, FIXTURE_STDERR_ENV: "API_KEY" }), io);
     expect(everything(o2)).not.toContain(ENVSECRET);
-    expect(readFileSync(join(o2, "server-stderr.log"), "utf8")).toContain("***");
+    expect(readFileSync(join(o2, "server-stderr.log"), "utf8")).toContain("starting with key ***");
     expect(readModel(o2).connection.envNames).toContain("API_KEY");
   });
 
@@ -509,7 +510,7 @@ describe("CLI · mcp-test · review fixes", () => {
     }
     const o2 = dir();
     const dbUrl = "postgres://user:pw0rd77@db.local/app";
-    await runMcpTest(stdioOpts(o2, { DB_URL: dbUrl, FIXTURE_ECHO_ENV: "DB_URL", FIXTURE_STDERR_TEXT: `connecting to ${dbUrl}` }), io);
+    await runMcpTest(stdioOpts(o2, { DB_URL: dbUrl, FIXTURE_ECHO_ENV: "DB_URL", FIXTURE_STDERR_ENV: "DB_URL" }), io);
     const all = everything(o2);
     expect(all).not.toContain("pw0rd77");
     expect(all).not.toContain(dbUrl);
@@ -519,21 +520,27 @@ describe("CLI · mcp-test · review fixes", () => {
   it("masking comes before cutting: no 4-character prefix of a token survives in a 190-character stderr line, a long server name, or at the 64 KB stderr limit", async () => {
     const TOKEN = "tkn-QzXwVuTs-90817";
     const o = dir();
-    await runMcpTest(stdioOpts(o, { API_TOKEN: TOKEN, FIXTURE_MODE: "exit-early", FIXTURE_STDERR_TEXT: `${"y".repeat(190)}${TOKEN}` }), io);
+    await runMcpTest(stdioOpts(o, { API_TOKEN: TOKEN, FIXTURE_MODE: "exit-early", FIXTURE_STDERR_PAD: "170", FIXTURE_STDERR_ENV: "API_TOKEN" }), io);
     expectNoPrefix(everything(o), TOKEN);
 
     const o2 = dir();
-    await runMcpTest(stdioOpts(o2, { API_TOKEN: TOKEN, FIXTURE_SERVER_NAME: `${"n".repeat(74)}${TOKEN}` }), io);
+    await runMcpTest(stdioOpts(o2, { API_TOKEN: TOKEN, FIXTURE_NAME_ENV: "API_TOKEN", FIXTURE_NAME_PAD: "74" }), io);
     expectNoPrefix(everything(o2), TOKEN);
 
+    // The token is written three times and the last one starts 6 characters before the end of what is read (the cap plus
+    // the longest secret), so only its first 6 characters are read. The two whole ones shrink the masked text, which
+    // brings that cut-off start inside the 64 KB that is kept: only maskCutTail removes it.
     const o3 = dir();
-    await runMcpTest(stdioOpts(o3, { API_TOKEN: TOKEN, FIXTURE_STDERR_PAD: String(64 * 1024 - 6), FIXTURE_STDERR_TEXT: TOKEN }), io);
+    const stderrEnv = "API_TOKEN,API_TOKEN,API_TOKEN";
+    const rawCap = 64 * 1024 + Math.max(TOKEN.length, stderrEnv.length);
+    const pad = rawCap - 6 - ("starting with key ".length + 2 * (TOKEN.length + 1));
+    await runMcpTest(stdioOpts(o3, { API_TOKEN: TOKEN, FIXTURE_STDERR_PAD: String(pad), FIXTURE_STDERR_ENV: stderrEnv }), io);
     expectNoPrefix(everything(o3), TOKEN);
   });
 
   it("one list, longest first: an env value that is the start of another does not leave the rest of the longer one", async () => {
     const o = dir();
-    await runMcpTest(stdioOpts(o, { A: "abcd", B: "abcdefgh", FIXTURE_STDERR_TEXT: "got abcdefgh and abcd" }), io);
+    await runMcpTest(stdioOpts(o, { API_KEY: "abcd", B: "abcdefgh", FIXTURE_STDERR_ENV: "B,API_KEY" }), io);
     const all = everything(o);
     expect(all).not.toContain("efgh");
     expect(all).not.toContain("abcd");
@@ -567,8 +574,10 @@ describe("CLI · mcp-test · review fixes", () => {
   it("an interrupt while the lists are being read exits non-zero and leaves the model with complete: false", async () => {
     const o = dir();
     const mark = join(o, "listing.mark");
+    const pidFile = join(o, "server.pid");
+    pidFiles.push(pidFile);
     const ac = new AbortController();
-    const run = runMcpTest(stdioOpts(o, { FIXTURE_LIST_DELAY_MS: "700", FIXTURE_LIST_MARK: mark, FIXTURE_PAGE_SIZE: "1" }, { signal: ac.signal }), io);
+    const run = runMcpTest(stdioOpts(o, { FIXTURE_LIST_DELAY_MS: "700", FIXTURE_LIST_MARK: mark, FIXTURE_PAGE_SIZE: "1", FIXTURE_PID_FILE: pidFile }, { signal: ac.signal }), io);
     for (let i = 0; i < 100 && !existsSync(mark); i++) await new Promise((r) => setTimeout(r, 100));
     expect(existsSync(mark)).toBe(true);
     ac.abort();
@@ -578,6 +587,7 @@ describe("CLI · mcp-test · review fixes", () => {
     const m = readModel(o);
     expect(m.complete).toBe(false);
     expect(m.tools.length).toBeLessThan(7);
+    await expectGone(pidFile);
   }, 30000);
 
   it("a schema nested 10 000 levels deep is cut with a mark and a truncated entry, not a stack overflow", async () => {
@@ -604,5 +614,87 @@ describe("CLI · mcp-test · review fixes", () => {
     expect(serializeModel(m([t1, t2]))).toBe(serializeModel(m([t2, t1])));
     expect(() => serializeModel(m([{ inputSchema: {} }, t1]))).not.toThrow();
     expect(serializeModel(m([{ inputSchema: {} }, t1]))).toBe(serializeModel(m([t1, { inputSchema: {} }])));
+  });
+});
+
+describe("CLI · mcp-test · second review fixes", () => {
+  const prefixes = (secret: string): string[] => Array.from({ length: secret.length - 3 }, (_, i) => secret.slice(0, i + 4));
+
+  it("the model file stays valid JSON and keeps its types when --env holds true, a number or a common word", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { DEBUG: "true", LIMIT: "1000", MODE: "normal", FIXTURE_EXTRA: "1" }), io);
+    const m = JSON.parse(readFileSync(join(o, "mcp-model.json"), "utf8")) as McpModel; // must parse at all
+    const byName = Object.fromEntries(m.tools.map((t) => [t.name, t]));
+    expect(byName["search_notes"]?.annotations?.["readOnlyHint"]).toBe(true);
+    const props = (byName["normal_x"]?.inputSchema["properties"] ?? {}) as Record<string, { maxLength?: unknown }>;
+    expect(Object.keys(props)).toEqual(["normal"]);
+    expect(props["normal"]?.maxLength).toBe(1000);
+    expect(m.tools.map((t) => t.name)).toEqual([...TOOL_NAMES, "normal_x"].sort());
+  });
+
+  it("the model text is not masked a second time: a 4-character secret that is also a schema key leaves the key alone", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { API_KEY: "type" }), io);
+    const m = JSON.parse(readFileSync(join(o, "mcp-model.json"), "utf8")) as McpModel;
+    expect(m.tools[0]?.inputSchema).toHaveProperty("type", "object");
+  });
+
+  it("lists are ordered by their own names before masking: the order does not change with --env", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { OTHER_NAME: "delete_note" }), io); // a long value that is also a tool name
+    expect(readModel(o).tools.map((t) => t.name)).toEqual(["create_note", "***", "move_note", "ping", "search_notes", "set_target", "tag_note"]);
+  });
+
+  it("a header that is a common value (Content-Type: application/json) does not change the mime types in the model", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ extra: true });
+    try {
+      const o = dir();
+      await runMcpTest({ url: fx.url, out: o, timeout: 20, header: ["Content-Type: application/json"] }, io);
+      expect(readModel(o).resources.find((r) => r.uri === "note://data")?.mimeType).toBe("application/json");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("a value of 8 or more characters under a neutral name is masked where the server repeats it", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { WORKSPACE: "zebra-longvalue", FIXTURE_ECHO_ENV: "WORKSPACE" }), io);
+    const file = readFileSync(join(o, "mcp-model.json"), "utf8");
+    expect(file).toContain("Called with: ***");
+    expect(file).not.toContain("zebra-longvalue");
+  });
+
+  it("the error a server sends is masked before it is cut to 300 characters", async () => {
+    const TOKEN = "tkn-ErrAtCut-5566";
+    const r = await runMcpTest(stdioOpts(dir(), { API_TOKEN: TOKEN, FIXTURE_MODE: "init-error", FIXTURE_ERROR_ENV: "API_TOKEN", FIXTURE_ERROR_PAD: "267" }), io);
+    expect(r.exitCode).toBe(1);
+    const text = err.join("");
+    expect(text).toContain("eeee"); // the long message did arrive
+    for (const p of prefixes(TOKEN)) expect(text, `prefix "${p}"`).not.toContain(p);
+  });
+
+  it("stderr lines that look like workflow commands are printed with a visible prefix, never at the start of a line", async () => {
+    const r = await runMcpTest(stdioOpts(dir(), { FIXTURE_MODE: "exit-early", FIXTURE_STDERR_WORKFLOW: "1" }), io);
+    expect(r.exitCode).toBe(1);
+    const text = err.join("");
+    expect(text).toContain("::error::x");
+    expect(text).toContain("##[group]y");
+    for (const line of text.split("\n")) expect(line).not.toMatch(/^\s*(::|##\[)/);
+  });
+
+  it("capabilities nested 5 000 levels deep are cut like a schema, and masking a value that deep does not overflow the stack", async () => {
+    let deep: Record<string, unknown> = { x: "leaf" };
+    for (let i = 0; i < 5_000; i++) deep = { n: deep };
+    const src: DiscoverSource = {
+      serverInfo: { name: "s", version: "1" },
+      protocolVersion: "p",
+      capabilities: { tools: {}, experimental: deep },
+      listPage: async () => ({ items: [] }),
+    };
+    const m = await discoverModel(src, { maxPages: 2, maxEntries: 10 }, { transport: "stdio", headerNames: [], envNames: [] });
+    expect(m.complete).toBe(false);
+    expect(m.truncated.some((t) => (t.list as string) === "capabilities" && /nesting/.test(t.reason))).toBe(true);
+    expect(() => serializeModel(maskStrings(m, ["leaf-secret"]))).not.toThrow();
+    expect(() => maskStrings(deep, ["leaf"])).not.toThrow();
   });
 });

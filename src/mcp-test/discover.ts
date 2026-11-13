@@ -154,6 +154,9 @@ export async function discoverModel(
       if (hit.cut) (deep[kind] ??= []).push(String(e.name ?? ""));
       return e;
     });
+  const capHit = { cut: false };
+  const capabilities = capDepth(src.capabilities, 0, capHit) as Record<string, unknown>;
+  if (capHit.cut) truncated.push({ list: "capabilities", reason: `nesting deeper than ${MAX_NESTING} levels was cut`, kept: 0 });
   const tools = convert("tools", await read("tools"), toTool);
   const resources = (await read("resources")).map(toResource);
   const resourceTemplates = (await read("resourceTemplates")).map(toTemplate);
@@ -167,7 +170,7 @@ export async function discoverModel(
     schemaVersion: 1,
     serverInfo: src.serverInfo,
     protocolVersion: src.protocolVersion,
-    capabilities: src.capabilities,
+    capabilities,
     complete: truncated.length === 0,
     truncated,
     notes,

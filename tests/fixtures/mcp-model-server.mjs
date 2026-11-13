@@ -10,6 +10,11 @@
 //   FIXTURE_PID_FILE      the process id is written here (so a test can look for a leftover process)
 //   FIXTURE_ENV_FILE      the names of the environment variables the process received are written here, as JSON
 //   FIXTURE_STDERR_TEXT   written to stderr at start
+//   FIXTURE_STDERR_ENV    names (comma separated) of environment variables whose values are written to stderr after the pad, on one line
+//   FIXTURE_STDERR_WORKFLOW=1  writes the lines `::error::x` and `##[group]y` to stderr
+//   FIXTURE_NAME_ENV / FIXTURE_NAME_PAD  the serverInfo name is that many "n" characters followed by the value of that variable
+//   FIXTURE_ERROR_ENV / FIXTURE_ERROR_PAD  (init-error) the error message is that many "e" characters followed by the value of that variable
+//   FIXTURE_EXTRA=1       adds a tool `normal_x` and a resource with an application/json mime type
 //   FIXTURE_STDERR_PAD    that many "x" characters are written to stderr first, without a newline
 //   FIXTURE_SERVER_NAME   the serverInfo name (default fixture-server)
 //   FIXTURE_ECHO_ENV      the name of an environment variable whose value is put into the description of `ping`
@@ -91,6 +96,13 @@ const TOOLS = [
   { name: "ping", description: "Answers pong.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
 ];
 
+// Added with the `extra` option: values a careless mask would damage (a name and a key equal to a common word, a number,
+// a mime type).
+const EXTRA_TOOL = {
+  name: "normal_x",
+  description: "A tool whose property is called like a common word.",
+  inputSchema: { type: "object", properties: { normal: { type: "string", maxLength: 1000 } } },
+};
 const RESOURCES = [
   { uri: "note://inbox", name: "inbox", mimeType: "text/plain" },
   { uri: "note://archive", name: "archive", description: "Old notes." },
@@ -129,7 +141,8 @@ export function buildFixtureServer(opts = {}) {
     return { items, next };
   };
   const withEcho = (list) => list.map((t) => (t.name === "ping" && opts.echo ? { ...t, description: `Answers pong. Called with: ${opts.echo}` } : t));
-  const toolsList = mode === "empty-tools" ? [] : mode === "endless" ? Array.from({ length: 500 }, (_, i) => ({ name: `tool_${String(i).padStart(3, "0")}`, inputSchema: { type: "object" } })) : withEcho(TOOLS);
+  const resourcesList = opts.extra ? [...RESOURCES, { uri: "note://data", name: "data", mimeType: "application/json" }] : RESOURCES;
+  const toolsList = mode === "empty-tools" ? [] : mode === "endless" ? Array.from({ length: 500 }, (_, i) => ({ name: `tool_${String(i).padStart(3, "0")}`, inputSchema: { type: "object" } })) : withEcho(opts.extra ? [...TOOLS, EXTRA_TOOL] : TOOLS);
   if (mode !== "no-tools") {
     let marked = false;
     server.setRequestHandler(ListToolsRequestSchema, async (req) => {
@@ -142,7 +155,7 @@ export function buildFixtureServer(opts = {}) {
       return { tools: items, ...(next ? { nextCursor: next } : {}) };
     });
     server.setRequestHandler(ListResourcesRequestSchema, async (req) => {
-      const { items, next } = page(arrange(RESOURCES), req.params?.cursor);
+      const { items, next } = page(arrange(resourcesList), req.params?.cursor);
       return { resources: items, ...(next ? { nextCursor: next } : {}) };
     });
     server.setRequestHandler(ListResourceTemplatesRequestSchema, async (req) => {
@@ -215,6 +228,8 @@ async function main() {
   if (env.FIXTURE_ENV_FILE) writeFileSync(env.FIXTURE_ENV_FILE, JSON.stringify(Object.keys(env).sort()));
   if (env.FIXTURE_STDERR_PAD) process.stderr.write("x".repeat(Number(env.FIXTURE_STDERR_PAD)));
   if (env.FIXTURE_STDERR_TEXT) process.stderr.write(`${env.FIXTURE_STDERR_TEXT}\n`);
+  if (env.FIXTURE_STDERR_ENV) process.stderr.write(`starting with key ${env.FIXTURE_STDERR_ENV.split(",").map((n) => env[n]).join(" ")}\n`);
+  if (env.FIXTURE_STDERR_WORKFLOW) process.stderr.write("::error::x\n##[group]y\n");
   const mode = env.FIXTURE_MODE ?? "normal";
   if (mode === "exit-early") process.exit(1);
   if (mode === "hang") {
@@ -226,7 +241,8 @@ async function main() {
     createInterface({ input: process.stdin }).on("line", (line) => {
       const msg = JSON.parse(line);
       if (msg.id !== undefined) {
-        const error = { code: -32603, message: "\u001b[2J\n::error::x" };
+        const message = env.FIXTURE_ERROR_ENV ? "e".repeat(Number(env.FIXTURE_ERROR_PAD ?? 0)) + env[env.FIXTURE_ERROR_ENV] : "\u001b[2J\n::error::x";
+        const error = { code: -32603, message };
         process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: msg.id, error })}\n`);
       }
     });
@@ -236,7 +252,8 @@ async function main() {
     pageSize: env.FIXTURE_PAGE_SIZE,
     mode,
     order: env.FIXTURE_ORDER,
-    serverName: env.FIXTURE_SERVER_NAME,
+    serverName: env.FIXTURE_NAME_ENV ? "n".repeat(Number(env.FIXTURE_NAME_PAD ?? 0)) + env[env.FIXTURE_NAME_ENV] : env.FIXTURE_SERVER_NAME,
+    extra: env.FIXTURE_EXTRA === "1",
     echo: env.FIXTURE_ECHO_ENV ? env[env.FIXTURE_ECHO_ENV] : undefined,
     listDelayMs: env.FIXTURE_LIST_DELAY_MS,
     listMark: env.FIXTURE_LIST_MARK,
