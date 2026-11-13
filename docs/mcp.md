@@ -304,7 +304,10 @@ error with code -32602 or a result with `isError: true`. Nothing executes the ca
 ### Adversarial cases (`--adversarial`)
 
 `--adversarial [styles]` adds cases that put awkward values into tool arguments. A bare flag means `normal,curious,psycho,
-hacker`; an unknown name is named on stderr and ignored (it never widens the choice). Like the other cases they are
+hacker`; an unknown name, an empty value or a name in capitals is named on stderr and ignored (it never widens the choice; names are
+lower-case). If the schema check of a tool fails while its adversarial values are checked (it ran out of time), only that
+tool's adversarial cases are skipped, counted under `skipped`; its ordinary cases stay. The two limits take plain decimal
+whole numbers. Like the other cases they are
 only written to `mcp-cases.json` (key `adversarial`); this command sends nothing, and the summary says so. The call guard
 treats `psycho` and `hacker` as mutating styles, so each case records what the guard says now (`guard`): without
 `--allow-mutations` they are "not sent: mutations disabled".
@@ -318,7 +321,9 @@ treats `psycho` and `hacker` as mutating styles, so each case records what the g
 - `hacker`: four harmless strings in the first string parameter: a piece of SQL (WSTG-INPV-05), a script tag
   (WSTG-INPV-01), a shell command substitution naming a command that does not exist (WSTG-INPV-12), and a path that
   goes up to a name that does not exist (WSTG-ATHZ-01). The ids were read from the guide's own pages (version 4.2).
-  A tool with no string parameter gets none of these.
+  A tool with no string parameter gets none of these. The SQL-shaped string is harmless as a string, but a careless server
+  could paste it into a statement that changes data and make its condition always true; that is why `hacker` is a
+  mutating style, sent only through the guard with `--allow-mutations`, the tool named, and on a test account.
 
 The first parameter of a kind is the first by name; a parameter that only has `oneOf`/`anyOf` takes the type of its first
 branch. Every case is checked by the same worker as the others, and says whether its value passes the tool's schema
@@ -329,9 +334,10 @@ payload was handled safely is not decided by a rule: those cases say `humanOracl
 
 Limits: the long string is 100000 characters (`--adversarial-max-string`, at most 200000) and the nesting is 100
 (`--adversarial-max-depth`, at most 100); both are written in the file and in the summary. At most 16 cases per tool and
-200 per run; the rest are counted as cut. With `--expect-auth`, an HTTP run that carries credentials also records, once and
-for the first tool in `--allow-tools`, the call without credentials (`noCredentials`; no header is in it); a pass would be a
-finding, and a failure only with `--expect-auth`. It is a description: this command does not send it.
+200 per run; the rest are counted as cut. When `hacker` is on and the run reaches an HTTP server with headers, `noCredentials` records, once, the call
+without credentials for the first tool in `--allow-tools` that has a valid case (no header is in it; it is left out if
+masking would change its arguments). `--expect-auth` only sets `expectAuth`: a pass would then be a failure instead of a
+finding. It is a description: this command does not send it.
 
 Not done here: sending the cases and judging the answers (a runner has to exist first), and the advice section. The
 function that finds signs of a stack, a file system path or SQL in an error text (`findAdvice`) exists and only advises;
