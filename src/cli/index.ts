@@ -193,6 +193,13 @@ export function buildProgram(): Command {
     .option("--out <dir>", "where to write mcp-model.json (default runs/mcp-<id>/)")
     .option("--max-pages <n>", "most pages to read from one list (default 20); a list cut short is marked complete: false")
     .option("--max-entries <n>", "most entries to keep from one list (default 1000); a list cut short is marked complete: false")
+    .option("--allow-tools <names>", "tool calls: exact tool names that may be called, comma separated (no patterns, no 'all'); by default no tool is called")
+    .option("--allow-read-only-hints", "tool calls: also allow tools whose server claims readOnlyHint (a claim of the server, not a check)")
+    .option("--allow-mutations", "tool calls: also allow tools that are not proven read-only, but only those named in --allow-tools; may change data, use a test account")
+    .option("--max-calls <n>", "tool calls: most calls sent, retries included (default 100); exit code 4 when it runs out")
+    .option("--rps <n>", "tool calls: calls per second (default 2)")
+    .option("--call-timeout <seconds>", "tool calls: how long to wait for one call (default 30)")
+    .option("--time-budget <seconds>", "tool calls: time for the whole run of calls; exit code 4 when it runs out")
     .action(async (command: string[], opts: Record<string, unknown>) => {
       await runModality("mcp-test", { ...opts, command });
     });

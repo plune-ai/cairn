@@ -13,12 +13,24 @@ import { buildSecrets, maskSecrets, maskStrings } from "./secrets.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
-import { canonicalModel, renderModelSummary, safeText, serializeCanonical, type McpModel } from "./model.js";
+import { canonicalModel, renderModelSummary, safeText, serializeCanonical, sortKeys, type McpModel } from "./model.js";
+import {
+  DEFAULT_CALL_RPS,
+  DEFAULT_MAX_CALLS,
+  McpCallGuard,
+  assessTools,
+  parseAllowTools,
+  renderGuardReport,
+  renderMismatches,
+  renderProposal,
+  unknownToolNames,
+} from "./guard.js";
 
 export const NOTHING_TO_TEST_EXIT_CODE = 5;
 export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const MODEL_FILE = "mcp-model.json";
 export const STDERR_FILE = "server-stderr.log";
+export const GUARD_FILE = "mcp-guard.json";
 
 export interface McpTestOptions {
   /** stdio: the server command and its arguments (what follows `--`). */
@@ -35,6 +47,16 @@ export interface McpTestOptions {
   out?: string;
   maxPages?: string | number;
   maxEntries?: string | number;
+  /** Call guard (MCP-E4): exact tool names, comma separated. */
+  allowTools?: string;
+  allowReadOnlyHints?: boolean;
+  allowMutations?: boolean;
+  maxCalls?: string | number;
+  rps?: string | number;
+  /** Seconds for one tool call. */
+  callTimeout?: string | number;
+  /** Seconds for the whole run of calls. */
+  timeBudget?: string | number;
   signal?: AbortSignal;
   importer?: (specifier: string) => Promise<unknown>;
 }
@@ -90,6 +112,13 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const timeoutSeconds = opts.timeout === undefined ? DEFAULT_TIMEOUT_SECONDS : parsePositiveNumber("--timeout", opts.timeout);
   const maxPages = opts.maxPages === undefined ? DEFAULT_MAX_LIST_PAGES : parsePositiveInt("--max-pages", opts.maxPages);
   const maxEntries = opts.maxEntries === undefined ? DEFAULT_MAX_LIST_ENTRIES : parsePositiveInt("--max-entries", opts.maxEntries);
+  // The call guard's flags are checked before anything connects: a bad one is a usage error, never a permission.
+  const allowTools = parseAllowTools(opts.allowTools);
+  const maxCalls = opts.maxCalls === undefined ? DEFAULT_MAX_CALLS : parsePositiveInt("--max-calls", opts.maxCalls);
+  const callRps = opts.rps === undefined ? DEFAULT_CALL_RPS : parsePositiveNumber("--rps", opts.rps, 0.01);
+  if (opts.callTimeout !== undefined) parsePositiveNumber("--call-timeout", opts.callTimeout); // used by the runner that sends calls
+  const timeBudgetSeconds = opts.timeBudget === undefined ? undefined : parsePositiveNumber("--time-budget", opts.timeBudget);
+  const callsRequested = allowTools.length > 0 || opts.allowReadOnlyHints === true || opts.allowMutations === true;
   const headers = parseHeaders(opts.header);
   const env = parseEnv(opts.env);
   if (command && Object.keys(headers).length) throw new Error("--header applies to --url only.");
@@ -184,7 +213,34 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       err(`✗ Nothing to test: the server has no tools (${basename(outDir)}). This is not a pass.\n`);
       return { exitCode: NOTHING_TO_TEST_EXIT_CODE, outDir, model, pid };
     }
-    return { exitCode: 0, outDir, model, pid };
+    // The call guard works on the tools as the server listed them (not the masked copy) and on the names as typed.
+    const tools = canonicalModel(found).tools;
+    const missing = unknownToolNames(allowTools, tools);
+    if (missing.length) {
+      err(`✗ --allow-tools names tools the server does not have: ${missing.map((n) => `"${safeText(n, 60)}"`).join(", ")}. Names are compared exactly (case and spaces included).\n`);
+      return { exitCode: 1, outDir, model, pid };
+    }
+    const guard = new McpCallGuard({
+      tools,
+      allowTools,
+      allowReadOnlyHints: opts.allowReadOnlyHints === true,
+      allowMutations: opts.allowMutations === true,
+      maxCalls,
+      rps: callRps,
+      ...(timeBudgetSeconds !== undefined ? { timeBudgetMs: Math.round(timeBudgetSeconds * 1000) } : {}),
+    });
+    for (const line of renderProposal(assessTools(tools))) out(`${line}\n`);
+    // The report and the hint/name disagreements are written on every read, whether or not calls are asked for.
+    const report = maskStrings(guard.report(), secrets);
+    await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(report), null, 2)}\n`]]);
+    if (!callsRequested) {
+      for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
+      return { exitCode: 0, outDir, model, pid };
+    }
+    for (const line of renderGuardReport(report)) out(`${line}\n`);
+    // This command reads the server; the runner that sends calls is a later step, so nothing is sent and nothing is tested.
+    err("✗ No tool call was sent: this command does not run calls yet, so nothing was tested. This is not a pass.\n");
+    return { exitCode: guard.exitCode(), outDir, model, pid };
   } finally {
     // The server never outlives the run, on success, error, timeout or interrupt.
     if (conn) {

@@ -122,7 +122,7 @@ export function serializeModel(m: McpModel): string {
 /** Text from a server made printable: control characters (escape sequences included) become a space, length is capped. */
 export function safeText(text: unknown, max = 80): string {
   const s = String(text ?? "")
-    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
