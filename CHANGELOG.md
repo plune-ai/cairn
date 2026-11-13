@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn mcp-test --adversarial` (MCP-E3).** Adds `psycho` and `hacker` cases for tool arguments (extreme numbers, long,
+  empty, zero-byte and unpaired-surrogate strings, a deep array, a forbidden extra property, a `__proto__` key, and four
+  harmless injection strings with their WSTG ids) and tags the `normal` and `curious` ones. Cases are written to
+  `mcp-cases.json` with the schema verdict, a robustness expectation and the call guard's current verdict; nothing is
+  sent. Limits on string length and depth are written in the file. `findAdvice` (stack, path, SQL signs in an error
+  text) only advises. See `docs/mcp.md`.
+
 - **`cairn mcp-test`: test cases from `inputSchema` (MCP-E2).** Besides `mcp-model.json` and `mcp-guard.json`, the command
   writes `mcp-cases.json`: for every tool, a valid case, one case per missing required argument and per wrong type,
   boundary cases on and beyond each limit, one case per `oneOf`/`anyOf` branch and per `enum` value, and one with every
