@@ -38,7 +38,9 @@ export type { Environment, AppliedEnvironment } from "./environment/index.js";
 
 // Test mailbox + TOTP for browser scenarios (ExploreInput.mailbox; off unless a session is passed).
 export { MailboxSession, MailsacProvider, mailsacFromEnv } from "./mailbox/index.js";
-export type { MailboxStep } from "./mailbox/index.js";
+export type { MailboxStep, MailboxProvider } from "./mailbox/index.js";
+export { mailboxNeed } from "./mailbox/rule.js";
+export type { MailboxNeed, MailboxSignal } from "./mailbox/rule.js";
 
 // Saved API flows as Playwright fixtures (#230): ExploreInput.apiFlows (design) and runAutomate's apiFlows.
 export { loadApiFlows, parseApiFlows, renderFlowFixture, flowChangesData, FLOW_FIXTURE_FILE } from "./api/flows.js";

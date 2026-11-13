@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The agent takes the mailbox and TOTP steps itself, `cairn doctor` checks Mailsac (#257, ADR-0023 §4).** With a
+  `MailboxSession` passed (`ExploreInput.mailbox`, `runAutomate`'s `mailbox`), a fixed rule, not a model's verdict,
+  decides when the steps are needed: a field asking for a one-time code (promo, postal and similar codes are not one),
+  page text saying an e-mail was sent ("check your email", "перевірте пошту"), or a case step naming the letter or a
+  code from it. A link from the e-mail is opened, a code from it or a TOTP code (secret read from the variable named by
+  `totpSecretEnv`, default `TOTP_SECRET`) is filled. The generated `@playwright/test` specs then import a written
+  `mailbox.fixture.ts` whose `mail` fixture reads `MAILSAC_API_KEY` and the TOTP secret from the environment by name when
+  a test runs; a generated file that holds a secret value is never written. Without a session nothing changes but one
+  progress line that names the page as needing e-mail/OTP. `cairn doctor` adds a test-mailbox section: whether
+  `MAILSAC_API_KEY` is set (never its value), the domain (the public `mailsac.com` is flagged) and the reply of one read
+  on it. `mailboxNeed` is exported. See `docs/mailbox.md`.
+
 - **`cairn check-docs`: do the docs still match the UI? (#231)** `cairn check-docs --docs <dir|file> --url <app>
   [--session <s>] [--spec <file>]` walks the app as `collect-docs` does and compares it with docs in that format. The
   walk is written in the docs format and read back with the same reader as the docs. Screens are paired by address,

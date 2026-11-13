@@ -343,3 +343,52 @@ describe("expired-session fail-fast (expectAuthenticated, L1-05)", () => {
     expect(out.suite).toBeDefined();
   });
 });
+
+describe("runExploreGraph: mailbox/TOTP steps (ADR-0023 §4)", () => {
+  const totpPage: BrowserGateway = {
+    ...fakeGateway,
+    observe: async () => ({
+      url: "http://x/2fa",
+      screenshotB64: "",
+      ariaSnapshot: '- heading "Two-factor authentication" [level=1]\n- textbox "Authentication code"\n- button "Verify"',
+      capturedBy: "lib",
+    }),
+  };
+  const run = async (mailbox?: { totpSecretEnv: string; codeSecrets: string[] }) => {
+    let prompt = "";
+    const written: string[][] = [];
+    const events: string[] = [];
+    const out = await runExploreGraph(
+      {
+        ...baseDeps,
+        gateway: totpPage,
+        overlays: false,
+        codegenInvoke: async (schema, messages) => ((prompt = JSON.stringify(messages)), codegenInvoke(schema, messages)),
+        runWriter: { ...fakeRunWriter, writeSuite: async (s) => (written.push(s.files.map((f) => f.path)), []) },
+        validate: async () => green,
+        maxRepair: 0,
+        onProgress: (e: string) => events.push(e),
+        ...(mailbox ? { mailbox } : {}),
+      },
+      { url: "http://x/2fa", runId: "r1" },
+    );
+    return { out, prompt, written, events: events.join("\n") };
+  };
+
+  it("on: the codegen is told to take the steps, and the suite carries the fixture", async () => {
+    const { out, prompt, written, events } = await run({ totpSecretEnv: "APP_TOTP", codeSecrets: [] });
+    expect(out.mailbox?.signal).toBe("totp");
+    expect(prompt).toContain("mailbox.fixture");
+    expect(prompt).toContain("APP_TOTP");
+    expect(written[0]).toEqual(["x.spec.ts", "mailbox.fixture.ts"]);
+    expect(events).toMatch(/mailbox — .*the tests take the steps totp\.code/);
+  });
+
+  it("off: the page is marked, the prompt and the suite are as before", async () => {
+    const { out, prompt, written, events } = await run();
+    expect(out.mailbox).toEqual({ signal: "totp", reason: expect.any(String) });
+    expect(prompt).not.toContain("mailbox");
+    expect(written[0]).toEqual(["x.spec.ts"]);
+    expect(events).toMatch(/needs e-mail\/OTP, and the mailbox steps are off/);
+  });
+});
