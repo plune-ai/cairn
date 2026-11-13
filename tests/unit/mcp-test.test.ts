@@ -1,0 +1,752 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runModality, getModality, MODALITIES } from "../../src/core/registry.js";
+import { runMcpTest, type McpTestOptions } from "../../src/mcp-test/run.js";
+import { discoverModel, type DiscoverSource } from "../../src/mcp-test/discover.js";
+import { renderModelSummary, serializeModel, type McpModel } from "../../src/mcp-test/model.js";
+import { maskStrings } from "../../src/mcp-test/secrets.js";
+import { reap } from "../../src/mcp-test/connect.js";
+import { spawn } from "node:child_process";
+
+/**
+ * MCP-E1: `cairn mcp-test` reads a foreign MCP server and writes its model. The server is a fixture on the same SDK
+ * (tests/fixtures/mcp-model-server.mjs), run as a real process for stdio and in this process for Streamable HTTP.
+ */
+const here = dirname(fileURLToPath(import.meta.url));
+const fixture = resolve(here, "..", "fixtures", "mcp-model-server.mjs");
+const TOOL_NAMES = ["create_note", "delete_note", "move_note", "ping", "search_notes", "set_target", "tag_note"];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const loadFixture = async (): Promise<any> => import(fixture);
+
+let tmp: string[] = [];
+let pidFiles: string[] = [];
+let out: string[];
+let err: string[];
+const io = {
+  out: (s: string) => void out.push(s),
+  err: (s: string) => void err.push(s),
+};
+
+/** A fresh empty folder (flat: removed file by file afterwards). */
+function dir(): string {
+  const d = mkdtempSync(join(tmpdir(), "cairn-mcp-test-"));
+  tmp.push(d);
+  return d;
+}
+
+beforeEach(() => {
+  out = [];
+  err = [];
+});
+
+afterEach(() => {
+  // A process a broken run left behind must not outlive the test.
+  for (const f of pidFiles) {
+    try {
+      process.kill(Number(readFileSync(f, "utf8")), "SIGKILL");
+    } catch {
+      /* gone, as it should be */
+    }
+  }
+  pidFiles = [];
+  for (const d of tmp) {
+    try {
+      for (const f of readdirSync(d)) unlinkSync(join(d, f));
+      rmdirSync(d);
+    } catch {
+      /* best effort */
+    }
+  }
+  tmp = [];
+  vi.unstubAllEnvs();
+  process.exitCode = 0;
+});
+
+/** `--env` flags that configure the fixture process. */
+function fixtureEnv(vars: Record<string, string>): string[] {
+  return Object.entries(vars).map(([k, v]) => `${k}=${v}`);
+}
+
+function stdioOpts(outDir: string, vars: Record<string, string> = {}, extra: McpTestOptions = {}): McpTestOptions {
+  return { command: [process.execPath, fixture], out: outDir, env: fixtureEnv(vars), timeout: 20, ...extra };
+}
+
+const readModel = (outDir: string): McpModel => JSON.parse(readFileSync(join(outDir, "mcp-model.json"), "utf8")) as McpModel;
+const everything = (outDir: string): string => [...out, ...err, ...readdirSync(outDir).map((f) => readFileSync(join(outDir, f), "utf8"))].join("\n");
+
+function isGone(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+async function expectGone(pidFile: string): Promise<void> {
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  expect(pid).toBeGreaterThan(0);
+  for (let i = 0; i < 20 && !isGone(pid); i++) await new Promise((r) => setTimeout(r, 100));
+  expect(isGone(pid), `server process ${pid} is still alive`).toBe(true);
+}
+
+describe("CLI · mcp-test · the model (AC-1, AC-2, AC-3)", () => {
+  it("AC-1: writes mcp-model.json with every tool of the server, its schema and annotations", async () => {
+    const o = dir();
+    const r = await runMcpTest(stdioOpts(o), io);
+    expect(r.exitCode).toBe(0);
+    const m = readModel(o);
+    expect(m.tools.map((t) => t.name)).toEqual(TOOL_NAMES);
+    expect(m.serverInfo).toEqual({ name: "fixture-server", version: "1.2.3" });
+    expect(m.protocolVersion).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(m.capabilities).toHaveProperty("tools");
+    const byName = Object.fromEntries(m.tools.map((t) => [t.name, t]));
+    expect(byName["search_notes"]?.annotations).toEqual({ readOnlyHint: true });
+    expect(byName["search_notes"]?.outputSchema).toHaveProperty("$defs");
+    expect(byName["search_notes"]?.inputSchema["required"]).toEqual(["query"]);
+    expect(byName["set_target"]?.inputSchema).toMatchObject({ properties: { target: { oneOf: [{ type: "string" }, { type: "integer" }] } } });
+    expect(byName["tag_note"]?.inputSchema).toMatchObject({ properties: { tags: { anyOf: expect.any(Array) } } });
+    expect(byName["move_note"]?.inputSchema).toMatchObject({ properties: { from: { $ref: "#/$defs/folder" } }, $defs: { folder: { pattern: "^[a-z]+$" } } });
+    expect(byName["create_note"]?.inputSchema).toMatchObject({ properties: { kind: { enum: ["todo", "memo", "idea"] } } });
+    expect(m.resources.map((x) => x.uri)).toEqual(["note://archive", "note://inbox", "note://trash"]);
+    expect(m.resourceTemplates).toHaveLength(3);
+    expect(m.prompts.map((p) => p.name)).toEqual(["daily-review", "summarise", "weekly-review"]);
+    expect(m.complete).toBe(true);
+  });
+
+  it("AC-1: the summary counts the lists and names tools with and without properties and with readOnlyHint", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o), io);
+    const text = out.join("");
+    expect(text).toContain("7 tool(s), 3 resource(s), 3 resource template(s), 3 prompt(s)");
+    expect(text).toMatch(/inputSchema that has properties: 6 \(/);
+    expect(text).toMatch(/without properties: 1 \(ping\)/);
+    expect(text).toMatch(/readOnlyHint: 2 \(.*ping.*search_notes|.*search_notes.*ping/);
+  });
+
+  it("AC-2: two runs give the same bytes even when the server lists everything in another order and page size", async () => {
+    const a = dir();
+    const b = dir();
+    await runMcpTest(stdioOpts(a, { FIXTURE_ORDER: "forward", FIXTURE_PAGE_SIZE: "2" }), io);
+    await runMcpTest(stdioOpts(b, { FIXTURE_ORDER: "reverse", FIXTURE_PAGE_SIZE: "3" }), io);
+    const fa = readFileSync(join(a, "mcp-model.json"));
+    const fb = readFileSync(join(b, "mcp-model.json"));
+    expect(Buffer.compare(fa, fb)).toBe(0);
+    expect(fa.toString("utf8")).not.toMatch(/runId|timestamp|"time"/i);
+  });
+
+  it("AC-3: a list of several pages is read in full", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { FIXTURE_PAGE_SIZE: "1" }), io);
+    const m = readModel(o);
+    expect(m.tools).toHaveLength(7);
+    expect(m.complete).toBe(true);
+    expect(m.truncated).toEqual([]);
+  });
+
+  it("AC-3: with a page limit below the list, the model is complete: false with the reason, and the console says so", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { FIXTURE_PAGE_SIZE: "2" }, { maxPages: 2 }), io);
+    const m = readModel(o);
+    expect(m.complete).toBe(false);
+    expect(m.tools).toHaveLength(4);
+    expect(m.truncated).toContainEqual({ list: "tools", reason: "page limit of 2 reached", kept: 4 });
+    expect(out.join("")).toMatch(/tools list is INCOMPLETE: page limit of 2 reached/);
+  });
+
+  it("AC-3: with an entry limit below the list, the same", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { FIXTURE_PAGE_SIZE: "2" }, { maxEntries: 3 }), io);
+    const m = readModel(o);
+    expect(m.complete).toBe(false);
+    expect(m.tools).toHaveLength(3);
+    expect(m.truncated.find((t) => t.list === "tools")?.reason).toBe("entry limit of 3 reached");
+  });
+
+  it("AC-3: a server that never stops handing out cursors ends at the limit, marked incomplete", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { FIXTURE_MODE: "endless", FIXTURE_PAGE_SIZE: "5" }, { maxPages: 3 }), io);
+    const m = readModel(o);
+    expect(m.complete).toBe(false);
+    expect(m.tools).toHaveLength(15);
+  });
+
+  it("AC-3: the same cursor twice, or a page that fails, is a marked cut, not a silent one", async () => {
+    const base = { serverInfo: { name: "s", version: "1" }, protocolVersion: "2025-11-25", capabilities: { tools: {} } };
+    const conn = { transport: "stdio" as const, headerNames: [], envNames: [] };
+    const loop: DiscoverSource = { ...base, listPage: async () => ({ items: [{ name: "a", inputSchema: {} }], nextCursor: "same" }) };
+    const m1 = await discoverModel(loop, { maxPages: 50, maxEntries: 50 }, conn);
+    expect(m1.complete).toBe(false);
+    expect(m1.truncated[0]?.reason).toMatch(/same cursor twice/);
+    let n = 0;
+    const flaky: DiscoverSource = {
+      ...base,
+      listPage: async () => {
+        if (++n === 2) throw new Error("boom");
+        return { items: [{ name: "a", inputSchema: {} }], nextCursor: "c1" };
+      },
+    };
+    const m2 = await discoverModel(flaky, { maxPages: 50, maxEntries: 50 }, conn);
+    expect(m2.complete).toBe(false);
+    expect(m2.truncated[0]?.reason).toMatch(/page 2 could not be read: boom/);
+    expect(m2.tools).toHaveLength(1);
+  });
+
+  it("AC-4: the same through --url on an HTTP server", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ pageSize: 2 });
+    try {
+      const o = dir();
+      const r = await runMcpTest({ url: fx.url, out: o, timeout: 20 }, io);
+      expect(r.exitCode).toBe(0);
+      const m = readModel(o);
+      expect(m.tools.map((t) => t.name)).toEqual(TOOL_NAMES);
+      expect(m.connection.transport).toBe("streamable-http");
+      expect(m.complete).toBe(true);
+      const o2 = dir();
+      await runMcpTest({ url: fx.url, out: o2, timeout: 20, maxPages: 2 }, io);
+      expect(readModel(o2).complete).toBe(false);
+    } finally {
+      await fx.close();
+    }
+  });
+});
+
+describe("CLI · mcp-test · secrets (AC-5, AC-6)", () => {
+  const TOKEN = "tok-live-9f8e7d6c5b4a";
+  const ENVSECRET = "envsecret-1a2b3c4d5e";
+
+  it("AC-5: a --header token and an --env API_KEY appear nowhere: model, console, error message, saved stderr", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ pageSize: 2, requireAuth: `Bearer ${TOKEN}`, echoAuth: true });
+    try {
+      const o = dir();
+      const r = await runMcpTest({ url: fx.url, out: o, timeout: 20, header: [`Authorization: Bearer ${TOKEN}`, "X-Api-Key: hdrkey-77aa88bb99"] }, io);
+      expect(r.exitCode).toBe(0);
+      expect(fx.seen.some((s: { authorization?: string }) => s.authorization === `Bearer ${TOKEN}`)).toBe(true); // it was sent, to the named server
+      // The server leaks the token into a tool description; it must still not reach the file or the console.
+      expect(readFileSync(join(o, "mcp-model.json"), "utf8")).toContain("Called with: ***");
+      const all = everything(o);
+      expect(all).not.toContain(TOKEN);
+      expect(all).not.toContain("hdrkey-77aa88bb99");
+      expect(readModel(o).connection.headerNames).toEqual(["Authorization", "X-Api-Key"]);
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("AC-5: an --env secret the server writes to stderr is masked in the console and in the saved log, also when it fails", async () => {
+    const o = dir();
+    const vars = { API_KEY: ENVSECRET, FIXTURE_STDERR_ENV: "API_KEY", FIXTURE_MODE: "exit-early" };
+    const r = await runMcpTest(stdioOpts(o, vars), io);
+    expect(r.exitCode).toBe(1);
+    const all = everything(o);
+    expect(all).not.toContain(ENVSECRET);
+    expect(readFileSync(join(o, "server-stderr.log"), "utf8")).toContain("starting with key ***");
+    expect(err.join("")).toContain("starting with key ***");
+
+    const o2 = dir();
+    await runMcpTest(stdioOpts(o2, { API_KEY: ENVSECRET, FIXTURE_STDERR_ENV: "API_KEY" }), io);
+    expect(everything(o2)).not.toContain(ENVSECRET);
+    expect(readFileSync(join(o2, "server-stderr.log"), "utf8")).toContain("starting with key ***");
+    expect(readModel(o2).connection.envNames).toContain("API_KEY");
+  });
+
+  it("AC-5: a password in the address and a token in its query are masked as well", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ pageSize: 2 });
+    try {
+      const o = dir();
+      const u = new URL(fx.url);
+      u.username = "user";
+      u.password = "pw-abcdef123456";
+      u.searchParams.set("api_key", "qk-0987654321zz");
+      await runMcpTest({ url: u.toString(), out: o, timeout: 20 }, io);
+      const all = everything(o);
+      expect(all).not.toContain("pw-abcdef123456");
+      expect(all).not.toContain("qk-0987654321zz");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("AC-6: the server process does not receive the provider keys of the parent's environment", async () => {
+    const keys = ["ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "EXAMPLE_SECRET_KEY", "SAMPLE_API_KEY", "DEMO_API_KEY"];
+    for (const k of keys) vi.stubEnv(k, `parent-${k}-value`);
+    const o = dir();
+    const envFile = join(o, "env-seen.json");
+    const r = await runMcpTest(stdioOpts(o, { FIXTURE_ENV_FILE: envFile, FIXTURE_VISIBLE: "yes" }), io);
+    expect(r.exitCode).toBe(0);
+    const seen = JSON.parse(readFileSync(envFile, "utf8")) as string[];
+    for (const k of keys) expect(seen).not.toContain(k);
+    expect(seen).toContain("FIXTURE_VISIBLE"); // what --env asked for does arrive
+  });
+});
+
+describe("CLI · mcp-test · no leftover process (AC-7)", () => {
+  async function runWithPid(vars: Record<string, string>, extra: McpTestOptions = {}) {
+    const o = dir();
+    const pidFile = join(o, "server.pid");
+    pidFiles.push(pidFile);
+    const r = await runMcpTest(stdioOpts(o, { FIXTURE_PID_FILE: pidFile, ...vars }, extra), io);
+    return { r, pidFile, o };
+  }
+
+  it("AC-7: after a successful run the server process is gone", async () => {
+    const { r, pidFile } = await runWithPid({});
+    expect(r.exitCode).toBe(0);
+    expect(r.pid).toBe(Number(readFileSync(pidFile, "utf8")));
+    await expectGone(pidFile);
+  });
+
+  it("AC-7: after the server dies on start (an error) nothing is left", async () => {
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "exit-early" });
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/closed the connection before it answered initialize/);
+    await expectGone(pidFile);
+  });
+
+  it("AC-7: after a timeout, with a server that ignores stdin and SIGTERM, nothing is left", async () => {
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "hang" }, { timeout: 1 });
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/did not answer within 1 s/);
+    await expectGone(pidFile);
+  }, 30000);
+
+  // The SDK closes its transport itself when `initialize` fails or is cut off, which empties transport.pid before our own
+  // code looks at it. The process id must have been taken when the process was started, or nothing is reaped, and a
+  // server that ignores stdin and SIGTERM stays until the SDK's own SIGKILL, some seconds later (visible on POSIX, where
+  // SIGTERM can be ignored; on Windows SIGTERM kills, which hid this).
+  it("AC-7: when the run returns after a timeout the server is already gone, and its process id is reported", async () => {
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "hang" }, { timeout: 1 });
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(r.pid).toBe(pid);
+    expect(isGone(pid), `server process ${pid} is still alive when the run returned`).toBe(true);
+  }, 30000);
+
+  it("AC-7: when the run returns after an interrupt the server is already gone", async () => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 1500);
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "hang" }, { timeout: 25, signal: ac.signal });
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(r.pid).toBe(pid);
+    expect(isGone(pid), `server process ${pid} is still alive when the run returned`).toBe(true);
+  }, 30000);
+
+  it("AC-7: after an interrupt nothing is left", async () => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 1500);
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "hang" }, { timeout: 25, signal: ac.signal });
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/Interrupted/);
+    await expectGone(pidFile);
+  }, 30000);
+});
+
+describe("CLI · mcp-test · honest failures (AC-8, AC-9, AC-10)", () => {
+  it("AC-8: a 401 that points to metadata on another origin: that address is never asked, exit 1, the reason is named", async () => {
+    const fxm = await loadFixture();
+    const watch = await fxm.startWatchServer();
+    const fx = await fxm.startHttpFixture({ requireAuth: "Bearer the-right-one", metadataUrl: `${watch.origin}/.well-known/oauth-protected-resource` });
+    try {
+      const o = dir();
+      const r = await runMcpTest({ url: fx.url, out: o, timeout: 20, header: ["Authorization: Bearer wrong-token-123456"] }, io);
+      expect(r.exitCode).toBe(1);
+      expect(watch.seen).toEqual([]); // no request at all reached the other origin, so no token either
+      expect(fx.seen.length).toBeGreaterThan(0);
+      const text = err.join("");
+      expect(text).toMatch(/requires authentication \(HTTP 401\)/);
+      expect(text).toContain(watch.origin);
+      expect(text).toMatch(/not visited/);
+      expect(text).not.toContain("wrong-token-123456");
+      expect(existsSync(join(o, "mcp-model.json"))).toBe(false);
+    } finally {
+      await fx.close();
+      await watch.close();
+    }
+  });
+
+  it("AC-9: a server with no tool exits 5 and says there is nothing to test", async () => {
+    const o = dir();
+    const r = await runMcpTest(stdioOpts(o, { FIXTURE_MODE: "empty-tools" }), io);
+    expect(r.exitCode).toBe(5);
+    expect(err.join("")).toMatch(/Nothing to test/);
+    expect(readModel(o).tools).toEqual([]);
+  });
+
+  it("AC-9: a server that did not declare tools has an empty model, says so, and exits 5", async () => {
+    const o = dir();
+    const r = await runMcpTest(stdioOpts(o, { FIXTURE_MODE: "no-tools" }), io);
+    expect(r.exitCode).toBe(5);
+    const m = readModel(o);
+    expect(m.tools).toEqual([]);
+    expect(m.notes.join(" ")).toMatch(/did not declare the tools capability/);
+    expect(out.join("")).toMatch(/did not declare the tools capability/);
+  });
+
+  it("AC-9: through the command the exit code lands in process.exitCode", async () => {
+    const o = dir();
+    await runModality("mcp-test", { command: [process.execPath, fixture], out: o, env: fixtureEnv({ FIXTURE_MODE: "empty-tools" }), timeout: "20" }, { ...io });
+    expect(process.exitCode).toBe(5);
+  });
+
+  it("exit 1 when the command does not exist", async () => {
+    const r = await runMcpTest({ command: ["cairn-no-such-server-binary"], out: dir(), timeout: 10 }, io);
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/Could not start the server: "cairn-no-such-server-binary" was not found/);
+  });
+
+  it("exit 1 when nothing listens at the address", async () => {
+    const r = await runMcpTest({ url: "http://127.0.0.1:1/mcp", out: dir(), timeout: 5 }, io);
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/^✗ /);
+  });
+
+  it("AC-10: without the MCP client package the command says what to install, with no stack and no module-not-found code", async () => {
+    const missing = async (): Promise<never> => {
+      throw Object.assign(new Error("Cannot find package '@modelcontextprotocol/sdk' imported from /x/y.js"), { code: "ERR_MODULE_NOT_FOUND" });
+    };
+    const r = await runMcpTest({ command: [process.execPath, fixture], out: dir(), importer: missing }, io);
+    expect(r.exitCode).toBe(1);
+    const text = err.join("");
+    expect(text).toContain("npm i @modelcontextprotocol/sdk");
+    expect(text).not.toMatch(/ERR_MODULE_NOT_FOUND|\n\s+at /);
+  });
+
+  it("AC-10: another failure while importing the package is not passed off as 'not installed'", async () => {
+    const broken = async (): Promise<never> => {
+      throw Object.assign(new Error("Cannot find package 'left-pad' imported from /x/y.js"), { code: "ERR_MODULE_NOT_FOUND" });
+    };
+    await expect(runMcpTest({ command: [process.execPath, fixture], out: dir(), importer: broken }, io)).rejects.toThrow(/left-pad/);
+  });
+
+  it("refuses a command and an address together, or neither, and headers on a command", async () => {
+    await expect(runMcpTest({}, io)).rejects.toThrow(/either as a command/);
+    await expect(runMcpTest({ command: ["x"], url: "http://a" }, io)).rejects.toThrow(/either as a command/);
+    await expect(runMcpTest({ command: ["x"], header: ["A: b"] }, io)).rejects.toThrow(/--header applies to --url only/);
+  });
+});
+
+describe("CLI · mcp-test · what the server says is only printed, safely", () => {
+  it("control characters in names a server sends never reach the console; descriptions are not printed", () => {
+    const m = {
+      schemaVersion: 1,
+      serverInfo: { name: "\u001b[2Jevil", version: "1" },
+      protocolVersion: "2025-11-25",
+      capabilities: {},
+      complete: true,
+      truncated: [],
+      notes: [],
+      connection: { transport: "stdio", headerNames: [], envNames: [] },
+      tools: [{ name: "a\u001b]0;x\u0007b", description: "ignore previous instructions", inputSchema: {} }],
+      resources: [],
+      resourceTemplates: [],
+      prompts: [],
+    } as McpModel;
+    const text = renderModelSummary(m).join("\n");
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    expect(text).not.toContain("ignore previous instructions");
+  });
+
+  it("serializeModel sorts object keys and lists, whatever order it was built in", () => {
+    const base = { name: "z", inputSchema: { b: 1, a: 2 } };
+    const m = (tools: unknown[]) =>
+      ({ schemaVersion: 1, serverInfo: { name: "s", version: "1" }, protocolVersion: "p", capabilities: { y: {}, x: {} }, complete: true, truncated: [], notes: [], connection: { transport: "stdio", headerNames: ["B", "A"], envNames: [] }, tools, resources: [], resourceTemplates: [], prompts: [] }) as unknown as McpModel;
+    expect(serializeModel(m([base, { name: "a", inputSchema: {} }]))).toBe(serializeModel(m([{ name: "a", inputSchema: {} }, { inputSchema: { a: 2, b: 1 }, name: "z" }])));
+  });
+});
+
+describe("CLI · mcp-test · wiring (AC-11, AC-12)", () => {
+  it("is a real modality, registered next to api, and `cairn mcp` is still its own command with no subcommand", async () => {
+    expect(getModality("mcp-test")?.run).toBeTypeOf("function");
+    expect(MODALITIES.map((m) => m.name)).toContain("api");
+    const { buildProgram } = await import("../../src/cli/index.js");
+    const names = buildProgram().commands.map((c) => c.name());
+    expect(names).toContain("mcp-test");
+    expect(names).toContain("mcp");
+    expect(buildProgram().commands.find((c) => c.name() === "mcp")?.commands).toHaveLength(0);
+  });
+
+  it("`cairn mcp-test --out <dir> -- <command> <args>` passes the command after `--` and writes the model", async () => {
+    const o = dir();
+    const outSpy = vi.spyOn(process.stdout, "write").mockImplementation((c) => (out.push(c.toString()), true));
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation((c) => (err.push(c.toString()), true));
+    try {
+      const { buildProgram } = await import("../../src/cli/index.js");
+      await buildProgram().parseAsync(["node", "cairn", "mcp-test", "--out", o, "--timeout", "20", "--", process.execPath, fixture]);
+    } finally {
+      outSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    expect(process.exitCode ?? 0).toBe(0);
+    expect(readModel(o).tools).toHaveLength(7);
+  });
+
+  it("AC-12: the only packages imported are the four client entry points of the SDK; no dependency is added", () => {
+    const root = resolve(here, "..", "..");
+    const files = [...readdirSync(join(root, "src", "mcp-test")).map((f) => join(root, "src", "mcp-test", f)), join(root, "src", "core", "modalities", "mcp-test.ts")];
+    const used = new Set<string>();
+    for (const f of files) for (const m of readFileSync(f, "utf8").matchAll(/["'](@modelcontextprotocol\/[^"']+)["']/g)) used.add(m[1] as string);
+    expect([...used].sort()).toEqual(
+      ["@modelcontextprotocol/sdk/client/index.js", "@modelcontextprotocol/sdk/client/stdio.js", "@modelcontextprotocol/sdk/client/streamableHttp.js", "@modelcontextprotocol/sdk/types.js"].sort(),
+    );
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { dependencies: Record<string, string> };
+    expect(Object.keys(pkg.dependencies).filter((d) => d.startsWith("@modelcontextprotocol"))).toEqual([]);
+  });
+});
+
+describe("CLI · mcp-test · review fixes", () => {
+  const prefixes = (secret: string): string[] => Array.from({ length: secret.length - 3 }, (_, i) => secret.slice(0, i + 4));
+  const expectNoPrefix = (text: string, secret: string): void => {
+    for (const p of prefixes(secret)) expect(text, `prefix "${p}"`).not.toContain(p);
+  };
+
+  it("a redirect is an error: nothing is sent to the other origin, no header goes there, the target is not named", async () => {
+    const fxm = await loadFixture();
+    const watch = await fxm.startWatchServer();
+    const fx = await fxm.startHttpFixture({ redirectTo: `${watch.origin}/elsewhere` });
+    try {
+      const r = await runMcpTest({ url: fx.url, out: dir(), timeout: 10, header: ["X-Api-Key: key-abcd1234"] }, io);
+      expect(r.exitCode).toBe(1);
+      expect(watch.seen).toEqual([]);
+      const text = err.join("");
+      expect(text).toMatch(/redirect/i);
+      expect(text).not.toContain(watch.origin);
+      expect(text).not.toContain(new URL(watch.origin).port);
+    } finally {
+      await fx.close();
+      await watch.close();
+    }
+  });
+
+  it("every --header and --env value of 4 characters or more is masked, whatever its name, also when the server repeats it", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ echoHeader: "x-auth" });
+    try {
+      const o = dir();
+      await runMcpTest({ url: fx.url, out: o, timeout: 20, header: ["X-Auth: abc12345"] }, io);
+      expect(readFileSync(join(o, "mcp-model.json"), "utf8")).toContain("Called with: ***");
+      expect(everything(o)).not.toContain("abc12345");
+    } finally {
+      await fx.close();
+    }
+    const o2 = dir();
+    const dbUrl = "postgres://user:pw0rd77@db.local/app";
+    await runMcpTest(stdioOpts(o2, { DB_URL: dbUrl, FIXTURE_ECHO_ENV: "DB_URL", FIXTURE_STDERR_ENV: "DB_URL" }), io);
+    const all = everything(o2);
+    expect(all).not.toContain("pw0rd77");
+    expect(all).not.toContain(dbUrl);
+    expect(readFileSync(join(o2, "mcp-model.json"), "utf8")).toContain("Called with: ***");
+  });
+
+  it("masking comes before cutting: no 4-character prefix of a token survives in a 190-character stderr line, a long server name, or at the 64 KB stderr limit", async () => {
+    const TOKEN = "tkn-QzXwVuTs-90817";
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { API_TOKEN: TOKEN, FIXTURE_MODE: "exit-early", FIXTURE_STDERR_PAD: "170", FIXTURE_STDERR_ENV: "API_TOKEN" }), io);
+    expectNoPrefix(everything(o), TOKEN);
+
+    const o2 = dir();
+    await runMcpTest(stdioOpts(o2, { API_TOKEN: TOKEN, FIXTURE_NAME_ENV: "API_TOKEN", FIXTURE_NAME_PAD: "74" }), io);
+    expectNoPrefix(everything(o2), TOKEN);
+
+    // The token is written three times and the last one starts 6 characters before the end of what is read (the cap plus
+    // the longest secret), so only its first 6 characters are read. The two whole ones shrink the masked text, which
+    // brings that cut-off start inside the 64 KB that is kept: only maskCutTail removes it.
+    const o3 = dir();
+    const stderrEnv = "API_TOKEN,API_TOKEN,API_TOKEN";
+    const rawCap = 64 * 1024 + Math.max(TOKEN.length, stderrEnv.length);
+    const pad = rawCap - 6 - ("starting with key ".length + 2 * (TOKEN.length + 1));
+    await runMcpTest(stdioOpts(o3, { API_TOKEN: TOKEN, FIXTURE_STDERR_PAD: String(pad), FIXTURE_STDERR_ENV: stderrEnv }), io);
+    expectNoPrefix(everything(o3), TOKEN);
+  });
+
+  it("one list, longest first: an env value that is the start of another does not leave the rest of the longer one", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { API_KEY: "abcd", B: "abcdefgh", FIXTURE_STDERR_ENV: "B,API_KEY" }), io);
+    const all = everything(o);
+    expect(all).not.toContain("efgh");
+    expect(all).not.toContain("abcd");
+  });
+
+  it("the error a server answers to initialize is printed safely: no control characters, no line that starts a workflow command", async () => {
+    const r = await runMcpTest(stdioOpts(dir(), { FIXTURE_MODE: "init-error" }), io);
+    expect(r.exitCode).toBe(1);
+    const text = [...out, ...err].join("");
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    for (const line of text.split("\n")) expect(line).not.toMatch(/^\s*(::|##\[)/);
+  });
+
+  it("the reason a list was cut, which can carry the server's text, is printed safely", async () => {
+    const src: DiscoverSource = {
+      serverInfo: { name: "s", version: "1" },
+      protocolVersion: "p",
+      capabilities: { tools: {} },
+      listPage: async () => {
+        throw new Error("\u001b[2J\n::error::boom");
+      },
+    };
+    const m = await discoverModel(src, { maxPages: 2, maxEntries: 10 }, { transport: "stdio", headerNames: [], envNames: [] });
+    const text = renderModelSummary(m).join("\n");
+    expect(text).toContain("boom");
+    expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
+    for (const line of text.split("\n")) expect(line).not.toMatch(/^\s*(::|##\[)/);
+    expect(text).not.toContain("::error::boom\n");
+  });
+
+  it("an interrupt while the lists are being read exits non-zero and leaves the model with complete: false", async () => {
+    const o = dir();
+    const mark = join(o, "listing.mark");
+    const pidFile = join(o, "server.pid");
+    pidFiles.push(pidFile);
+    const ac = new AbortController();
+    const run = runMcpTest(stdioOpts(o, { FIXTURE_LIST_DELAY_MS: "700", FIXTURE_LIST_MARK: mark, FIXTURE_PAGE_SIZE: "1", FIXTURE_PID_FILE: pidFile }, { signal: ac.signal }), io);
+    for (let i = 0; i < 100 && !existsSync(mark); i++) await new Promise((r) => setTimeout(r, 100));
+    expect(existsSync(mark)).toBe(true);
+    ac.abort();
+    const r = await run;
+    expect(r.exitCode).toBe(1);
+    expect(err.join("")).toMatch(/Interrupted/);
+    const m = readModel(o);
+    expect(m.complete).toBe(false);
+    expect(m.tools.length).toBeLessThan(7);
+    await expectGone(pidFile);
+  }, 30000);
+
+  it("a schema nested 10 000 levels deep is cut with a mark and a truncated entry, not a stack overflow", async () => {
+    let deep: Record<string, unknown> = { type: "string" };
+    for (let i = 0; i < 10_000; i++) deep = { items: deep };
+    const src: DiscoverSource = {
+      serverInfo: { name: "s", version: "1" },
+      protocolVersion: "p",
+      capabilities: { tools: {} },
+      listPage: async () => ({ items: [{ name: "deep", inputSchema: deep }] }),
+    };
+    const m = await discoverModel(src, { maxPages: 2, maxEntries: 10 }, { transport: "stdio", headerNames: [], envNames: [] });
+    expect(() => serializeModel(m)).not.toThrow();
+    expect(m.complete).toBe(false);
+    expect(m.truncated.some((t) => /nesting/.test(t.reason) && /deep/.test(t.reason))).toBe(true);
+    expect(serializeModel(m)).toContain("nesting too deep");
+  });
+
+  it("two tools with the same name come out in the same bytes in either order; a missing name counts as empty", () => {
+    const t1 = { name: "same", description: "first", inputSchema: {} };
+    const t2 = { name: "same", description: "second", inputSchema: { type: "object" } };
+    const m = (tools: unknown[]) =>
+      ({ schemaVersion: 1, serverInfo: { name: "s", version: "1" }, protocolVersion: "p", capabilities: {}, complete: true, truncated: [], notes: [], connection: { transport: "stdio", headerNames: [], envNames: [] }, tools, resources: [], resourceTemplates: [], prompts: [] }) as unknown as McpModel;
+    expect(serializeModel(m([t1, t2]))).toBe(serializeModel(m([t2, t1])));
+    expect(() => serializeModel(m([{ inputSchema: {} }, t1]))).not.toThrow();
+    expect(serializeModel(m([{ inputSchema: {} }, t1]))).toBe(serializeModel(m([t1, { inputSchema: {} }])));
+  });
+});
+
+describe("CLI · mcp-test · second review fixes", () => {
+  const prefixes = (secret: string): string[] => Array.from({ length: secret.length - 3 }, (_, i) => secret.slice(0, i + 4));
+
+  it("the model file stays valid JSON and keeps its types when --env holds true, a number or a common word", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { DEBUG: "true", LIMIT: "1000", MODE: "normal", FIXTURE_EXTRA: "1" }), io);
+    const m = JSON.parse(readFileSync(join(o, "mcp-model.json"), "utf8")) as McpModel; // must parse at all
+    const byName = Object.fromEntries(m.tools.map((t) => [t.name, t]));
+    expect(byName["search_notes"]?.annotations?.["readOnlyHint"]).toBe(true);
+    const props = (byName["normal_x"]?.inputSchema["properties"] ?? {}) as Record<string, { maxLength?: unknown }>;
+    expect(Object.keys(props)).toEqual(["normal"]);
+    expect(props["normal"]?.maxLength).toBe(1000);
+    expect(m.tools.map((t) => t.name)).toEqual([...TOOL_NAMES, "normal_x"].sort());
+  });
+
+  it("the model text is not masked a second time: a 4-character secret that is also a schema key leaves the key alone", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { API_KEY: "type" }), io);
+    const m = JSON.parse(readFileSync(join(o, "mcp-model.json"), "utf8")) as McpModel;
+    expect(m.tools[0]?.inputSchema).toHaveProperty("type", "object");
+  });
+
+  it("lists are ordered by their own names before masking: the order does not change with --env", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { OTHER_NAME: "delete_note" }), io); // a long value that is also a tool name
+    expect(readModel(o).tools.map((t) => t.name)).toEqual(["create_note", "***", "move_note", "ping", "search_notes", "set_target", "tag_note"]);
+  });
+
+  it("a header that is a common value (Content-Type: application/json) does not change the mime types in the model", async () => {
+    const fx = await (await loadFixture()).startHttpFixture({ extra: true });
+    try {
+      const o = dir();
+      await runMcpTest({ url: fx.url, out: o, timeout: 20, header: ["Content-Type: application/json"] }, io);
+      expect(readModel(o).resources.find((r) => r.uri === "note://data")?.mimeType).toBe("application/json");
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("a value of 8 or more characters under a neutral name is masked where the server repeats it", async () => {
+    const o = dir();
+    await runMcpTest(stdioOpts(o, { WORKSPACE: "zebra-longvalue", FIXTURE_ECHO_ENV: "WORKSPACE" }), io);
+    const file = readFileSync(join(o, "mcp-model.json"), "utf8");
+    expect(file).toContain("Called with: ***");
+    expect(file).not.toContain("zebra-longvalue");
+  });
+
+  it("the error a server sends is masked before it is cut to 300 characters", async () => {
+    const TOKEN = "tkn-ErrAtCut-5566";
+    const r = await runMcpTest(stdioOpts(dir(), { API_TOKEN: TOKEN, FIXTURE_MODE: "init-error", FIXTURE_ERROR_ENV: "API_TOKEN", FIXTURE_ERROR_PAD: "267" }), io);
+    expect(r.exitCode).toBe(1);
+    const text = err.join("");
+    expect(text).toContain("eeee"); // the long message did arrive
+    for (const p of prefixes(TOKEN)) expect(text, `prefix "${p}"`).not.toContain(p);
+  });
+
+  it("stderr lines that look like workflow commands are printed with a visible prefix, never at the start of a line", async () => {
+    const r = await runMcpTest(stdioOpts(dir(), { FIXTURE_MODE: "exit-early", FIXTURE_STDERR_WORKFLOW: "1" }), io);
+    expect(r.exitCode).toBe(1);
+    const text = err.join("");
+    expect(text).toContain("::error::x");
+    expect(text).toContain("##[group]y");
+    for (const line of text.split("\n")) expect(line).not.toMatch(/^\s*(::|##\[)/);
+  });
+
+  it("capabilities nested 5 000 levels deep are cut like a schema, and masking a value that deep does not overflow the stack", async () => {
+    let deep: Record<string, unknown> = { x: "leaf" };
+    for (let i = 0; i < 5_000; i++) deep = { n: deep };
+    const src: DiscoverSource = {
+      serverInfo: { name: "s", version: "1" },
+      protocolVersion: "p",
+      capabilities: { tools: {}, experimental: deep },
+      listPage: async () => ({ items: [] }),
+    };
+    const m = await discoverModel(src, { maxPages: 2, maxEntries: 10 }, { transport: "stdio", headerNames: [], envNames: [] });
+    expect(m.complete).toBe(false);
+    expect(m.truncated.some((t) => (t.list as string) === "capabilities" && /nesting/.test(t.reason))).toBe(true);
+    expect(() => serializeModel(maskStrings(m, ["leaf-secret"]))).not.toThrow();
+    expect(() => maskStrings(deep, ["leaf"])).not.toThrow();
+  });
+});
+
+describe("CLI · mcp-test · reaping a process", () => {
+  const stubborn = (): ReturnType<typeof spawn> =>
+    spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], { stdio: "ignore" });
+
+  it("kills a process that outlives the grace period and returns only when it is gone", async () => {
+    const child = stubborn();
+    const pid = child.pid as number;
+    try {
+      await reap(pid, { graceMs: 200 });
+      expect(isGone(pid), `process ${pid} is still alive`).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it("does not kill a process that leaves by itself within the grace period", async () => {
+    const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},300)"], { stdio: "ignore" });
+    const kill = vi.fn();
+    await reap(child.pid as number, { graceMs: 5000, kill });
+    expect(kill).not.toHaveBeenCalled();
+    expect(isGone(child.pid as number)).toBe(true);
+  });
+
+  it("an unknown process id is nothing to do", async () => {
+    const kill = vi.fn();
+    await reap(null, { kill });
+    expect(kill).not.toHaveBeenCalled();
+  });
+});

@@ -74,7 +74,7 @@ export const SENSITIVE = /authorization|cookie|api[-_]?key|token|secret|password
 
 const MIN_SECRET_LENGTH = 4;
 /** Values too common to be worth masking (masking them would mangle ordinary output). */
-const COMMON_VALUES = new Set(["true", "false", "null", "none", "bearer", "basic", "token", "undefined", "application/json"]);
+export const COMMON_VALUES = new Set(["true", "false", "null", "none", "bearer", "basic", "token", "undefined", "application/json"]);
 
 /** The credential parts of one header value: the whole value, the part after `Scheme `, a decoded Basic pair, cookie values. */
 function secretParts(name: string, value: string): string[] {

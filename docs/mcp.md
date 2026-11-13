@@ -142,3 +142,52 @@ If `cairn` isn't on `PATH`, run it through `npx`:
   pass `session: "<name>"`. See [Authenticated targets](sessions.md).
 - The server is a thin adapter: each tool validates input, calls the same `runExploration` /
   `runDesign` core entry points the CLI uses, and returns a structured result. No new generation logic.
+
+## Reading someone else's MCP server: `cairn mcp-test`
+
+The other direction. `cairn mcp` serves Cairn; `cairn mcp-test` connects to a server you name and writes a model of it.
+It only connects and lists: no tool is called and no case is generated.
+
+```bash
+cairn mcp-test -- node ./my-server.js            # stdio: the command after `--`
+cairn mcp-test --env API_KEY=... --cwd ./srv -- node server.js
+cairn mcp-test --url http://127.0.0.1:3000/mcp --header "Authorization: Bearer ..."   # Streamable HTTP
+```
+
+Options: `--timeout <seconds>` for one request (default 30), `--out <dir>` (default `runs/mcp-<id>/`), and
+`--max-pages` / `--max-entries` to bound each list (defaults 20 pages, 1000 entries).
+
+`mcp-model.json` holds the server's `serverInfo`, the protocol revision it agreed to, its `capabilities` and its `tools`
+(name, title, description, `inputSchema`, `outputSchema`, `annotations`), `resources`, `resourceTemplates` and `prompts`.
+Lists are in name order and keys are sorted, so two reads of the same server give the same bytes. A list that was cut by a
+limit is never passed off as whole: the model says `complete: false` and `truncated` names the list and the reason.
+
+- Header and environment values are never stored; the model keeps their names only. What is masked, in the console,
+  the error messages, the model (string values only; keys, numbers and booleans are never touched) and the saved
+  `server-stderr.log`: a value whose name is sensitive (`Authorization`, `*key*`, `*token*`, `*secret*`, `*password*`,
+  cookies) from 4 characters, with the credential part of `Bearer x`, a Basic pair and cookie values; a value under any
+  other name from 8 characters; also their URL-encoded forms. Common values (`true`, `application/json`, ...) are never
+  masked. Consequences: a value shorter than 8 characters under a neutral name is not masked, and a long ordinary word
+  passed as a value is replaced wherever the server repeats it, so the model of the same server can differ between
+  runs with different `--env`. Lists are put in order by their own names before masking, so the order does not depend
+  on `--env`. Not covered: other encodings of a secret (base64, HTML), a secret that is part of the address path (only
+  the user, password and sensitive query values of `--url` are masked), and the command arguments after `--`: pass
+  secrets with `--env`.
+- The server process gets the SDK's small default environment plus your `--env` values, not Cairn's provider keys.
+  It is stopped whatever way the run ends (success, error, timeout, Ctrl-C).
+- A request goes to the origin you named only. If the server answers 401 and points to authentication metadata on another
+  origin, that address is not visited, no token is sent there, and the run stops with "authentication required".
+  A redirect answer (3xx) is an error and is not followed. OAuth flows are not supported; pass a token with `--header`.
+- Exit codes: `0` read; `1` the server did not start, did not answer `initialize`, wants authentication or spoke
+  something else; `5` it was read but has no tools (nothing to test, not a pass).
+- What a server writes (names, descriptions) is untrusted text: it is printed with control characters removed and is
+  never run or handed to a model as an instruction. A line that would start with `::` or `##[` is prefixed, so a CI log
+  does not read it as a workflow command. Values nested deeper than 64 levels (in a schema, annotations, prompt arguments
+  or `capabilities`) are replaced by a mark and the model is marked `complete: false`.
+- An interrupt (Ctrl-C) while the lists are read exits with `1` and keeps the model read so far, marked `complete: false`.
+- Needs the MCP client package (`npm i @modelcontextprotocol/sdk`); without it the command says so.
+- Limits. The server is asked to stop (stdin closed), then killed. On Windows its process tree is killed if it is still
+  running then; on Linux and macOS only the direct child is, so a grandchild the server started (a shell wrapper, `npx`)
+  can outlive the run. The size of an HTTP response is not
+  limited. The time is bounded per request (`--timeout`, 30 s by default) and a list by `--max-pages` (20), so one list
+  can take up to 20 pages times 30 s, and the four lists add up.

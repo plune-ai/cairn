@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn mcp-test`: read a foreign MCP server (MCP-E1).** `cairn mcp-test -- <command> [args]` (stdio, with `--env` and
+  `--cwd`) or `cairn mcp-test --url <address> [--header "Name: Value"]` (Streamable HTTP) connects, runs `initialize`, reads
+  the tools, resources, resource templates and prompts page by page (bounded by `--max-pages` / `--max-entries`) and writes
+  `mcp-model.json` plus a short summary. The file is byte-identical for the same server; a list cut by a limit makes the
+  model `complete: false` with the reason. Header and environment values are never stored. In what is
+  printed and saved, string values are masked: a value with a sensitive name from 4 characters, any other from 8
+  (common values such as `true` are not); shorter neutral values, other encodings and secrets in the address path are
+  not, and a long ordinary word passed as a value is replaced wherever the server repeats it. The server process gets
+  no provider keys and is stopped when the run ends; redirects are not followed, and a 401 that points to
+  authentication metadata on another origin stops the run without visiting it. Exit `1` when the server cannot be read,
+  `5` when it has no tools. No tool is called and no case is generated yet. See `docs/mcp.md`.
+
 - **The agent takes the mailbox and TOTP steps itself, `cairn doctor` checks Mailsac (#257, ADR-0023 §4).** With a
   `MailboxSession` passed (`ExploreInput.mailbox`, `runAutomate`'s `mailbox`), a fixed rule, not a model's verdict,
   decides when the steps are needed: a field asking for a one-time code (promo, postal and similar codes are not one),
