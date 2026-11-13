@@ -19,7 +19,7 @@ import { COMMON_VALUES, SENSITIVE, collectSecrets, maskSecrets } from "../api/gu
 export const MIN_NEUTRAL_LENGTH = 8;
 const MIN_TAIL_LENGTH = 4;
 /** Deeper than this, {@link maskStrings} replaces the value (discovery cuts at 64, so a model never reaches it). */
-const MASK_DEPTH_LIMIT = 100;
+const MASK_DEPTH_LIMIT = 128;
 
 export function buildSecrets(headers: Record<string, string>, env: Record<string, string>, extra: readonly string[] = []): string[] {
   const out = new Set<string>();

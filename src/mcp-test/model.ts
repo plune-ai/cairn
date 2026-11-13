@@ -73,7 +73,7 @@ export interface McpModel {
 }
 
 /** Past this depth {@link sortKeys} stops descending (discovery already cuts at 64; this is the backstop). */
-const SORT_DEPTH_LIMIT = 100;
+const SORT_DEPTH_LIMIT = 128;
 
 /**
  * The same value with every object key sorted by UTF-16 code unit (JavaScript's default string order; arrays keep

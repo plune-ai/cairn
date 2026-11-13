@@ -300,3 +300,39 @@ A case whose arguments hold a value that the secret masking would change (a valu
 
 The expected answer in a case: a Positive case expects a successful result; a Negative case accepts either a JSON-RPC
 error with code -32602 or a result with `isError: true`. Nothing executes the cases yet.
+
+### Adversarial cases (`--adversarial`)
+
+`--adversarial [styles]` adds cases that put awkward values into tool arguments. A bare flag means `normal,curious,psycho,
+hacker`; an unknown name is named on stderr and ignored (it never widens the choice). Like the other cases they are
+only written to `mcp-cases.json` (key `adversarial`); this command sends nothing, and the summary says so. The call guard
+treats `psycho` and `hacker` as mutating styles, so each case records what the guard says now (`guard`): without
+`--allow-mutations` they are "not sent: mutations disabled".
+
+- `normal` and `curious` make no new cases. They tag the existing ones (`adversarialStyle`): `valid` is `normal`;
+  all-params, enum and branch cases are `curious`.
+- `psycho`: the largest safe integer and `-1` in the first numeric parameter; a long string, an empty string, a string
+  with a zero byte and a string with an unpaired surrogate in the first string parameter; an array nested to the depth
+  limit in the first array parameter; a property the schema forbids when `additionalProperties` is `false`; an own key
+  `__proto__` in the first object parameter (or among the arguments).
+- `hacker`: four harmless strings in the first string parameter: a piece of SQL (WSTG-INPV-05), a script tag
+  (WSTG-INPV-01), a shell command substitution naming a command that does not exist (WSTG-INPV-12), and a path that
+  goes up to a name that does not exist (WSTG-ATHZ-01). The ids were read from the guide's own pages (version 4.2).
+  A tool with no string parameter gets none of these.
+
+The first parameter of a kind is the first by name; a parameter that only has `oneOf`/`anyOf` takes the type of its first
+branch. Every case is checked by the same worker as the others, and says whether its value passes the tool's schema
+(`schemaVerdict`, and `type` Positive or Negative to match): a payload inside a valid string is a Positive by schema.
+The expectation is about behaviour, not about rejection: a JSON-RPC error, a result with `isError: true` or an answer
+that does no harm are all fine; the server dying, the connection closing, a hang or an HTTP 5xx would be a failure. Whether a
+payload was handled safely is not decided by a rule: those cases say `humanOracle: true` and the summary counts them.
+
+Limits: the long string is 100000 characters (`--adversarial-max-string`, at most 200000) and the nesting is 100
+(`--adversarial-max-depth`, at most 100); both are written in the file and in the summary. At most 16 cases per tool and
+200 per run; the rest are counted as cut. With `--expect-auth`, an HTTP run that carries credentials also records, once and
+for the first tool in `--allow-tools`, the call without credentials (`noCredentials`; no header is in it); a pass would be a
+finding, and a failure only with `--expect-auth`. It is a description: this command does not send it.
+
+Not done here: sending the cases and judging the answers (a runner has to exist first), and the advice section. The
+function that finds signs of a stack, a file system path or SQL in an error text (`findAdvice`) exists and only advises;
+nothing uses it yet.

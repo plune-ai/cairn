@@ -202,6 +202,10 @@ export function buildProgram(): Command {
     .option("--time-budget <seconds>", "tool calls: time for the whole run of calls; exit code 4 when it runs out")
     .option("--max-cases-per-tool <n>", "cases: most cases kept per tool (default 12); the rest are listed as cut with a count")
     .option("--examples <file>", "cases: JSON file {\"tool\": {arguments}} giving the arguments of the valid case; a value the tool's inputSchema refuses is an error")
+    .option("--adversarial [styles]", "adversarial cases (data only, nothing is sent): normal,curious,psycho,hacker; a bare flag is all four, an unknown name is reported and ignored")
+    .option("--adversarial-max-string <n>", "adversarial: length of the long string (default 100000, at most 200000)")
+    .option("--adversarial-max-depth <n>", "adversarial: nesting of the deep array (default 100, at most 100)")
+    .option("--expect-auth", "adversarial: a call without credentials that goes through is a failure, not a finding")
     .action(async (command: string[], opts: Record<string, unknown>) => {
       await runModality("mcp-test", { ...opts, command });
     });
