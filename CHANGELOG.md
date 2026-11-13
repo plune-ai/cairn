@@ -15,8 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument. No model, no network, no tool call. Each case is checked against the tool's schema (Ajv, 2020-12): a case that
   does not pass or fail as expected is not written but listed as skipped with the keyword. `$ref` is followed when local;
   external, cyclic, too deep or too large schemas are skipped. `--max-cases-per-tool` (default 12) cuts the rest and the
-  summary counts them; `--examples <file>` gives the arguments of the valid case. When a schema holds a `pattern`,
-  its checks run in a worker thread with a 2 second limit per tool. See `docs/mcp.md`.
+  summary counts them; `--examples <file>` gives the arguments of the valid case. Every schema check
+  runs in a worker thread, with a 2 second limit per tool, a 15 second budget for the run, and a 256 KiB limit on a
+  tool's schema; the cases are made after the server connection is closed. Tools with the same name are all skipped.
+  See `docs/mcp.md`.
 
 - **`cairn mcp-test` call guard (MCP-E4).** Nothing is called by default. `--allow-tools` takes exact names (no "all", no
   patterns), `--allow-read-only-hints` trusts the server's `readOnlyHint` claim only for a plain ASCII name whose first word is a read verb (`get`, `list`, `search`, ...), and the report says so,

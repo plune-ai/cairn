@@ -13,10 +13,7 @@
  * keyword it cannot satisfy (`pattern`, `not`, `uniqueItems`, ...) ends as a skipped case that names the keyword.
  */
 import { createRequire } from "node:module";
-import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { ValidateFunction } from "ajv";
-import addFormats from "ajv-formats";
+import { MessageChannel, Worker, receiveMessageOnPort, type MessagePort } from "node:worker_threads";
 import { safeText } from "./model.js";
 
 export const SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
@@ -29,7 +26,9 @@ export const MAX_BRANCHES = 100;
 /** The longest string and the most items the generator builds. */
 export const MAX_STRING_LENGTH = 256;
 export const MAX_ARRAY_ITEMS = 64;
-/** The time one tool's schema check (compile and every validation) may take when the schema holds a `pattern`. */
+/** The most a tool's input schema may weigh once written as JSON. Over it, the tool is skipped before anything looks at it. */
+export const MAX_SCHEMA_BYTES = 256 * 1024;
+/** The time one tool's schema check (compile and every validation) may take. */
 export const ORACLE_TIME_LIMIT_MS = 2000;
 /** The time the checking worker may take to start (no schema is involved yet). */
 const WORKER_START_LIMIT_MS = 10000;
@@ -69,6 +68,12 @@ const isLocalRef = (v: string): boolean => v === "#" || v.startsWith("#/");
  */
 export function scanSchema(root: unknown): CannotBuild | undefined {
   if (!isObj(root)) return new CannotBuild("type", "the input schema is not an object");
+  try {
+    const bytes = JSON.stringify(root).length;
+    if (bytes > MAX_SCHEMA_BYTES) return new CannotBuild("limit", `the input schema is ${bytes} bytes; the limit is ${MAX_SCHEMA_BYTES} bytes`);
+  } catch {
+    return new CannotBuild("limit", "the input schema is too deeply nested to be measured");
+  }
   const declared = root["$schema"];
   if (declared !== undefined && declared !== SCHEMA_2020_12 && declared !== `${SCHEMA_2020_12}#`) {
     return new CannotBuild("$schema", `the schema declares $schema ${safeText(declared, 80)}; only ${SCHEMA_2020_12} is supported`);
@@ -119,25 +124,6 @@ export function scanSchema(root: unknown): CannotBuild | undefined {
   return undefined;
 }
 
-/** True when `pattern` or `patternProperties` appears anywhere in the schema (a superset of the keywords that run a RegExp). */
-export function usesPattern(schema: unknown): boolean {
-  const stack: unknown[] = [schema];
-  let seen = 0;
-  while (stack.length && seen++ < 4 * MAX_SCHEMA_NODES) {
-    const n = stack.pop();
-    if (!n || typeof n !== "object") continue;
-    if (Array.isArray(n)) {
-      stack.push(...n);
-      continue;
-    }
-    for (const [k, v] of Object.entries(n)) {
-      if ((k === "pattern" && typeof v === "string") || (k === "patternProperties" && isObj(v))) return true;
-      stack.push(v);
-    }
-  }
-  return false;
-}
-
 export interface OracleError {
   keyword: string;
   /** Where in the value the error is (JSON pointer). */
@@ -159,7 +145,6 @@ export interface OracleResult {
 export interface Oracle {
   /** Throws {@link CannotBuild} when the validator cannot run (stack overflow) and {@link OracleTimeout} when it takes too long. */
   check(value: unknown): OracleResult;
-  close(): void;
 }
 
 /** The compile-and-validate code shared by the in-process oracle and the worker (as text, so it can be run in both). */
@@ -202,15 +187,6 @@ port.on("message", (msg) => {
   catch (e) { reply({ ok: false, overflow: e instanceof RangeError, message: String(e && e.message) }); }
 });`;
 
-function toResultOf(validate: ValidateFunction, value: unknown): OracleResult {
-  if (validate(value)) return { valid: true, errors: [] };
-  const errors: OracleError[] = (validate.errors ?? []).map((e) => {
-    const missing = e.keyword === "required" ? (e.params as { missingProperty?: unknown }).missingProperty : undefined;
-    return { keyword: e.keyword, path: e.instancePath, ...(typeof missing === "string" ? { missing } : {}) };
-  });
-  return { valid: false, ...(errors[0] ? { keyword: errors[0].keyword, path: errors[0].path } : {}), errors };
-}
-
 function compileFailure(e: unknown): CannotBuild {
   if (e instanceof RangeError) return new CannotBuild("limit", "the schema is too deeply nested for the validator");
   return new CannotBuild("schema", `the schema does not compile: ${safeText((e as Error).message, 200)}`);
@@ -223,90 +199,90 @@ function forAjv(schema: Obj): Obj {
   return copy;
 }
 
-function inProcessOracle(schema: Obj): Oracle {
-  // One instance per schema: two tools may declare the same `$id`.
-  const ajv = new Ajv2020({ strict: false, allErrors: true, ownProperties: true, logger: false });
-  (addFormats as unknown as (a: Ajv2020) => void)(ajv);
-  let validate;
-  try {
-    validate = ajv.compile(forAjv(schema));
-  } catch (e) {
-    throw compileFailure(e);
-  }
-  return {
-    check(value: unknown): OracleResult {
-      try {
-        return toResultOf(validate, value);
-      } catch (e) {
-        throw compileFailure(e);
-      }
-    },
-    close() {},
-  };
+type Reply = { ok: boolean; overflow?: boolean; message?: string; result?: OracleResult } | undefined;
+
+/** One worker thread; replaced, never reused, after a timeout. */
+interface Live {
+  worker: Worker;
+  port: MessagePort;
+  sig: Int32Array;
 }
 
 /**
- * The same checks in a worker thread with one time limit for the whole tool. A RegExp in a schema cannot be interrupted
- * where it runs, but a worker can be terminated. The worker is an inline script (a string): the package is compiled with
- * plain `tsc`, which would not copy a separate worker file, and the script gets the absolute paths of the two libraries
- * from this module's own resolution, so it needs no working directory.
+ * Where the schema checks of one run happen. Every check of every tool runs in one worker thread: a RegExp in a schema
+ * cannot be interrupted where it runs, but a worker can be terminated, and no test of the schema (not even a look for the
+ * word `pattern`) decides whether a check is safe to run here. One time limit applies to each tool (compile and every
+ * validation). After a timeout the worker is terminated and the next tool gets a new one.
+ *
+ * The worker is an inline script (a string): the package is compiled with plain `tsc`, which would not copy a separate
+ * worker file, and the script gets the absolute paths of the two libraries from this module's own resolution, so it needs
+ * no working directory. The script holds nothing that came from a server.
  */
-function workerOracle(schema: Obj): Oracle {
-  const req = createRequire(import.meta.url);
-  const { port1, port2 } = new MessageChannel();
-  const flag = new SharedArrayBuffer(4);
-  const sig = new Int32Array(flag);
-  const worker = new Worker(WORKER_SOURCE, {
-    eval: true,
-    workerData: { ajvPath: req.resolve("ajv/dist/2020.js"), formatsPath: req.resolve("ajv-formats"), port: port2, flag },
-    transferList: [port2],
-  });
-  worker.unref();
-  worker.on("error", () => {}); // a worker that fails to start shows up as a start timeout below
-  let dead = false;
-  let deadline = 0;
-  const stop = (): void => {
-    dead = true;
-    void worker.terminate();
-    port1.close();
-  };
-  const ask = (msg: unknown, ms: number): { ok: boolean; overflow?: boolean; message?: string; result?: OracleResult } | undefined => {
-    if (dead || ms <= 0) return undefined;
-    Atomics.store(sig, 0, 0);
-    port1.postMessage(msg);
-    if (Atomics.wait(sig, 0, 0, ms) === "timed-out") return undefined;
-    return receiveMessageOnPort(port1)?.message as ReturnType<typeof ask>;
-  };
-  const timeout = (): OracleTimeout => {
-    stop();
-    return new OracleTimeout("pattern", `the schema check took too long (more than ${ORACLE_TIME_LIMIT_MS} ms; a pattern may backtrack badly), so the tool was skipped`);
-  };
-  if (!ask({ init: true }, WORKER_START_LIMIT_MS)) {
-    stop();
-    throw new CannotBuild("pattern", "the checking worker did not start");
+export class OracleHost {
+  private live: Live | undefined;
+
+  private start(): Live {
+    const req = createRequire(import.meta.url);
+    const { port1, port2 } = new MessageChannel();
+    const flag = new SharedArrayBuffer(4);
+    const worker = new Worker(WORKER_SOURCE, {
+      eval: true,
+      workerData: { ajvPath: req.resolve("ajv/dist/2020.js"), formatsPath: req.resolve("ajv-formats"), port: port2, flag },
+      transferList: [port2],
+    });
+    worker.unref();
+    worker.on("error", () => {}); // a worker that fails to start shows up as a start timeout below
+    const live: Live = { worker, port: port1, sig: new Int32Array(flag) };
+    this.live = live;
+    if (!this.ask(live, { init: true }, WORKER_START_LIMIT_MS)) {
+      this.kill(live);
+      throw new CannotBuild("pattern", "the checking worker did not start");
+    }
+    return live;
   }
-  deadline = Date.now() + ORACLE_TIME_LIMIT_MS;
-  const compiled = ask({ schema: forAjv(schema) }, deadline - Date.now());
-  if (!compiled) throw timeout();
-  if (!compiled.ok) {
-    stop();
-    throw compiled.overflow ? compileFailure(new RangeError()) : new CannotBuild("schema", `the schema does not compile: ${safeText(compiled.message, 200)}`);
+
+  private kill(live: Live): void {
+    void live.worker.terminate();
+    live.port.close();
+    if (this.live === live) this.live = undefined;
   }
-  return {
-    check(value: unknown): OracleResult {
-      const r = ask({ value }, deadline - Date.now());
-      if (!r) throw timeout();
-      if (!r.ok || !r.result) throw compileFailure(r.overflow ? new RangeError() : new Error(r.message));
-      return r.result;
-    },
-    close: stop,
-  };
+
+  private ask(live: Live, msg: unknown, ms: number): Reply {
+    if (this.live !== live || ms <= 0) return undefined;
+    Atomics.store(live.sig, 0, 0);
+    live.port.postMessage(msg);
+    if (Atomics.wait(live.sig, 0, 0, ms) === "timed-out") return undefined;
+    return receiveMessageOnPort(live.port)?.message as Reply;
+  }
+
+  /** A validator for the schema (Ajv, 2020-12, with formats). Throws {@link CannotBuild} when it does not compile. */
+  oracle(schema: Obj): Oracle {
+    const live = this.live ?? this.start();
+    const deadline = Date.now() + ORACLE_TIME_LIMIT_MS;
+    const timeout = (): OracleTimeout => {
+      this.kill(live);
+      return new OracleTimeout("pattern", `the schema check took too long (more than ${ORACLE_TIME_LIMIT_MS} ms; a pattern may backtrack badly), so the tool was skipped`);
+    };
+    const compiled = this.ask(live, { schema: forAjv(schema) }, deadline - Date.now());
+    if (!compiled) throw timeout();
+    if (!compiled.ok) {
+      throw compiled.overflow ? compileFailure(new RangeError()) : new CannotBuild("schema", `the schema does not compile: ${safeText(compiled.message, 200)}`);
+    }
+    return {
+      check: (value: unknown): OracleResult => {
+        const r = this.ask(live, { value }, deadline - Date.now());
+        if (!r) throw timeout();
+        if (!r.ok || !r.result) throw compileFailure(r.overflow ? new RangeError() : new Error(r.message));
+        return r.result;
+      },
+    };
+  }
+
+  close(): void {
+    if (this.live) this.kill(this.live);
+  }
 }
 
-/** A validator for the schema (Ajv, 2020-12, with formats). Throws {@link CannotBuild} when it does not compile. */
-export function compileOracle(schema: Obj): Oracle {
-  return usesPattern(schema) ? workerOracle(schema) : inProcessOracle(schema);
-}
 
 /** `#/a/b` → the node, or undefined. `~1` and `~0` and percent escapes are decoded. */
 function pointer(root: unknown, ref: string): unknown {

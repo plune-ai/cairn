@@ -274,11 +274,14 @@ What the generator does with a schema from a foreign server:
   or `maxItems`.
 - A `pattern` is never turned into a regular expression to make a value, so a schema with a `pattern` usually ends in
   `skipped`. Ajv does run the pattern to validate the generated value, and a regular expression cannot be interrupted
-  where it runs. So when a tool's schema holds `pattern` or `patternProperties` anywhere, all schema checks for that tool
-  (compile and every validation) run in a worker thread with one time limit of 2 seconds for the whole tool. When the
-  limit is passed the worker is terminated, the tool gets no cases, and one `skipped` entry with the keyword `pattern`
-  says the check took too long. Tools without those keywords are checked in the main thread. Other tools in the run are
-  not affected.
+  where it runs. So every schema check of every tool (compile and every validation) runs in a worker thread, with one
+  time limit of 2 seconds for the whole tool and one of 15 seconds for all tools together. When a tool passes its limit the
+  worker is terminated and replaced, the tool gets no cases, and one `skipped` entry with the keyword `pattern` says the
+  check took too long. When the 15 seconds are spent, the tools not yet checked are skipped with the keyword `budget`
+  and the reason "time budget for checking schemas was spent"; the summary counts them. A schema larger than 256 KiB
+  once written as JSON is skipped with `limit` before anything else looks at it. The cases are made after the server
+  connection is closed, and a line on stderr ("checking N tool schemas…") says the work has begun.
+- Two or more tools with the same exact name are all skipped (keyword `name`), whatever order the server sent them in.
 - Ids: the `stableId` is a hash of the exact tool name, kind and detail (case and spaces kept), so it does not depend on
   the order of tools, properties or enum values, or on `--max-cases-per-tool`. A name shown to people is
   `tool · kind · detail`.

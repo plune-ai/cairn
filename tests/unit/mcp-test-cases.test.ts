@@ -246,7 +246,7 @@ describe("CLI · mcp-test · cases · what cannot be built is skipped, with the 
     expect(text).not.toMatch(/all good|ok\b/i);
   });
 
-  it("two tools with one name: the second is skipped", () => {
+  it("two tools with one name: both are skipped", () => {
     const r = gen([FIXTURE_SET[4] as McpToolEntry, FIXTURE_SET[4] as McpToolEntry]);
     expect(r.skipped).toEqual([expect.objectContaining({ tool: "plain", keyword: "name" })]);
   });
@@ -500,5 +500,59 @@ describe("CLI · mcp-test · cases · after review", () => {
       const r = gen([t("ok", { $schema: s, type: "object", properties: { a: { type: "string" } }, required: ["a"] })]);
       expect(of(r.cases, "ok").length, s).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("CLI · mcp-test · cases · second review", () => {
+  const HIDDEN_N = 64;
+  const hiddenSchema = (n: number): Record<string, unknown> => ({
+    type: "object",
+    properties: { a: { type: "string", pattern: "^(a+)+b$", minLength: n } },
+    required: ["a"],
+    // A data key the scan does not walk: it used to use up the pattern search before it reached `pattern`.
+    example: Array.from({ length: 25000 }, (_, i) => i),
+  });
+
+  it("1 · a pattern hidden behind 25000 data nodes still ends as a time skip under pattern", () => {
+    const start = Date.now();
+    const r = gen([t("hidden", hiddenSchema(HIDDEN_N)), FIXTURE_SET[4] as McpToolEntry]);
+    expect(Date.now() - start).toBeLessThan(12000);
+    expect(of(r.cases, "hidden")).toEqual([]);
+    expect(r.skipped.filter((s) => s.tool === "hidden")).toEqual([expect.objectContaining({ keyword: "pattern", reason: expect.stringContaining("too long") })]);
+    expect(of(r.cases, "plain").length).toBeGreaterThan(0);
+  }, 30000);
+
+  it("1 · a schema over the size limit is a named skip, before anything walks it", () => {
+    const big = { type: "object", properties: { a: { type: "string" } }, required: ["a"], example: Array.from({ length: 200000 }, (_, i) => i) };
+    const r = gen([t("big", big)]);
+    expect(r.cases).toEqual([]);
+    expect(r.skipped).toEqual([expect.objectContaining({ tool: "big", kind: "tool", keyword: "limit", reason: expect.stringContaining("bytes") })]);
+  });
+
+  it("1 · an ordinary tool with no pattern still yields its cases", () => {
+    const r = gen([FIXTURE_SET[0] as McpToolEntry]);
+    expect(r.cases.length).toBeGreaterThan(10);
+    expect(r.skipped.filter((x) => x.kind === "tool")).toEqual([]);
+  });
+
+  it("2 · when the time budget is spent, the remaining tools are skipped by name and counted in the summary", () => {
+    const hostile = t("a-hostile", { type: "object", properties: { a: { type: "string", pattern: "^(a+)+b$", minLength: 64 } }, required: ["a"] });
+    const r = gen([t("c-plain", { type: "object", properties: { x: { type: "string" } } }), t("b-plain", { type: "object", properties: { x: { type: "string" } } }), hostile], { timeBudgetMs: 500 });
+    expect(r.skipped.filter((s) => s.keyword === "budget").map((s) => s.tool)).toEqual(["b-plain", "c-plain"]);
+    expect(r.skipped.find((s) => s.tool === "b-plain")?.reason).toBe("time budget for checking schemas was spent");
+    expect(of(r.cases, "b-plain")).toEqual([]);
+    expect(renderCasesSummary(r).join("\n")).toMatch(/2 tools skipped: time budget for checking schemas was spent/);
+  }, 30000);
+
+  it("4 · two tools with the same exact name are both skipped, in whichever order they arrive", () => {
+    const a = t("dup", { type: "object", properties: { a: { type: "string" } }, required: ["a"] });
+    const b = t("dup", { type: "object", properties: { b: { type: "integer" } }, required: ["b"] });
+    const other = FIXTURE_SET[4] as McpToolEntry;
+    const r1 = gen([a, b, other]);
+    const r2 = gen([b, a, other]);
+    expect(JSON.stringify(r1)).toBe(JSON.stringify(r2));
+    expect(of(r1.cases, "dup")).toEqual([]);
+    expect(r1.skipped).toEqual([expect.objectContaining({ tool: "dup", kind: "tool", keyword: "name" })]);
+    expect(of(r1.cases, "plain").length).toBeGreaterThan(0);
   });
 });

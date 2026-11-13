@@ -14,7 +14,7 @@ import {
   MAX_ARRAY_ITEMS,
   MAX_STRING_LENGTH,
   SchemaBuilder,
-  compileOracle,
+  OracleHost,
   has,
   isIntegerType,
   put,
@@ -73,7 +73,13 @@ export interface McpCasesReport {
   errors: Array<{ tool: string; message: string }>;
 }
 
+/** The time all schema checks of one run may take together; tools after that are skipped by name. */
+export const TOTAL_TIME_BUDGET_MS = 15000;
+export const BUDGET_SPENT_REASON = "time budget for checking schemas was spent";
+
 export interface GenerateOptions {
+  /** Milliseconds for all schema checks together (default {@link TOTAL_TIME_BUDGET_MS}). */
+  timeBudgetMs?: number;
   maxCasesPerTool?: number;
   /** Tool name → arguments to use for the `valid` case. */
   examples?: Record<string, Record<string, unknown>>;
@@ -220,7 +226,7 @@ interface ToolOptions {
   examples: ReadonlyMap<string, Obj>;
 }
 
-function casesForTool(tool: McpToolEntry, opts: ToolOptions): ToolOutcome {
+function casesForTool(tool: McpToolEntry, opts: ToolOptions, host: OracleHost): ToolOutcome {
   const skipped: McpCaseSkipped[] = [];
   const errors: Array<{ tool: string; message: string }> = [];
   const skipTool = (e: unknown): ToolOutcome => {
@@ -234,7 +240,7 @@ function casesForTool(tool: McpToolEntry, opts: ToolOptions): ToolOutcome {
   let builder: SchemaBuilder;
   let rootView: Obj;
   try {
-    oracle = compileOracle(tool.inputSchema);
+    oracle = host.oracle(tool.inputSchema);
     builder = new SchemaBuilder(tool.inputSchema);
     rootView = builder.view(tool.inputSchema);
   } catch (e) {
@@ -246,8 +252,6 @@ function casesForTool(tool: McpToolEntry, opts: ToolOptions): ToolOutcome {
     // The schema check ran out of time or could not run: the tool gives no cases, only this entry.
     if (e instanceof CannotBuild) return skipTool(e);
     throw e;
-  } finally {
-    oracle.close();
   }
 }
 
@@ -450,15 +454,44 @@ function buildCases(tool: McpToolEntry, opts: ToolOptions, oracle: Oracle, build
 export function generateMcpCases(tools: McpToolEntry[], options: GenerateOptions = {}): McpCasesReport {
   const maxCasesPerTool = options.maxCasesPerTool ?? DEFAULT_MAX_CASES_PER_TOOL;
   const report: McpCasesReport = { version: MCP_CASES_VERSION, maxCasesPerTool, cases: [], skipped: [], cut: [], noCases: [], errors: [] };
-  const seen = new Set<string>();
   const examples = new Map<string, Obj>(Object.entries(options.examples ?? {}));
+  // Two tools with one exact name: neither is trusted, so the result does not depend on the order the server sent them.
+  const copies = new Map<string, number>();
+  for (const tool of tools) copies.set(tool.name, (copies.get(tool.name) ?? 0) + 1);
+  const budgetEnd = Date.now() + (options.timeBudgetMs ?? TOTAL_TIME_BUDGET_MS);
+  const host = new OracleHost();
+  try {
+    runTools(tools, copies, examples, maxCasesPerTool, budgetEnd, host, report);
+  } finally {
+    host.close();
+  }
+  return finish(report);
+}
+
+function runTools(
+  tools: McpToolEntry[],
+  copies: ReadonlyMap<string, number>,
+  examples: ReadonlyMap<string, Obj>,
+  maxCasesPerTool: number,
+  budgetEnd: number,
+  host: OracleHost,
+  report: McpCasesReport,
+): void {
+  const reported = new Set<string>();
   for (const tool of [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-    if (seen.has(tool.name)) {
-      report.skipped.push({ tool: tool.name, kind: "tool", detail: "", keyword: "name", reason: "another tool has the same name; only the first is used" });
+    const n = copies.get(tool.name) ?? 1;
+    if (n > 1) {
+      if (!reported.has(tool.name)) {
+        reported.add(tool.name);
+        report.skipped.push({ tool: tool.name, kind: "tool", detail: "", keyword: "name", reason: `${n} tools have this exact name; none of them is used` });
+      }
       continue;
     }
-    seen.add(tool.name);
-    const r = casesForTool(tool, { maxCasesPerTool, examples });
+    if (Date.now() >= budgetEnd) {
+      report.skipped.push({ tool: tool.name, kind: "tool", detail: "", keyword: "budget", reason: BUDGET_SPENT_REASON });
+      continue;
+    }
+    const r = casesForTool(tool, { maxCasesPerTool, examples }, host);
     report.cases.push(...r.cases);
     report.skipped.push(...r.skipped);
     report.errors.push(...r.errors);
@@ -468,6 +501,9 @@ export function generateMcpCases(tools: McpToolEntry[], options: GenerateOptions
     if (r.cut) report.cut.push(r.cut);
     if (r.noCases) report.noCases.push(tool.name);
   }
+}
+
+function finish(report: McpCasesReport): McpCasesReport {
   // One id per case, one name per case, in the whole run. Names that read the same (a tool name can hold " · ") also carry the id.
   const ids = new Set<string>();
   for (const c of report.cases) {
@@ -486,12 +522,14 @@ export function renderCasesSummary(report: McpCasesReport): string[] {
   const byTool = new Map<string, McpCase[]>();
   for (const c of report.cases) byTool.set(c.tool, [...(byTool.get(c.tool) ?? []), c]);
   const pos = report.cases.filter((c) => c.type === "Positive").length;
+  const spent = report.skipped.filter((x) => x.keyword === "budget").length;
   lines.push(`Cases from inputSchema: ${report.cases.length} (${pos} positive, ${report.cases.length - pos} negative); nothing was sent.`);
   for (const [tool, list] of byTool) {
     const kinds: Record<string, number> = {};
     for (const c of list) kinds[c.kind] = (kinds[c.kind] ?? 0) + 1;
     lines.push(`  ${safeText(tool, 60)}: ${list.length} (${Object.entries(kinds).map(([k, n]) => `${k} ${n}`).join(", ")})`);
   }
+  if (spent) lines.push(`  ${spent} tools skipped: ${BUDGET_SPENT_REASON}.`);
   for (const t of report.noCases) lines.push(`  ${safeText(t, 60)}: no cases (the input schema declares no properties).`);
   for (const c of report.cut) {
     lines.push(`  ${safeText(c.tool, 60)}: ${c.count} more cut at --max-cases-per-tool ${report.maxCasesPerTool} (${Object.entries(c.kinds).map(([k, n]) => `${k} ${n}`).join(", ")}).`);

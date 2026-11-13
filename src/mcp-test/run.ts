@@ -264,6 +264,11 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const report = maskStrings(guard.report(), secrets);
     await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(report), null, 2)}\n`]]);
     // Cases are built from the schemas as listed; nothing here sends a call.
+    // Nothing after this needs the server, and checking schemas can take a while: let it go first.
+    pid = conn.pid ?? pid;
+    await conn.close();
+    conn = undefined;
+    err(`checking ${tools.length} tool schemas…\n`);
     // A case whose argument holds a masked value is moved to `skipped`: the masked copy would no longer match the schema.
     const cases = maskStrings(dropMaskedCases(generateMcpCases(tools, { maxCasesPerTool, ...(examples ? { examples } : {}) }), secrets), secrets);
     await writeFiles([[CASES_FILE, `${JSON.stringify(sortKeys(cases), null, 2)}\n`]]);
