@@ -223,17 +223,24 @@ and the tool's name, and a test account.
 | flag | allows | does not allow |
 |---|---|---|
 | (none) | nothing is called | — |
-| `--allow-tools a,b` | calls to the tools with exactly these names (compared byte for byte; no `all`, no pattern, no empty name: such a value is a usage error). A named tool that is *claimed read-only with a clean name* (rule below) is allowed at once | a named tool that is not clean, or whose name reads as a deletion, still needs `--allow-mutations`. A name the server does not have is an error (exit `1`) |
-| `--allow-read-only-hints` | also the tools that pass the read-only rule below, without naming them | any other tool. It is trust in the server's claim, not a check |
-| `--allow-mutations` | together with the tool's name: tools that are not claimed read-only with a clean name, deletions, and the `psycho` and `hacker` styles. Prints a banner | alone it allows nothing (`Note: --allow-mutations without --allow-tools allows nothing.`) |
+| `--allow-tools a,b` | calls to the tools with exactly these names (compared byte for byte; no `all`, no pattern, no empty name: such a value is a usage error). A named tool whose server claims it read-only and that nothing contradicts (rule below) is allowed at once, whatever its name is | a named tool that does not meet that rule, or whose name or title reads as a deletion, still needs `--allow-mutations`. A name the server does not have is an error (exit `1`) |
+| `--allow-read-only-hints` | also the tools that pass the read-only rule below **and** have a plain ASCII name that starts with a read verb, without naming them | any other tool. It is trust in the server's claim, not a check |
+| `--allow-mutations` | together with the tool's name: tools that do not meet the read-only rule below, deletions, and the `psycho` and `hacker` styles. Prints a banner | alone it allows nothing (`Note: --allow-mutations without --allow-tools allows nothing.`) |
 
-The read-only rule: a tool counts as claimed read-only with a clean name only when `readOnlyHint` is `true`,
-`destructiveHint` is not `true`, the name is plain ASCII letters, digits, `_`, `-` and `.`, the first word of the name
-(after splitting `getReport`, `get_report`, `get-report` into words) is one of `get`, `list`, `read`, `search`, `find`,
-`describe`, `show`, `view`, `fetch`, `query`, `count`, `check`, `lookup`, `status`, and the deletion words the crawler
-knows (English, Ukrainian, Russian) find nothing in the name or the title. The description plays no part. Names from the
-server are untrusted text: a name with control or invisible characters, or two tools whose names are the same after
-case folding, are refused even when named.
+The read-only rule decides whether a tool may be called without `--allow-mutations`. A tool meets it only when all of
+these hold: `readOnlyHint` is `true`, `destructiveHint` is not `true`, the deletion words the crawler knows (English,
+Ukrainian, Russian) find nothing in the name or the title, the name has no control or invisible characters, and no other
+tool has the same name (or the same after normalization and case folding). The description plays no part, and neither
+does the shape of the name: a tool called `send_email` with `readOnlyHint: true`, named in `--allow-tools`, is sent
+without `--allow-mutations`, because the claim is the server's word and the guard checks only that nothing contradicts it.
+The adversarial styles `psycho` and `hacker` are never sent on this rule: they need `--allow-mutations` too.
+
+A tool that nobody named is held to more. `--allow-read-only-hints` lets it through only when it also meets the rule above
+**and** its name is plain ASCII letters, digits, `_`, `-` and `.` and its first word (after splitting `getReport`,
+`get_report`, `get-report` into words) is one of `get`, `list`, `read`, `search`, `find`, `describe`, `show`, `view`,
+`fetch`, `query`, `count`, `check`, `lookup`, `status`. A tool that meets the rule but not this one is refused as `claim not
+trusted`; naming it in `--allow-tools` lets it through. Names from the server are untrusted text: a name with control or
+invisible characters, or two tools whose names are the same after case folding, are refused even when named.
 
 Limits, all enforced before a call is sent:
 
@@ -277,7 +284,7 @@ Output (cut: the guard section lists one line per case, only the first lines of 
 exit 1
 ```
 
-`search_notes` is claimed read-only with a clean name, so naming it was enough. The other tools were refused by the guard
+`search_notes` is claimed read-only and nothing contradicts it, so naming it was enough. The other tools were refused by the guard
 (`mutations not allowed`, and `destructive name` for `delete_note`) and their 24 cases are `not-sent`. Eight cases were
 sent and all eight failed, because this test server answers a success to everything: the three cases that should succeed
 (`valid` and the two `boundary` cases on a limit) failed because the tool declares an `outputSchema` and the answer has no
@@ -314,7 +321,7 @@ cairn mcp-test --out runs/r5 --allow-tools create_note --allow-mutations -- node
 exit 1
 ```
 
-The banner is printed (and saved in `mcp-guard.json`). `create_note` is not claimed read-only, so it needed both its name
+The banner is printed (and saved in `mcp-guard.json`). `create_note` does not meet the read-only rule, so it needed both its name
 and `--allow-mutations`. Its server really received seven calls and keeps whatever they created.
 
 ### Example: the trust flag
@@ -370,7 +377,7 @@ In `report.json` the case `search_notes · no-credentials` is `passed`: the serv
 | `passed` | the server answered as the case expects |
 | `failed` | the server's own answer broke a rule written in the case, or its process exited during the call while it had been answering before |
 | `not-sent` | the call guard refused it (a tool not allowed, a budget, a tool that changed since permission). Only the guard's refusal is `not-sent` |
-| `could-not-run` | no answer: timeout, closed connection, server gone, an interrupt during the call, a tool list that could not be re-read, or the run stopped or ran out of `--time-budget` before it |
+| `could-not-run` | no answer, or an answer that cannot be judged (an HTTP 4xx status, a transport error, an answer that is not a JSON object): timeout, closed connection, server gone, an interrupt during the call, a tool list that could not be re-read, or the run stopped or ran out of `--time-budget` before it |
 | `needs-review` | the server answered, but a person has to judge |
 
 Rules of the verdict:
@@ -576,7 +583,7 @@ does not read it as a workflow command.
   `the stdio size counter is unavailable with this SDK version: only the transport's own limit applies`, writes
   `stdioSizeCounter: "unavailable"` in `report.json`, and the child may keep writing until the transport's own refusal
   closes it. Over HTTP the counter is always `active`. After a restart that failed, the value of the last connection that was
-  alive is kept; `unknown` means no connection was ever alive.
+  alive is kept.
 - **One restart.** A stdio server that dies is started once more; results after that are marked `afterRestart` and ran
   against a server that lost its state.
 - **A tool the server changes mid-run** is refused from then on, so the rest of its cases are `not-sent`.

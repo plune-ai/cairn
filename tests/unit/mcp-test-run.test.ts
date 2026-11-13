@@ -296,7 +296,7 @@ describe("CLI · mcp-test · second review, command level", () => {
   });
 });
 
-describe("CLI · mcp-test · the size counter flag survives a failed restart (third review)", () => {
+describe("CLI · mcp-test · the size counter flag keeps the last live value after a failed restart", () => {
   it("remembers the value of the last live connection; the restart that failed does not turn it into 'active'", async () => {
     const x = await run({}, { allowTools: "echo,crash", maxCalls: 50, importer: failingImporter(2) });
     const report = JSON.parse(x.read("report.json"));

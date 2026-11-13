@@ -65,3 +65,35 @@ describe("docs · mcp-test · links and fences", () => {
     });
   }
 });
+
+describe("docs · mcp-test · what lets a named tool through", () => {
+  // The guard lets a tool named in --allow-tools through, without --allow-mutations, on the server's read-only claim
+  // alone (nothing contradicting it). The read verb and the ASCII name decide only for --allow-read-only-hints.
+  const blocks = (rel: string): string[] => read(rel).split(/\n\s*\n|\n(?=\|)/);
+  const ROW_OF_NAMED = /read verb|clean name|plain ASCII|starts with a (?:read )?verb/i;
+
+  it("no part of the guide that speaks of --allow-tools but not of --allow-read-only-hints asks for a read verb or a clean name", () => {
+    for (const rel of ["docs/mcp-test.md", "docs/runbooks/test-an-mcp-server.md"])
+      for (const b of blocks(rel))
+        if (b.includes("`--allow-tools") && !b.includes("--allow-read-only-hints")) expect(b, `${rel}: ${b.slice(0, 80)}`).not.toMatch(ROW_OF_NAMED);
+  });
+
+  it("the --allow-tools row of the flag table does not set a condition on the shape of the name", () => {
+    const row = read("docs/mcp-test.md").split("\n").find((l) => l.startsWith("| `--allow-tools a,b`")) as string;
+    expect(row).toBeDefined();
+    expect(row).not.toMatch(ROW_OF_NAMED);
+    expect(row).toMatch(/whatever its name is/);
+  });
+
+  it("the read verb and the ASCII name are tied to --allow-read-only-hints, and the page shows a named tool with a non-read name going through", () => {
+    const page = read("docs/mcp-test.md");
+    const row = page.split("\n").find((l) => l.startsWith("| `--allow-read-only-hints`")) as string;
+    expect(row).toMatch(/plain ASCII name that starts with a read verb/);
+    expect(page).toContain("`send_email` with `readOnlyHint: true`, named in `--allow-tools`, is sent");
+    expect(page).toMatch(/refused as `claim not\s+trusted`; naming it in `--allow-tools` lets it through/);
+  });
+
+  it("the --allow-mutations row does not describe the read-only rule with a clean name", () => {
+    expect(read("docs/mcp-test.md")).not.toMatch(/claimed read-only with a clean name/);
+  });
+});

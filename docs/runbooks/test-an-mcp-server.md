@@ -28,7 +28,7 @@
    ```bash
    cairn mcp-test --out runs/second --allow-tools search_notes -- node ./my-server.js
    ```
-   Only the named tool is called; the other cases are `not-sent`. A tool that is not claimed read-only with a clean name
+   Only the named tool is called; the other cases are `not-sent`. A tool whose server does not claim it read-only (or whose name reads as a deletion)
    needs `--allow-mutations` too, and `psycho` / `hacker` cases always do.
 4. **Read the result.** The console prints the counts per state, the coverage per tool and the guard's decisions.
    `report.md` has one row per case with the reason; `mcp-evidence.json` has the masked arguments and answers. States:

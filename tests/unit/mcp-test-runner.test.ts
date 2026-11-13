@@ -535,7 +535,7 @@ describe("CLI · mcp-test · connect · second review", () => {
   }, 30000);
 });
 
-describe("CLI · mcp-test · connect · a server that ANSWERS initialize with an error (third review)", () => {
+describe("CLI · mcp-test · connect · a server that answers initialize with an error", () => {
   /** A loopback Streamable HTTP server whose answer to initialize is a JSON-RPC error with `code`. */
   async function erroringHttp(code: number): Promise<{ url: string; close: () => Promise<void> }> {
     const server: Server = createServer((req, res) => {
