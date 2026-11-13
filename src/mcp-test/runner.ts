@@ -79,6 +79,8 @@ export interface CaseResult {
 export interface Link {
   request: ToolRpc["request"];
   transport: "stdio" | "streamable-http";
+  /** Reads this connection's tool list again (a new connection brings its own). */
+  relist?: () => Promise<McpToolEntry[]>;
 }
 
 export interface RunnerOptions {
@@ -153,6 +155,15 @@ function evidenceText(v: unknown, secrets: readonly string[]): string {
   return safeText(JSON.stringify(maskDeep(v, secrets)) ?? "", EVIDENCE_TEXT_LIMIT);
 }
 
+/** Advice only advises: a failure in it loses the advice, never a result. */
+function adviceOf(text: string): AdviceFinding[] {
+  try {
+    return findAdvice(text);
+  } catch {
+    return [];
+  }
+}
+
 function isErrorResult(r: Obj): boolean {
   return r["isError"] === true;
 }
@@ -210,10 +221,11 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
         continue;
       }
       // A tool that changed since the user looked is refused by the guard: ask it to compare before the first call.
-      if (!observed.has(c.tool) && o.relist) {
+      const relist = link.relist ?? o.relist;
+      if (!observed.has(c.tool) && relist) {
         observed.add(c.tool);
         try {
-          o.guard.observe(await o.relist());
+          o.guard.observe(await relist());
         } catch {
           /* the guard keeps the list it was given */
         }
@@ -272,7 +284,7 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
 
       if (answer.kind === "rpc-error") {
         const text = evidenceText({ code: answer.code, message: answer.message }, secrets);
-        const advice = findAdvice(text, secrets);
+        const advice = adviceOf(text);
         const extra = { response: text, advice };
         const e = c.expect;
         if (e.outcome === "rejected") answered("passed", `refused with a JSON-RPC error (${answer.code})`, extra);
@@ -294,7 +306,7 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       } else {
         const text = evidenceText(r, secrets);
         extra = { ...extra, response: text };
-        if (isErrorResult(r)) extra = { ...extra, advice: findAdvice(text, secrets) };
+        if (isErrorResult(r)) extra = { ...extra, advice: adviceOf(text) };
       }
       const e = c.expect;
       if (e.outcome === "rejected") {
