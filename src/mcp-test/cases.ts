@@ -60,6 +60,8 @@ export interface McpCase {
   expect: McpCaseExpect;
   /** Where the `valid` arguments came from. */
   source: "schema" | "examples-file";
+  /** What this case exercises beyond the arguments it sends (enum value, branch). */
+  covers?: Covers;
   /** Set when `--adversarial` asked for `normal` (the valid case) or `curious` (all-params, enum, branch). */
   adversarialStyle?: AdversarialStyle;
 }
@@ -156,6 +158,15 @@ interface Candidate {
   type: ApiCaseType;
   make: () => Obj;
   reason?: Reason;
+  /** What a coverage count takes this case to exercise. */
+  covers?: Covers;
+}
+
+/** An enum value (as JSON) or a oneOf/anyOf branch (its detail) that a case exercises. */
+export interface Covers {
+  param?: string;
+  enumValue?: string;
+  branch?: string;
 }
 
 /** A JSON pointer to a top-level property. */
@@ -396,7 +407,8 @@ function buildCases(tool: McpToolEntry, opts: ToolOptions, oracle: Oracle, build
       return;
     }
     for (const b of list) {
-      cands.push({ kind: "branch", detail: `${detailPrefix}${b.keyword}[${b.index}]`, type: "Positive", make: () => place(builder.value(b.schema, 1)) });
+      const detail = `${detailPrefix}${b.keyword}[${b.index}]`;
+      cands.push({ kind: "branch", detail, type: "Positive", make: () => place(builder.value(b.schema, 1)), covers: { branch: detail } });
     }
   };
   addBranches("", tool.inputSchema, (v) => {
@@ -416,7 +428,7 @@ function buildCases(tool: McpToolEntry, opts: ToolOptions, oracle: Oracle, build
     for (const v of view["enum"].slice(0, 32)) {
       if (seenValues.has(JSON.stringify(v))) continue;
       seenValues.add(JSON.stringify(v));
-      cands.push({ kind: "enum", detail: `${k}=${JSON.stringify(v)}`, type: "Positive", make: () => ({ ...base(), [k]: clone(v) }) });
+      cands.push({ kind: "enum", detail: `${k}=${JSON.stringify(v)}`, type: "Positive", make: () => ({ ...base(), [k]: clone(v) }), covers: { param: k, enumValue: JSON.stringify(v) } });
     }
   }
   cands.push({
@@ -498,6 +510,7 @@ function buildCases(tool: McpToolEntry, opts: ToolOptions, oracle: Oracle, build
       args,
       expect: expectFor(cand.type, tool),
       source: cand.kind === "valid" ? source : "schema",
+      ...(cand.covers ? { covers: cand.covers } : {}),
       ...styleTag(cand.kind, opts),
     };
   });

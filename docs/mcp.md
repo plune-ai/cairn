@@ -342,3 +342,31 @@ finding. It is a description: this command does not send it.
 Not done here: sending the cases and judging the answers (a runner has to exist first), and the advice section. The
 function that finds signs of a stack, a file system path or SQL in an error text (`findAdvice`) exists and only advises;
 nothing uses it yet.
+
+### Running the cases (`--allow-tools`, `--allow-read-only-hints`, `--allow-mutations`)
+
+With any of the three flags the command also sends the generated cases, one call per case and only through the call guard
+(a case the guard refuses is `not-sent`). Without them nothing is called, as before. Each case ends in one of five states:
+
+| state | meaning |
+| --- | --- |
+| `passed` | the server answered as the case expects |
+| `failed` | the server's own answer broke a rule written in the case (or its process exited during the call while it was alive before) |
+| `not-sent` | the guard refused the call, or the run stopped before it |
+| `could-not-run` | no answer: timeout, closed connection, server gone |
+| `needs-review` | answered, but a person has to judge (an `isError` on a made-up valid value, an answer over `--max-response-bytes`, a payload only a person can judge) |
+
+Rules: a valid case passes on a success (and, when the tool declares an `outputSchema`, a `structuredContent` that fits it);
+a JSON-RPC error on a valid case fails. A case that breaks the schema passes when the server refuses it (JSON-RPC error or
+`isError`) and fails when it accepts it. A stdio server that exits fails that case; the run restarts it once and a second exit
+stops the run (the rest is `could-not-run`). Observations (empty content, text only, time, size, stack-trace-like text) are
+listed in `mcp-evidence.json` and never change a state or the exit code. Answers are cut to `--max-response-bytes`
+(default 262144) after secrets are masked; an answer over the limit is not stored.
+
+`--min-coverage <percent>` and `--count-partial` gate the share of tools that were covered (a tool is covered when every
+declared parameter was sent by a case that was sent and judged; a tool with no such case is listed as not measured).
+
+Exit codes: `0` every sent case passed; `1` a case failed or the run stopped early; `3` coverage below `--min-coverage`;
+`4` a guard budget ran out; `5` nothing was proven (no case passed, or the server has no tools). Artifacts in
+`runs/mcp-<id>/`: `report.json` (`mode: "mcp"`), `report.md`, `mcp-model.json`, `mcp-cases.json`, `mcp-evidence.json`,
+`mcp-calls.jsonl`, `testcases/` (one ATC document per case). The cost is zero and no model is used.

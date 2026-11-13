@@ -42,6 +42,7 @@ export interface RunnableCase {
   type: "Positive" | "Negative";
   args: Obj;
   technique?: ApiCaseTechnique;
+  rationale?: string;
   /** `psycho` or `hacker` for an adversarial case: the guard treats those as mutating. */
   style?: string;
   /** Whether the payload was handled safely is for a person to say: such a case never passes by itself. */
@@ -310,7 +311,8 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       }
       const e = c.expect;
       if (e.outcome === "rejected") {
-        if (isErrorResult(r)) answered("passed", "refused with an error result (isError)", extra);
+        if (answer.truncated) answered("needs-review", "the answer is larger than the limit and was not kept", extra);
+        else if (isErrorResult(r)) answered("passed", "refused with an error result (isError)", extra);
         else answered("failed", "the server accepted a value that violates its schema", extra);
         continue;
       }
@@ -337,4 +339,52 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
     host.close();
   }
   return { results, ...(stopped ? { stopped } : {}), restarts };
+}
+
+export interface AnonymousProbeOptions {
+  /** The call to describe: the first allowed tool and its valid arguments. */
+  record: { tool: string; args: Obj; expectAuth: boolean };
+  guard: McpCallGuard;
+  /** Connects with no credentials at all. `"auth-required"`: the server refused the connection itself. */
+  connect: () => Promise<{ link: Link; close: () => Promise<void> } | "auth-required" | undefined>;
+  callTimeoutMs: number;
+  secrets?: readonly string[];
+  logDir?: string;
+}
+
+/**
+ * One call without credentials, for an HTTP server run with credentials: once per server, through the guard, with no
+ * header of ours. A refusal (HTTP 401 or 403, or a refused connection) passes. A success is a finding, not a failure:
+ * the server may be public; with `--expect-auth` it fails. Any other error needs a person: no rule here can tell an
+ * authentication error from an argument error.
+ */
+export async function runAnonymousProbe(o: AnonymousProbeOptions): Promise<{ result: CaseResult; finding: boolean }> {
+  const { tool, args, expectAuth } = o.record;
+  const base: CaseResult = { name: `${tool} · no-credentials`, stableId: `anon-${tool}`, tool, kind: "no-credentials", type: "Negative", state: "could-not-run", reason: "", observations: [], advice: [] };
+  const done = (state: CaseState, reason: string, extra: Partial<CaseResult> = {}, finding = false) => ({ result: { ...base, state, reason, ...extra }, finding });
+  const opened = await o.connect();
+  if (opened === "auth-required") return done("passed", "the server refused the connection without credentials");
+  if (!opened) return done("could-not-run", "could not connect without credentials");
+  try {
+    const call = await guardedToolCall(o.guard, opened.link, { tool, arguments: args }, {
+      callTimeoutMs: o.callTimeoutMs,
+      secrets: o.secrets ?? [],
+      ...(o.logDir ? { log: (e) => appendCallLog(o.logDir as string, e) } : {}),
+    });
+    if (!call.sent) return done("not-sent", `the call guard refused it: ${call.decision.reason}`);
+    const extra = { durationMs: call.entry.durationMs, request: call.entry.arguments };
+    if (call.error) {
+      const code = typeof call.error.code === "number" ? call.error.code : undefined;
+      if (call.error.name === "StreamableHTTPError" && (code === 401 || code === 403)) return done("passed", `the server answered HTTP ${code} without credentials`, extra);
+      if (call.error.name === "McpError" && code !== undefined && code !== -32000 && code !== -32001) return done("needs-review", "an error without credentials: only a person can tell if it is an authentication error", extra);
+      return done("could-not-run", "no answer without credentials", { ...extra, error: safeText(maskSecrets(call.error.message, o.secrets ?? []), 200) });
+    }
+    const r = (call.response ?? {}) as Obj;
+    if (r["isError"] === true) return done("needs-review", "an error result without credentials: only a person can tell if it is an authentication error", extra);
+    return expectAuth
+      ? done("failed", "the call without credentials succeeded, and --expect-auth says it must not", extra, true)
+      : done("needs-review", "finding: the call without credentials succeeded (the server may be public)", extra, true);
+  } finally {
+    await opened.close();
+  }
 }

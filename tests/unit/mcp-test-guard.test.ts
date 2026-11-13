@@ -460,14 +460,15 @@ describe("CLI · mcp-test · the command (AC-1, AC-9, flags)", () => {
     expect(text).toMatch(/the server's claim, not a check/);
   });
 
-  it("AC-1: asking for calls with the command ends with exit code 5: nothing was sent, nothing was tested", async () => {
-    const { r, o, callLog } = await run({ allowTools: "get_report" });
-    expect(r.exitCode).toBe(5);
-    expect(err.join("")).toMatch(/No tool call was sent/);
-    expect(existsSync(callLog)).toBe(false);
-    expect(existsSync(join(o, CALL_LOG_FILE))).toBe(false);
+  it("AC-1: asking for calls sends them through the runner, only for the named tool, and the guard report counts them", async () => {
+    const { o, callLog } = await run({ allowTools: "get_report" });
+    expect(err.join("")).not.toMatch(/No tool call was sent/);
+    const called = readFileSync(callLog, "utf8").split("\n").filter(Boolean);
+    expect(called.length).toBeGreaterThan(0);
+    expect(new Set(called)).toEqual(new Set(["get_report"]));
+    expect(existsSync(join(o, CALL_LOG_FILE))).toBe(true);
     const report = JSON.parse(readFileSync(join(o, "mcp-guard.json"), "utf8")) as { sent: number; policy: { allowTools: string[] } };
-    expect(report.sent).toBe(0);
+    expect(report.sent).toBe(called.length);
     expect(report.policy.allowTools).toEqual(["get_report"]);
   });
 

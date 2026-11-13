@@ -219,3 +219,24 @@ export function parseApiTestCaseMd(md: string): ParsedApiCase {
 
   return { id, title, method, path, params, body, expectedStatus };
 }
+
+/** What an MCP case document needs from a case (structural, so this module does not depend on `mcp-test`). */
+export interface McpCaseForDoc {
+  name: string;
+  stableId: string;
+  tool: string;
+  type: string;
+  technique?: string;
+  rationale?: string;
+  args: Record<string, unknown>;
+}
+
+/** The ATC document of an MCP tool case: the same front matter as the API one (`id`, `stableId`, `title`, `suite`, `technique`, `type`, `execution`, `status`). */
+export function renderMcpTestCaseMd(c: McpCaseForDoc, doc: { id: string; suite: string; status: string }): string {
+  const lines: string[] = ["---", `id: ${doc.id}`, `stableId: ${c.stableId}`, `title: "${c.name.replace(/"/g, "'")}"`, `suite: ${doc.suite}`];
+  lines.push(`technique: ${c.technique ?? "error-guessing"}`, `type: ${c.type}`, "execution: auto", `status: ${doc.status}`, "---", "");
+  lines.push(`# ${doc.id}: ${c.name}`, "", "## Methodology", "", `- Technique: ${c.technique ?? "error-guessing"}`, `- Rationale: ${c.rationale ?? ""}`, "");
+  lines.push("## Request", "", `- Tool: ${c.tool}`, `- Arguments: \`${JSON.stringify(c.args).slice(0, 500)}\``, "");
+  lines.push("## Expected Result", "", c.type === "Negative" ? "- The server refuses the value (a JSON-RPC error or isError: true)." : "- The server answers a success (and structuredContent that fits the outputSchema, when one is declared).", "");
+  return lines.join("\n");
+}

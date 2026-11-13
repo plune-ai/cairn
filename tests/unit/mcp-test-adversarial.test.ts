@@ -377,8 +377,8 @@ describe("CLI · mcp-test · adversarial · after review", () => {
     }
   });
 
-  it("4 · one honest line says nothing was sent, with and without --allow-mutations", async () => {
-    for (const extra of [{}, { allowMutations: true, allowTools: "ping" }]) {
+  it("4 · one honest line says nothing was sent when no flag asks for calls", async () => {
+    for (const extra of [{}]) {
       const x = await run({ adversarial: true, ...extra });
       try {
         expect(x.stdout, JSON.stringify(extra)).toMatch(/Adversarial: none was sent/);

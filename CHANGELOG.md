@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn mcp-test` sends the cases (MCP-E5).** With `--allow-tools`, `--allow-read-only-hints` or `--allow-mutations` the
+  generated and adversarial cases are sent through the call guard, one call per case, with five states (`passed`, `failed`,
+  `not-sent`, `could-not-run`, `needs-review`), per-tool coverage (`--min-coverage`, `--count-partial`), `--max-response-bytes`
+  and the artifacts `report.json` (`mode: "mcp"`), `report.md`, `mcp-evidence.json` and `testcases/`. Exit codes: 0 all sent
+  passed, 1 failed, 3 coverage, 4 budget, 5 nothing proven. A stdio server that exits is restarted once.
 - **`cairn mcp-test --adversarial` (MCP-E3).** Adds `psycho` and `hacker` cases for tool arguments (extreme numbers, long,
   empty, zero-byte and unpaired-surrogate strings, a deep array, a forbidden extra property, a `__proto__` key, and four
   harmless injection strings with their WSTG ids) and tags the `normal` and `curious` ones. Cases are written to
