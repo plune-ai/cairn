@@ -189,7 +189,7 @@ export function buildProgram(): Command {
     .option("--header <header>", "Streamable HTTP: request header 'Name: Value' (repeatable); values are never saved or printed", (val: string, prev: string[] = []) => [...prev, val])
     .option("--env <KEY=VALUE>", "stdio: environment variable for the server (repeatable); values are never saved or printed", (val: string, prev: string[] = []) => [...prev, val])
     .option("--cwd <dir>", "stdio: working directory of the server")
-    .option("--timeout <seconds>", "how long to wait for one request (default 30)")
+    .option("--timeout <seconds>", "how long to wait for the handshake and each list request (default 30); tool calls use --call-timeout")
     .option("--out <dir>", "where to write the files of the run (default runs/mcp-<id>/)")
     .option("--max-pages <n>", "most pages to read from one list (default 20); a list cut short is marked complete: false")
     .option("--max-entries <n>", "most entries to keep from one list (default 1000); a list cut short is marked complete: false")
