@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-13
+
 ### Added
 
 - **Docs for `cairn mcp-test`.** A guide ([`docs/mcp-test.md`](docs/mcp-test.md)) that goes from reading a server to running cases on a test
