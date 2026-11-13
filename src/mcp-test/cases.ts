@@ -101,6 +101,8 @@ export interface McpCaseSkipped {
   /** The schema keyword that explains it. */
   keyword: string;
   reason: string;
+  /** How many cases this record stands for (absent: one). */
+  count?: number;
 }
 
 export interface McpCasesReport {
@@ -497,7 +499,7 @@ function buildCases(tool: McpToolEntry, opts: ToolOptions, oracle: Oracle, build
       ...styleTag(cand.kind, opts),
     };
   });
-  const adversarialOut = opts.adversarial ? adversarialFor(tool, opts.adversarial, oracle, builder, rootView, props, propNames, baseArgs as Obj) : undefined;
+  const adversarialOut = opts.adversarial ? adversarialFor(tool, opts.adversarial, oracle, builder, rootView, props, propNames, baseArgs as Obj, skipped) : undefined;
   const advPart = adversarialOut ? { adversarial: adversarialOut.cases, adversarialCut: adversarialOut.cut } : {};
   if (cases.length <= opts.maxCasesPerTool) return { cases, skipped, errors, ...advPart };
   const left = cases.slice(opts.maxCasesPerTool);
@@ -539,6 +541,7 @@ function adversarialFor(
   props: Obj,
   propNames: string[],
   base: Obj,
+  skipped: McpCaseSkipped[],
 ): { cases: McpAdversarialCase[]; cut: number } {
   const targets: Targets = {};
   for (const k of propNames) {
@@ -550,9 +553,24 @@ function adversarialFor(
   }
   const baseText = JSON.stringify(base);
   const out: McpAdversarialCase[] = [];
+  // After the first schema check that fails (it ran out of time, say) the rest are not tried one by one against it.
+  let broken: { keyword: string; reason: string } | undefined;
+  let notChecked = 0;
   for (const c of buildCandidates(base, targets, rootView["additionalProperties"] === false, adv.styles, adv.limits)) {
     if (JSON.stringify(c.args) === baseText) continue;
-    const passes = oracle.check(c.args).valid;
+    if (broken) {
+      notChecked += 1;
+      continue;
+    }
+    let passes: boolean;
+    try {
+      passes = oracle.check(c.args).valid;
+    } catch (e) {
+      if (!(e instanceof CannotBuild)) throw e;
+      broken = { keyword: e.keyword, reason: safeText(e.message, 200) };
+      skipped.push({ tool: tool.name, kind: "adversarial", detail: `${c.style} · ${c.kind}`, ...broken });
+      continue;
+    }
     out.push({
       name: `${tool.name} · ${c.style} · ${c.kind} · ${c.target}`,
       stableId: stableCaseId(["mcp-adv", exact(tool.name), exact(c.style), exact(c.kind), exact(c.target)]),
@@ -568,6 +586,16 @@ function adversarialFor(
       args: c.args,
       expect: ROBUST_EXPECTATION,
       humanOracle: c.humanOracle,
+    });
+  }
+  if (broken && notChecked) {
+    skipped.push({
+      tool: tool.name,
+      kind: "adversarial",
+      detail: "the rest",
+      keyword: broken.keyword,
+      reason: `${notChecked} more adversarial cases were not checked, because the check of this tool's schema failed first`,
+      count: notChecked,
     });
   }
   const kept = out.slice(0, adv.limits.maxPerTool);
@@ -700,6 +728,8 @@ export function renderCasesSummary(report: McpCasesReport): string[] {
     for (const c of report.adversarialCut ?? []) {
       lines.push(`  ${safeText(c.tool, 60)}: ${c.count} adversarial cases cut at the cap (${c.scope === "per-tool" ? `${report.adversarialLimits.maxPerTool} per tool` : `${report.adversarialLimits.maxPerRun} per run`}).`);
     }
+    const advSkipped = report.skipped.filter((x) => x.kind === "adversarial").reduce((n, x) => n + (x.count ?? 1), 0);
+    if (advSkipped) lines.push(`  ${advSkipped} adversarial cases skipped (see skipped).`);
     if (report.noCredentials) {
       lines.push(`  A call without credentials is described for ${safeText(report.noCredentials.tool, 60)} (once per server, not sent${report.noCredentials.expectAuth ? "; a pass would be a failure" : "; a pass would be a finding"}).`);
     }
@@ -729,5 +759,13 @@ export function dropMaskedCases(report: McpCasesReport, secrets: readonly string
     if (maskSecrets(text, secrets) === text) advKeep.push(c);
     else skipped.push({ tool: c.tool, kind: "adversarial", detail: `${c.style} · ${c.kind}`, keyword: "masked", reason: "value masked" });
   }
-  return { ...report, cases: keep, skipped, ...(report.adversarial ? { adversarial: advKeep } : {}) };
+  const out: McpCasesReport = { ...report, cases: keep, skipped, ...(report.adversarial ? { adversarial: advKeep } : {}) };
+  if (report.noCredentials) {
+    const text = JSON.stringify(report.noCredentials.args);
+    if (maskSecrets(text, secrets) !== text) {
+      delete out.noCredentials;
+      skipped.push({ tool: report.noCredentials.tool, kind: "adversarial", detail: "no-credentials", keyword: "masked", reason: "value masked" });
+    }
+  }
+  return out;
 }

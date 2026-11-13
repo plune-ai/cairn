@@ -39,10 +39,12 @@ export const DEFAULT_MAX_PER_TOOL = 16;
 export const DEFAULT_MAX_PER_RUN = 200;
 
 /** `--adversarial` → the styles asked for (in the order of the taxonomy) and the names that are not styles. */
-export function parseAdversarialStyles(flag: boolean | string | undefined): { styles: AdversarialStyle[]; unknown: string[] } {
+export function parseAdversarialStyles(flag: boolean | string | undefined): { styles: AdversarialStyle[]; unknown: string[]; empty?: true } {
+  if (flag === "") return { styles: [], unknown: [], empty: true };
   if (!flag) return { styles: [], unknown: [] };
   if (flag === true) return { styles: [...MCP_ADVERSARIAL_STYLES], unknown: [] };
   const names = [...new Set(flag.split(",").map((s) => s.trim()).filter(Boolean))];
+  if (names.length === 0) return { styles: [], unknown: [], empty: true };
   const known = (n: string): n is AdversarialStyle => (MCP_ADVERSARIAL_STYLES as readonly string[]).includes(n);
   return { styles: MCP_ADVERSARIAL_STYLES.filter((s) => names.includes(s)), unknown: names.filter((n) => !known(n)) };
 }

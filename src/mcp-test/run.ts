@@ -108,6 +108,13 @@ function parseEnv(list: string[] | undefined): Record<string, string> {
   return out;
 }
 
+/** A plain decimal whole number: no hex, no exponent, no sign, no spaces (`Number()` would take `0x10` and `1e3`). */
+function parseDecimal(flag: string, v: string | number): number {
+  const text = String(v);
+  if (!/^[0-9]+$/.test(text)) throw new Error(`${flag} must be a plain decimal whole number (got "${safeText(text, 20)}").`);
+  return Number(text);
+}
+
 /** Reads an `--examples` file: size limit, strict JSON, an object of tool name to an object of arguments. */
 async function readExamples(path: string): Promise<Record<string, Record<string, unknown>>> {
   const file = resolve(path);
@@ -158,8 +165,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const adv = parseAdversarialStyles(opts.adversarial);
   const advLimits = resolveLimits({
     styles: adv.styles,
-    ...(opts.adversarialMaxString !== undefined ? { maxStringLength: parsePositiveInt("--adversarial-max-string", opts.adversarialMaxString) } : {}),
-    ...(opts.adversarialMaxDepth !== undefined ? { maxDepth: parsePositiveInt("--adversarial-max-depth", opts.adversarialMaxDepth) } : {}),
+    ...(opts.adversarialMaxString !== undefined ? { maxStringLength: parseDecimal("--adversarial-max-string", opts.adversarialMaxString) } : {}),
+    ...(opts.adversarialMaxDepth !== undefined ? { maxDepth: parseDecimal("--adversarial-max-depth", opts.adversarialMaxDepth) } : {}),
   });
   const callsRequested = allowTools.length > 0 || opts.allowReadOnlyHints === true || opts.allowMutations === true;
   const headers = parseHeaders(opts.header);
@@ -282,6 +289,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     await conn.close();
     conn = undefined;
     err(`checking ${tools.length} tool schemas…\n`);
+    if (adv.empty) err("⚠ --adversarial named no style, so no adversarial cases were made (style names are lower-case: normal, curious, psycho, hacker).\n");
     if (adv.unknown.length) {
       err(`⚠ --adversarial: unknown style ${adv.unknown.map((n) => `"${safeText(n, 40)}"`).join(", ")} is ignored (styles: ${MCP_ADVERSARIAL_STYLES.join(", ")}).\n`);
     }
@@ -317,13 +325,13 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     }
     for (const e of cases.errors) err(`✗ ${e.message}\n`);
     if (unknownExamples.length || cases.errors.length) return { exitCode: 1, outDir, model, pid };
+    // One line for both branches: this command only writes the cases, whatever flags were given.
+    if (cases.adversarial) {
+      out(`  Adversarial: none was sent (this command only writes the cases). ${cases.adversarial.length} cases are of the mutating styles (psycho, hacker): ${opts.allowMutations === true ? "they need the tool named in --allow-tools" : "not sent: mutations disabled"}.\n`);
+    }
     if (!callsRequested) {
       for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
       for (const line of renderCasesSummary(cases)) out(`${line}\n`);
-      if (cases.adversarial) {
-        out(`  Adversarial: none was sent (this command only writes the cases). ${cases.adversarial.length} cases are of the mutating styles (psycho, hacker): ${opts.allowMutations === true ? "they need the tool named in --allow-tools" : "not sent: mutations disabled"}.
-`);
-      }
       out(`  Cases: ${join(outDir, CASES_FILE).replace(/\\/g, "/")}\n`);
       return { exitCode: 0, outDir, model, pid };
     }

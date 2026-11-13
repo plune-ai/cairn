@@ -230,20 +230,32 @@ describe("CLI · mcp-test · adversarial · no credentials call (AC-7)", () => {
 });
 
 describe("CLI · mcp-test · adversarial · advice (AC-6, part)", () => {
-  it("finds a stack, an absolute path and SQL in an error text, with a masked excerpt", () => {
-    const f = findAdvice("Error: boom\n    at run (/srv/app/index.js:10:5)\nSELECT name FROM users WHERE id = 1\nopen C:\\data\\x.db", ["hunter2-secret-value"]);
-    expect(f.map((x) => x.kind).sort()).toEqual(["path", "path", "sql", "stack"]);
-    const masked = findAdvice("at run (/srv/hunter2-secret-value/index.js:10:5)", ["hunter2-secret-value"]);
-    expect(JSON.stringify(masked)).not.toContain("hunter2-secret-value");
-    expect(findAdvice("Traceback (most recent call last):", []).map((x) => x.kind)).toEqual(["stack"]);
+  it("finds a stack, a path and SQL in an error text, and says only which kind and which line", () => {
+    const f = findAdvice("Error: boom\n    at run (/srv/app/index.js:10:5)\nSELECT name FROM users WHERE id = 1\nopen C:\\data\\x.db");
+    expect(f).toEqual([
+      { kind: "stack", line: 2 },
+      { kind: "path", line: 2 },
+      { kind: "sql", line: 3 },
+      { kind: "path", line: 4 },
+    ]);
+    expect(findAdvice("Traceback (most recent call last):")).toEqual([{ kind: "stack", line: 1 }]);
+    // No text of the server is in a finding.
+    for (const x of f) expect(Object.keys(x).sort()).toEqual(["kind", "line"]);
   });
 
-  it("is linear on hostile text", () => {
-    const hostile = ["at ".repeat(60000), "SELECT ".repeat(30000), "/home/".repeat(30000), ("(" + "a".repeat(50)).repeat(3000), "C:\\".repeat(60000)];
+  it("looks only at the first 2000 characters of a line and the first 200 lines", () => {
+    const frame = "at run (/srv/a.js:1:2)";
+    expect(findAdvice(`${"x".repeat(5000)} ${frame}`)).toEqual([]);
+    expect(findAdvice(`${"x".repeat(1000)} ${frame}`).map((x) => x.kind)).toContain("stack");
+    const lines = Array.from({ length: 10000 }, () => "ok");
+    lines[300] = frame;
+    expect(findAdvice(lines.join("\n"))).toEqual([]);
+    lines[100] = frame;
+    expect(findAdvice(lines.join("\n")).map((x) => x.line)).toContain(101);
     const start = Date.now();
-    for (const h of hostile) findAdvice(h, []);
+    findAdvice(`${"at ".repeat(150000)}\n`.repeat(50));
     expect(Date.now() - start).toBeLessThan(3000);
-  }, 20000);
+  });
 });
 
 describe("CLI · mcp-test · adversarial · the command", () => {
@@ -294,5 +306,90 @@ describe("CLI · mcp-test · adversarial · the command", () => {
     } finally {
       cleanup(b.out);
     }
+  });
+});
+
+describe("CLI · mcp-test · adversarial · after review", () => {
+  it("1 · a timeout on an adversarial value skips only the adversarial cases; the ordinary ones stay", () => {
+    const hostile = t("hostile", { type: "object", properties: { a: { type: "string", pattern: "^(a+)+[0-9]$", examples: ["aa0"] } }, required: ["a"] });
+    const r = gen([hostile, RICH], { maxStringLength: 40 });
+    expect(r.cases.filter((c) => c.tool === "hostile").length).toBeGreaterThan(0);
+    expect(r.skipped.filter((x) => x.tool === "hostile" && x.kind === "tool")).toEqual([]);
+    const adversarialSkips = r.skipped.filter((x) => x.tool === "hostile" && x.kind === "adversarial");
+    expect(adversarialSkips.length).toBeGreaterThan(0);
+    expect(adversarialSkips[0]?.keyword).toBe("pattern");
+    expect(adv(r, "hostile")).toEqual([]);
+    expect(adv(r, "rich").length).toBeGreaterThan(0);
+    expect(renderCasesSummary(r).join("\n")).toMatch(/\d+ adversarial cases skipped/);
+  }, 30000);
+
+  it("2 · the call without credentials is not written when masking would change its arguments", () => {
+    const tool = t("m", { type: "object", properties: { token: { type: "string", default: "hunter2-secret-value" } }, required: ["token"] });
+    const r = gen([tool], { http: { authenticated: true }, allowTools: ["m"] });
+    expect(r.noCredentials).toBeDefined();
+    const cleaned = dropMaskedCases(r, ["hunter2-secret-value"]);
+    expect(cleaned.noCredentials).toBeUndefined();
+    expect(cleaned.skipped).toContainEqual(expect.objectContaining({ tool: "m", kind: "adversarial", detail: "no-credentials", keyword: "masked" }));
+    expect(JSON.stringify(cleaned)).not.toContain("hunter2-secret-value");
+  });
+
+  it("5 · an empty style list is reported, never widened; names are lower-case only", () => {
+    for (const flag of ["", ",", "  ", " , "]) expect(parseAdversarialStyles(flag), JSON.stringify(flag)).toEqual({ styles: [], unknown: [], empty: true });
+    expect(parseAdversarialStyles(true).empty).toBeUndefined();
+    expect(parseAdversarialStyles("PSYCHO")).toEqual({ styles: [], unknown: ["PSYCHO"] });
+  });
+
+  const dir = (): string => mkdtempSync(join(tmpdir(), "cairn-mcp-adv2-"));
+  const cleanup = (d: string): void => {
+    for (const f of readdirSync(d)) unlinkSync(join(d, f));
+    rmdirSync(d);
+  };
+  const run = async (extra: Record<string, unknown>) => {
+    const out = dir();
+    let stdout = "";
+    let stderr = "";
+    const r = await runMcpTest({ command: ["node", fixture], out, ...extra }, { out: (s) => (stdout += s), err: (s) => (stderr += s) });
+    return { out, r, stdout, stderr };
+  };
+
+  it("5 · --adversarial with no style in it warns on stderr and makes no adversarial cases", async () => {
+    const a = await run({ adversarial: "," });
+    try {
+      expect(a.stderr).toMatch(/no style/);
+      expect(a.stdout).not.toMatch(/Adversarial cases/);
+    } finally {
+      cleanup(a.out);
+    }
+  });
+
+  it("6 · the limits take plain decimal integers only", async () => {
+    await expect(run({ adversarial: true, adversarialMaxString: "0x10" })).rejects.toThrow(/decimal/);
+    await expect(run({ adversarial: true, adversarialMaxDepth: "1e3" })).rejects.toThrow(/decimal/);
+    const ok = await run({ adversarial: true, adversarialMaxString: "50", adversarialMaxDepth: "5" });
+    try {
+      expect(ok.r.exitCode).toBe(0);
+    } finally {
+      cleanup(ok.out);
+    }
+  });
+
+  it("4 · one honest line says nothing was sent, with and without --allow-mutations", async () => {
+    for (const extra of [{}, { allowMutations: true, allowTools: "ping" }]) {
+      const x = await run({ adversarial: true, ...extra });
+      try {
+        expect(x.stdout, JSON.stringify(extra)).toMatch(/Adversarial: none was sent/);
+      } finally {
+        cleanup(x.out);
+      }
+    }
+  });
+});
+
+describe("CLI · mcp-test · adversarial · docs say what the code does", () => {
+  it("3, 9 · noCredentials is written whenever hacker is on over HTTP with headers; the SQL payload is explained", () => {
+    const text = readFileSync(resolve(here, "..", "..", "docs", "mcp.md"), "utf8");
+    expect(text).not.toMatch(/with `--expect-auth`, an HTTP run/);
+    expect(text).toMatch(/always true/);
+    expect(text).toMatch(/test account/);
   });
 });
