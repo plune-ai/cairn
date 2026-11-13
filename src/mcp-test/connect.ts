@@ -115,15 +115,19 @@ function killTree(pid: number): void {
   }
 }
 
-/** Waits a moment for `pid` to leave, then makes it. */
-async function reap(pid: number | null): Promise<void> {
+/**
+ * Waits `graceMs` for `pid` to leave, then kills it (its tree on Windows) and waits until it is gone, so a returned run
+ * means "no process left". `pid` null means the process was never known: nothing to do.
+ */
+export async function reap(pid: number | null, opts: { graceMs?: number; kill?: (pid: number) => void } = {}): Promise<void> {
   if (pid === null) return;
-  for (let i = 0; i < 10; i++) {
-    if (!alive(pid)) return;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  killTree(pid);
-  for (let i = 0; i < 10 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100));
+  const graceMs = opts.graceMs ?? 1000;
+  const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+  for (let waited = 0; waited < graceMs && alive(pid); waited += 50) await wait(50);
+  if (!alive(pid)) return;
+  (opts.kill ?? killTree)(pid);
+  // The loop stays on the event loop, which is what collects the exit status of a child we started.
+  for (let i = 0; i < 40 && alive(pid); i++) await wait(50);
 }
 
 /** The `WWW-Authenticate` metadata address's origin, for the message; the address itself is never fetched. */
@@ -207,6 +211,19 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     transport = new sdk.StreamableHTTPClientTransport(url, { requestInit: { headers: o.headers }, fetch: guardedFetch });
   }
 
+  // The process id is taken the moment the process is spawned. When `initialize` fails or is cut off, the SDK closes
+  // the transport on its own, and transport.pid is empty by the time our code looks at it; without this the process
+  // would never be reaped, and one that ignores SIGTERM would stay until the SDK's own SIGKILL, seconds later.
+  let pid: number | null = null;
+  if (isStdio) {
+    const start = transport.start.bind(transport) as () => Promise<void>;
+    transport.start = (): Promise<void> => {
+      const started = start();
+      pid = transport.pid ?? pid;
+      return started;
+    };
+  }
+
   let protocolVersion = "";
   const original = transport.setProtocolVersion?.bind(transport) as ((v: string) => void) | undefined;
   transport.setProtocolVersion = (v: string) => {
@@ -220,7 +237,6 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   client.onerror = (e: { code?: unknown }) => {
     if (typeof e?.code === "string") startError ??= e;
   };
-  let pid: number | null = null;
   const close = async (): Promise<void> => {
     pid = transport.pid ?? pid;
     try {

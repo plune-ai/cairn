@@ -8,6 +8,8 @@ import { runMcpTest, type McpTestOptions } from "../../src/mcp-test/run.js";
 import { discoverModel, type DiscoverSource } from "../../src/mcp-test/discover.js";
 import { renderModelSummary, serializeModel, type McpModel } from "../../src/mcp-test/model.js";
 import { maskStrings } from "../../src/mcp-test/secrets.js";
+import { reap } from "../../src/mcp-test/connect.js";
+import { spawn } from "node:child_process";
 
 /**
  * MCP-E1: `cairn mcp-test` reads a foreign MCP server and writes its model. The server is a fixture on the same SDK
@@ -310,6 +312,26 @@ describe("CLI · mcp-test · no leftover process (AC-7)", () => {
     expect(r.exitCode).toBe(1);
     expect(err.join("")).toMatch(/did not answer within 1 s/);
     await expectGone(pidFile);
+  }, 30000);
+
+  // The SDK closes its transport itself when `initialize` fails or is cut off, which empties transport.pid before our own
+  // code looks at it. The process id must have been taken when the process was started, or nothing is reaped, and a
+  // server that ignores stdin and SIGTERM stays until the SDK's own SIGKILL, some seconds later (visible on POSIX, where
+  // SIGTERM can be ignored; on Windows SIGTERM kills, which hid this).
+  it("AC-7: when the run returns after a timeout the server is already gone, and its process id is reported", async () => {
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "hang" }, { timeout: 1 });
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(r.pid).toBe(pid);
+    expect(isGone(pid), `server process ${pid} is still alive when the run returned`).toBe(true);
+  }, 30000);
+
+  it("AC-7: when the run returns after an interrupt the server is already gone", async () => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 1500);
+    const { r, pidFile } = await runWithPid({ FIXTURE_MODE: "hang" }, { timeout: 25, signal: ac.signal });
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(r.pid).toBe(pid);
+    expect(isGone(pid), `server process ${pid} is still alive when the run returned`).toBe(true);
   }, 30000);
 
   it("AC-7: after an interrupt nothing is left", async () => {
@@ -696,5 +718,35 @@ describe("CLI · mcp-test · second review fixes", () => {
     expect(m.truncated.some((t) => (t.list as string) === "capabilities" && /nesting/.test(t.reason))).toBe(true);
     expect(() => serializeModel(maskStrings(m, ["leaf-secret"]))).not.toThrow();
     expect(() => maskStrings(deep, ["leaf"])).not.toThrow();
+  });
+});
+
+describe("CLI · mcp-test · reaping a process", () => {
+  const stubborn = (): ReturnType<typeof spawn> =>
+    spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], { stdio: "ignore" });
+
+  it("kills a process that outlives the grace period and returns only when it is gone", async () => {
+    const child = stubborn();
+    const pid = child.pid as number;
+    try {
+      await reap(pid, { graceMs: 200 });
+      expect(isGone(pid), `process ${pid} is still alive`).toBe(true);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it("does not kill a process that leaves by itself within the grace period", async () => {
+    const child = spawn(process.execPath, ["-e", "setTimeout(()=>{},300)"], { stdio: "ignore" });
+    const kill = vi.fn();
+    await reap(child.pid as number, { graceMs: 5000, kill });
+    expect(kill).not.toHaveBeenCalled();
+    expect(isGone(child.pid as number)).toBe(true);
+  });
+
+  it("an unknown process id is nothing to do", async () => {
+    const kill = vi.fn();
+    await reap(null, { kill });
+    expect(kill).not.toHaveBeenCalled();
   });
 });
