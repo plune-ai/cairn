@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer, type Server } from "node:http";
 import { connectMcp, type McpConnection } from "../../src/mcp-test/connect.js";
 import { discoverTools } from "../../src/mcp-test/discover.js";
 import { McpCallGuard, type McpGuardOptions } from "../../src/mcp-test/guard.js";
@@ -38,8 +39,11 @@ afterEach(async () => {
   dirs = [];
 });
 
-async function connect(env: Record<string, string>): Promise<McpConnection> {
-  const c = await connectMcp({ command: [process.execPath, fixture], headers: {}, env, timeoutMs: 20000 });
+/** How the runner reaches a connection (the one place the tests name it). */
+const linkOf = (conn: McpConnection, transport: Link["transport"] = "stdio"): Link => ({ invokeTool: (n, a, o) => conn.invokeTool(n, a, o), transport });
+
+async function connect(env: Record<string, string>, extra: Partial<Parameters<typeof connectMcp>[0]> = {}): Promise<McpConnection> {
+  const c = await connectMcp({ command: [process.execPath, fixture], headers: {}, env, timeoutMs: 20000, ...extra });
   conns.push(c);
   return c;
 }
@@ -55,13 +59,13 @@ interface Harness {
   starts(): number[];
 }
 
-async function harness(env: Record<string, string> = {}, allow: string[] = ["echo", "typed", "crash", "hang", "shifty", "plain"]): Promise<Harness> {
+async function harness(env: Record<string, string> = {}, allow: string[] = ["echo", "typed", "crash", "hang", "shifty", "plain"], connExtra: Partial<Parameters<typeof connectMcp>[0]> = {}): Promise<Harness> {
   const dir = mkdtempSync(join(tmpdir(), "cairn-mcp-runner-"));
   dirs.push(dir);
   const logFile = join(dir, "calls.log");
   const startsFile = join(dir, "starts.log");
   const fullEnv = { FIXTURE_LOG: logFile, FIXTURE_STARTS: startsFile, ...env };
-  const conn = await connect(fullEnv);
+  const conn = await connect(fullEnv, connExtra);
   const tools = await discoverTools(conn.source, { maxPages: 5, maxEntries: 100 });
   const read = (f: string): string[] => (existsSync(f) ? readFileSync(f, "utf8").split("\n").filter(Boolean) : []);
   return {
@@ -75,7 +79,7 @@ async function harness(env: Record<string, string> = {}, allow: string[] = ["ech
     async run(cases, o = {}) {
       const { guard: guardOpts, ...rest } = o;
       const guard = new McpCallGuard({ tools, allowTools: allow, rps: 1000, ...guardOpts });
-      const link: Link = { request: (r, opts) => conn.request(r, opts), transport: "stdio" };
+      const link: Link = linkOf(conn);
       return runCases(cases, {
         guard,
         tools,
@@ -200,7 +204,7 @@ describe("CLI · mcp-test · runner · a server that dies or goes silent (AC-7, 
     const restart = async (): Promise<Link | undefined> => {
       const next = await connect({ FIXTURE_LOG: h.logFile, FIXTURE_STARTS: h.startsFile });
       restarts.push(next);
-      return { request: (r, o) => next.request(r, o), transport: "stdio", relist: () => discoverTools(next.source, { maxPages: 5, maxEntries: 100 }) };
+      return { ...linkOf(next), relist: () => discoverTools(next.source, { maxPages: 5, maxEntries: 100 }) };
     };
     const r = await h.run(
       [c("echo", "Positive", { q: "a" }), c("crash", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" }), c("crash", "Positive", { q: "b" }), c("echo", "Positive", { q: "c" }), c("echo", "Positive", { q: "d" })],
@@ -239,5 +243,171 @@ describe("CLI · mcp-test · runner · secrets (AC-12)", () => {
     expect(text).not.toContain("leakvalue-secret-9999");
     expect(text).not.toContain("fixture-key-value-1234");
     expect(one(r).response).toContain("***");
+  });
+});
+
+describe("CLI · mcp-test · runner · what the server says is not what this side saw (review 1)", () => {
+  it.each([
+    ["-32000", "err32000"],
+    ["-32001", "err32001"],
+    ["an error whose text is 'Connection closed'", "errtext"],
+  ])("a live server that answers %s is an ordinary error answer: judged by the case's rule, no restart, the run goes on", async (_label, mode) => {
+    const h = await harness({ FIXTURE_ECHO: mode });
+    const restart = async (): Promise<Link | undefined> => {
+      throw new Error("a live server must not be restarted");
+    };
+    const r = await h.run([c("echo", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" }), c("echo", "Positive", { q: "c" }), c("echo", "Positive", { q: "d" })], { restart });
+    expect(r.stopped).toBeUndefined();
+    expect(r.restarts).toBe(0);
+    expect(h.starts()).toHaveLength(1);
+    expect(r.results.map((x) => x.state)).toEqual(["failed", "failed", "failed", "failed"]);
+    for (const x of r.results) expect(x.reason).toContain("JSON-RPC error");
+  });
+});
+
+describe("CLI · mcp-test · runner · an error code passes a Negative case only when the case lists it (review 4)", () => {
+  it("-32602 passes; any other code is needs-review with the code named; isError passes", async () => {
+    const strict = await (await harness()).run([c("echo", "Negative", { q: 5 })]);
+    expect(one(strict)).toMatchObject({ state: "passed" });
+    for (const [mode, code] of [["err32000", "-32000"], ["errtext", "-32603"]] as const) {
+      const r = await (await harness({ FIXTURE_ECHO: mode })).run([c("echo", "Negative", { q: 5 })]);
+      expect(one(r).state, mode).toBe("needs-review");
+      expect(one(r).reason, mode).toContain(code);
+    }
+    const isErr = await (await harness({ FIXTURE_ECHO: "iserror" })).run([c("echo", "Negative", { q: 5 })]);
+    expect(one(isErr).state).toBe("passed");
+  });
+
+  it("a robustness case follows its own accepts list literally", async () => {
+    const only = (accepts: string[]) => robust("echo", { q: "a" }, { expect: { outcome: "robust", failedWhen: [], accepts } as RunnableCase["expect"] });
+    const rpcOnly = await (await harness({ FIXTURE_ECHO: "iserror" })).run([only(["json-rpc-error", "accepted-without-harm"])]);
+    expect(one(rpcOnly).state).toBe("needs-review");
+    const isErrOk = await (await harness({ FIXTURE_ECHO: "iserror" })).run([only(["result-isError"])]);
+    expect(one(isErrOk).state).toBe("passed");
+    const noRpc = await (await harness({ FIXTURE_ECHO: "err32000" })).run([only(["result-isError", "accepted-without-harm"])]);
+    expect(one(noRpc).state).toBe("needs-review");
+    expect(one(noRpc).reason).toContain("-32000");
+  });
+});
+
+describe("CLI · mcp-test · runner · the tool is read again before every call (review 3)", () => {
+  it("a tool that changes after the 3rd call is refused from the 4th", async () => {
+    const h = await harness({ FIXTURE_SHIFT_AFTER: "3" });
+    const r = await h.run([1, 2, 3, 4, 5, 6].map((i) => c("shifty", "Positive", { q: String(i) })));
+    expect(r.results.map((x) => x.state)).toEqual(["passed", "passed", "passed", "not-sent", "not-sent", "not-sent"]);
+    expect(r.results[3]?.reason).toContain("changed since permission");
+    expect(h.calls()).toHaveLength(3);
+  });
+
+  it("a list that cannot be read again means the call is not sent", async () => {
+    const h = await harness({ FIXTURE_LIST_FAIL_FROM: "2" });
+    const r = await h.run([c("echo", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" })]);
+    expect(r.results.map((x) => x.state)).toEqual(["not-sent", "not-sent"]);
+    expect(r.results[0]?.reason).toContain("the tool list could not be re-read");
+    expect(h.calls()).toEqual([]);
+  });
+});
+
+describe("CLI · mcp-test · runner · an output schema is compiled once per tool (review 9)", () => {
+  it("a pattern that backtracks badly costs one timeout, not one per case", async () => {
+    const h = await harness({ FIXTURE_EVIL: "1" }, ["echo", "evil"]);
+    const start = Date.now();
+    const r = await h.run(Array.from({ length: 10 }, (_, i) => c("evil", "Positive", { q: String(i) })));
+    expect(Date.now() - start).toBeLessThan(7000);
+    expect(r.results.map((x) => x.state)).toEqual(Array(10).fill("needs-review"));
+    expect(r.results[9]?.reason).toMatch(/outputSchema could not be checked/);
+  }, 40000);
+});
+
+describe("CLI · mcp-test · runner · the limit is applied while the answer is read (review 2)", () => {
+  const LIMIT = 200_000;
+
+  it("stdio: a message far over the limit is cut off by the reader, not kept; the counter shows what was read", async () => {
+    const h = await harness({ FIXTURE_ECHO: "big", FIXTURE_BIG_BYTES: String(30 * 1024 * 1024) }, undefined, { maxResponseBytes: LIMIT });
+    const r = await h.run([c("echo", "Positive", { q: "a" })], { maxResponseBytes: LIMIT });
+    expect(one(r)).toMatchObject({ state: "needs-review", truncated: true });
+    expect(one(r).response).toBeUndefined();
+    expect(h.conn.bytesRead ?? Number.POSITIVE_INFINITY).toBeLessThan(3 * 1024 * 1024);
+  }, 60000);
+
+  /** A minimal Streamable HTTP server that answers tools/call with `total` bytes of text and counts what it managed to write. */
+  async function bigHttp(total: number): Promise<{ url: string; written: () => number; close: () => Promise<void> }> {
+    let written = 0;
+    const server: Server = createServer((req, res) => {
+      if (req.method !== "POST") {
+        res.statusCode = req.method === "DELETE" ? 200 : 405;
+        res.end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      req.on("data", (d: Buffer) => chunks.push(d));
+      req.on("end", () => {
+        void (async () => {
+          const msg = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { id?: number; method: string; params?: { protocolVersion?: string } };
+          const json = (result: unknown): void => {
+            res.setHeader("content-type", "application/json");
+            res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+          };
+          if (msg.id === undefined) {
+            res.statusCode = 202;
+            res.end();
+          } else if (msg.method === "initialize") json({ protocolVersion: msg.params?.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "big", version: "1" } });
+          else if (msg.method === "tools/list") json({ tools: [{ name: "echo", inputSchema: { type: "object", properties: { q: { type: "string" } } }, annotations: { readOnlyHint: true } }] });
+          else {
+            res.setHeader("content-type", "application/json");
+            const head = `{"jsonrpc":"2.0","id":${msg.id},"result":{"content":[{"type":"text","text":"`;
+            res.write(head);
+            const piece = "x".repeat(64 * 1024);
+            for (let sent = 0; sent < total && !res.destroyed; sent += piece.length) {
+              if (!res.write(piece)) await new Promise((ok) => (res.once("drain", ok), res.once("close", ok)));
+              if (!res.destroyed) written += piece.length;
+            }
+            if (!res.destroyed) res.end('"}]}}');
+          }
+        })();
+      });
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    const { port } = server.address() as { port: number };
+    return { url: `http://127.0.0.1:${port}/mcp`, written: () => written, close: () => new Promise((ok) => (server.closeAllConnections(), server.close(() => ok()))) };
+  }
+
+  it("HTTP: the body is read only up to the limit and the call fails locally; the connection stays usable", async () => {
+    const total = 200 * 1024 * 1024;
+    const srv = await bigHttp(total);
+    try {
+      const conn = await connectMcp({ url: srv.url, headers: {}, env: {}, timeoutMs: 20000, maxResponseBytes: LIMIT });
+      conns.push(conn);
+      const tools = await discoverTools(conn.source, { maxPages: 5, maxEntries: 100 });
+      const guard = new McpCallGuard({ tools, allowTools: ["echo"], rps: 1000 });
+      const r = await runCases([c("echo", "Positive", { q: "a" })], { guard, tools, link: linkOf(conn, "streamable-http"), callTimeoutMs: 10000, maxResponseBytes: LIMIT });
+      expect(one(r)).toMatchObject({ state: "needs-review", truncated: true });
+      expect(conn.bytesRead ?? Number.POSITIVE_INFINITY).toBeLessThan(3 * 1024 * 1024);
+      expect(srv.written()).toBeLessThan(total / 4);
+    } finally {
+      await srv.close();
+    }
+  }, 60000);
+});
+
+describe("CLI · mcp-test · runner · restarts, budget, and the stop (review 7)", () => {
+  it("results after the restart are marked afterRestart", async () => {
+    const h = await harness();
+    const restart = async (): Promise<Link | undefined> => {
+      const next = await connect({ FIXTURE_LOG: h.logFile, FIXTURE_STARTS: h.startsFile });
+      return { ...linkOf(next), relist: () => discoverTools(next.source, { maxPages: 5, maxEntries: 100 }) };
+    };
+    const r = await h.run([c("echo", "Positive", { q: "a" }), c("crash", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" })], { restart });
+    expect(r.results.map((x) => x.afterRestart ?? false)).toEqual([false, false, true]);
+    expect(r.restarts).toBe(1);
+  }, 60000);
+
+  it("cases that came after the time budget ran out are could-not-run with the budget reason, not not-sent", async () => {
+    const h = await harness();
+    let t = 0;
+    const r = await h.run([c("echo", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" })], { guard: { timeBudgetMs: 450, now: () => (t += 100) } });
+    expect(r.results.map((x) => x.state)).toEqual(["passed", "could-not-run"]);
+    expect(r.results[1]?.reason).toMatch(/time budget/);
+    expect(h.calls()).toHaveLength(1);
   });
 });

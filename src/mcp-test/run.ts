@@ -17,7 +17,7 @@ import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from 
 import { MCP_ADVERSARIAL_STYLES, parseAdversarialStyles, resolveLimits } from "./adversarial.js";
 import { buildEvidence, buildMcpTestCaseDocs, buildReportJson, countStates, mcpExitCode, NOTHING_PROVEN_EXIT_CODE, renderMcpReportMd, settle, type Finding } from "./report.js";
 import { computeMcpCoverage, evaluateMcpGate, renderMcpCoverage } from "./coverage.js";
-import { type CaseResult, type Link, type RunnableCase, runAnonymousProbe, runCases } from "./runner.js";
+import { type CaseResult, DEFAULT_MAX_RESPONSE_BYTES, type Link, type RunnableCase, runAnonymousProbe, runCases } from "./runner.js";
 import { discoverTools } from "./discover.js";
 import { CASES_FILE, DEFAULT_MAX_CASES_PER_TOOL, dropMaskedCases, generateMcpCases, renderCasesSummary } from "./cases.js";
 import { canonicalModel, renderModelSummary, safeText, serializeCanonical, sortKeys, type McpModel } from "./model.js";
@@ -127,6 +127,16 @@ function parseDecimal(flag: string, v: string | number): number {
   return Number(text);
 }
 
+/** The most `--max-response-bytes` takes (64 MiB). */
+export const MAX_RESPONSE_BYTES_LIMIT = 64 * 1024 * 1024;
+
+/** `--max-response-bytes`: a plain decimal whole number from 1 to {@link MAX_RESPONSE_BYTES_LIMIT}. */
+function parseResponseBytes(v: string | number): number {
+  const n = parseDecimal("--max-response-bytes", v);
+  if (n < 1 || n > MAX_RESPONSE_BYTES_LIMIT) throw new Error(`--max-response-bytes must be from 1 to ${MAX_RESPONSE_BYTES_LIMIT} (got ${n}).`);
+  return n;
+}
+
 /** Reads an `--examples` file: size limit, strict JSON, an object of tool name to an object of arguments. */
 async function readExamples(path: string): Promise<Record<string, Record<string, unknown>>> {
   const file = resolve(path);
@@ -171,6 +181,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const maxCalls = opts.maxCalls === undefined ? DEFAULT_MAX_CALLS : parsePositiveInt("--max-calls", opts.maxCalls);
   const callRps = opts.rps === undefined ? DEFAULT_CALL_RPS : parsePositiveNumber("--rps", opts.rps, 0.01);
   const callTimeoutMs = Math.round((opts.callTimeout === undefined ? 30 : parsePositiveNumber("--call-timeout", opts.callTimeout)) * 1000);
+  const maxResponseBytes = opts.maxResponseBytes === undefined ? DEFAULT_MAX_RESPONSE_BYTES : parseResponseBytes(opts.maxResponseBytes);
   const minCoverage = opts.minCoverage === undefined ? undefined : parseMinCoverage(opts.minCoverage);
   const timeBudgetSeconds = opts.timeBudget === undefined ? undefined : parsePositiveNumber("--time-budget", opts.timeBudget);
   const maxCasesPerTool = opts.maxCasesPerTool === undefined ? DEFAULT_MAX_CASES_PER_TOOL : parsePositiveInt("--max-cases-per-tool", opts.maxCasesPerTool);
@@ -353,7 +364,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     // --- Sending: only through the guard, one call per case. ---
     const runnable: RunnableCase[] = [
       ...dropped.cases.map((c): RunnableCase => ({ ...c, type: c.type, expect: c.expect as RunnableCase["expect"] })),
-      ...(dropped.adversarial ?? []).map((c): RunnableCase => ({ ...c, expect: { outcome: "robust", failedWhen: c.expect.failedWhen } })),
+      ...(dropped.adversarial ?? []).map((c): RunnableCase => ({ ...c, expect: { outcome: "robust", failedWhen: c.expect.failedWhen, accepts: c.expect.accepts } })),
     ];
     const open = async (hdrs: Record<string, string>): Promise<McpConnection> =>
       connectMcp({
@@ -363,12 +374,14 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
         ...(opts.cwd ? { cwd: resolve(opts.cwd) } : {}),
         timeoutMs,
         secrets,
+        maxResponseBytes,
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(opts.importer ? { importer: opts.importer } : {}),
       });
     const limits = { maxPages, maxEntries };
     const linkOf = (c: McpConnection): Link => ({
-      request: (r, o) => c.request(r, o),
+      // The connection's own method, handed over as it is (it does not use `this`); the call site is in call.ts.
+      invokeTool: c.invokeTool,
       transport: c.transport,
       relist: () => discoverTools(c.source, limits),
     });
@@ -399,7 +412,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       link: linkOf(conn),
       restart,
       callTimeoutMs: callTimeoutMs,
-      ...(opts.maxResponseBytes !== undefined ? { maxResponseBytes: parseDecimal("--max-response-bytes", opts.maxResponseBytes) } : {}),
+      maxResponseBytes,
       secrets,
       logDir: outDir,
       ...(opts.signal ? { signal: opts.signal } : {}),
@@ -409,7 +422,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const lost: string[] = [];
     // The call without credentials: HTTP with credentials only, once, described by the case generator.
     const anon = dropped.noCredentials;
-    if (anon && url !== undefined && !opts.signal?.aborted) {
+    // Not after the run was stopped or a budget ran out: nothing more is sent then.
+    if (anon && url !== undefined && !opts.signal?.aborted && !run.stopped && !guard.report().budgetExhausted) {
       const probe = await runAnonymousProbe({
         record: { tool: anon.tool, args: anon.args, expectAuth: anon.expectAuth },
         guard,
@@ -422,6 +436,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
           }
         },
         callTimeoutMs: callTimeoutMs,
+        maxBytes: maxResponseBytes,
         secrets,
         logDir: outDir,
       });
@@ -433,7 +448,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const guardReport = maskStrings(guard.report(), secrets);
     // The file written before the run said nothing was sent; now it says what was.
     await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(guardReport), null, 2)}\n`]]);
-    const coverCases = [...dropped.cases, ...runnable.filter((c) => !dropped.cases.some((d) => d.name === c.name))];
+    const coverCases = [...dropped.cases, ...runnable.filter((c) => !dropped.cases.some((d) => d.stableId === c.stableId))];
     const coverage = settle("coverage", lost, () => computeMcpCoverage(tools, coverCases, results));
     const gate = coverage && minCoverage !== undefined ? evaluateMcpGate(coverage, minCoverage, opts.countPartial === true) : undefined;
     const reportInput = {
@@ -447,6 +462,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       ...(gate ? { gate } : {}),
       findings,
       ...(run.stopped ? { stopped: run.stopped } : {}),
+      restarts: run.restarts,
       lost,
     };
     const put = (name: string, text: string | undefined): Promise<void> => (text === undefined ? Promise.resolve() : writeFiles([[name, maskSecrets(text, secrets)]]));

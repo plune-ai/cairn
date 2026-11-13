@@ -201,7 +201,7 @@ export function buildProgram(): Command {
     .option("--call-timeout <seconds>", "tool calls: how long to wait for one call (default 30)")
     .option("--min-coverage <percent>", "tool calls: exit 3 when fewer than this share of tools are covered")
     .option("--count-partial", "tool calls: with --min-coverage, count partially covered tools as covered")
-    .option("--max-response-bytes <n>", "tool calls: the most of one answer that is kept (default 262144)")
+    .option("--max-response-bytes <n>", "tool calls: the most bytes of one answer that is read, 1 to 67108864 (default 262144)")
     .option("--time-budget <seconds>", "tool calls: time for the whole run of calls; exit code 4 when it runs out")
     .option("--max-cases-per-tool <n>", "cases: most cases kept per tool (default 12); the rest are listed as cut with a count")
     .option("--examples <file>", "cases: JSON file {\"tool\": {arguments}} giving the arguments of the valid case; a value the tool's inputSchema refuses is an error")

@@ -3,8 +3,8 @@
  * decides first (`McpCallGuard.admit`), and a refused call never reaches the server. A source test keeps it so: the
  * method name of the call request appears in this file only.
  *
- * The connection a runner builds hands this function a small `rpc` (it does not expose the SDK client), so code that
- * reads the server (`connect.ts`, `discover.ts`) has no way to send a call.
+ * The connection a runner builds hands this function a small `rpc` with one method, `invokeTool` (it does not expose the SDK
+ * client or any generic sender), so code that reads the server (`discover.ts`) has no way to send a call.
  */
 import { appendFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,11 +16,30 @@ export const CALL_LOG_FILE = "mcp-calls.jsonl";
 const ARGUMENT_TEXT_LIMIT = 300;
 const ARGUMENT_DEPTH_LIMIT = 8;
 
-export type CallOutcome = "ok" | "error" | "timeout" | "process-exit";
+/** The method name of a tool call. It is written here and nowhere else; the connection takes it from here. */
+export const TOOL_CALL_METHOD = "tools/call";
 
-/** What a runner supplies to send one request on its connection. */
+export type CallOutcome = "ok" | "error" | "timeout" | "process-exit" | "too-large";
+
+/**
+ * A call that failed because of something this side saw or did: its own timer fired, the connection was closed (the
+ * transport said so), or the answer passed the size limit while it was read. Nothing the server SENT is ever turned into
+ * one of these: a server may answer -32000, -32001 or the text "Connection closed" as an ordinary error, and that stays a
+ * server answer.
+ */
+export class LocalFailure extends Error {
+  constructor(
+    readonly kind: "timeout" | "closed" | "too-large",
+    message: string,
+  ) {
+    super(message);
+    this.name = "LocalFailure";
+  }
+}
+
+/** What a runner supplies to send one tool call on its connection (the one sending method; the connection builds the request). */
 export interface ToolRpc {
-  request(req: { method: string; params: Record<string, unknown> }, opts: { timeout: number; signal?: AbortSignal }): Promise<unknown>;
+  invokeTool(name: string, args: Record<string, unknown>, opts: { timeoutMs: number; maxBytes?: number; signal?: AbortSignal }): Promise<unknown>;
 }
 
 /** One line of `mcp-calls.jsonl`: a call that really went to the server. */
@@ -51,6 +70,8 @@ export interface CallOptions {
   callTimeoutMs: number;
   /** Values to mask in the logged arguments. */
   secrets?: readonly string[];
+  /** The most bytes of one answer that is read. */
+  maxBytes?: number;
   signal?: AbortSignal;
   now?: () => number;
   /** Receives the line to log for a call that was sent. */
@@ -72,11 +93,10 @@ export function describeArguments(args: unknown, secrets: readonly string[] = []
   return points.length > ARGUMENT_TEXT_LIMIT ? `${points.slice(0, ARGUMENT_TEXT_LIMIT - 1).join("")}…` : text;
 }
 
+/** Only a failure this side observed is a timeout, a closed connection or a too large answer; the code and text of an error the server sent decide nothing. */
 function outcomeOf(e: unknown): CallOutcome {
-  const { code, message } = (e ?? {}) as { code?: unknown; message?: string };
-  if (code === -32001) return "timeout";
-  if (code === -32000 || /Connection closed/i.test(message ?? "")) return "process-exit";
-  return "error";
+  if (!(e instanceof LocalFailure)) return "error";
+  return e.kind === "timeout" ? "timeout" : e.kind === "closed" ? "process-exit" : "too-large";
 }
 
 /**
@@ -97,16 +117,17 @@ export async function guardedToolCall(
   let response: unknown;
   let error: CallError | undefined;
   try {
-    response = await rpc.request(
-      { method: "tools/call", params: { name: call.tool, arguments: call.arguments ?? {} } },
-      { timeout: opts.callTimeoutMs, ...(opts.signal ? { signal: opts.signal } : {}) },
-    );
+    response = await rpc.invokeTool(call.tool, call.arguments ?? {}, {
+      timeoutMs: opts.callTimeoutMs,
+      ...(opts.maxBytes !== undefined ? { maxBytes: opts.maxBytes } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
     if ((response as { isError?: unknown } | null)?.isError === true) result = "error";
   } catch (e) {
     result = outcomeOf(e);
     const x = (e ?? {}) as { name?: unknown; code?: unknown; message?: unknown };
     error = {
-      name: typeof x.name === "string" ? x.name : "Error",
+      name: e instanceof LocalFailure ? "LocalFailure" : typeof x.name === "string" ? x.name : "Error",
       ...(typeof x.code === "number" || typeof x.code === "string" ? { code: x.code } : {}),
       message: typeof x.message === "string" ? x.message : String(e),
     };

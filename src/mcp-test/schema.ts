@@ -220,6 +220,12 @@ interface Live {
  */
 export class OracleHost {
   private live: Live | undefined;
+  private kills = 0;
+
+  /** Counts the times the worker was stopped; a validator made before the last stop is gone. */
+  get generation(): number {
+    return this.kills;
+  }
 
   private start(): Live {
     const req = createRequire(import.meta.url);
@@ -242,6 +248,7 @@ export class OracleHost {
   }
 
   private kill(live: Live): void {
+    this.kills += 1;
     void live.worker.terminate();
     live.port.close();
     if (this.live === live) this.live = undefined;
@@ -256,7 +263,7 @@ export class OracleHost {
   }
 
   /** A validator for the schema (Ajv, 2020-12, with formats). Throws {@link CannotBuild} when it does not compile. */
-  oracle(schema: Obj): Oracle {
+  oracle(schema: Obj, opts: { perCheck?: boolean } = {}): Oracle {
     const live = this.live ?? this.start();
     const deadline = Date.now() + ORACLE_TIME_LIMIT_MS;
     const timeout = (): OracleTimeout => {
@@ -270,7 +277,8 @@ export class OracleHost {
     }
     return {
       check: (value: unknown): OracleResult => {
-        const r = this.ask(live, { value }, deadline - Date.now());
+        // `perCheck`: a validator kept for a whole run gives every check its own time, not what is left of the first 2 s.
+        const r = this.ask(live, { value }, opts.perCheck ? ORACLE_TIME_LIMIT_MS : deadline - Date.now());
         if (!r) throw timeout();
         if (!r.ok || !r.result) throw compileFailure(r.overflow ? new RangeError() : new Error(r.message));
         return r.result;

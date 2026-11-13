@@ -12,8 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`cairn mcp-test` sends the cases (MCP-E5).** With `--allow-tools`, `--allow-read-only-hints` or `--allow-mutations` the
   generated and adversarial cases are sent through the call guard, one call per case, with five states (`passed`, `failed`,
   `not-sent`, `could-not-run`, `needs-review`), per-tool coverage (`--min-coverage`, `--count-partial`), `--max-response-bytes`
-  and the artifacts `report.json` (`mode: "mcp"`), `report.md`, `mcp-evidence.json` and `testcases/`. Exit codes: 0 all sent
-  passed, 1 failed, 3 coverage, 4 budget, 5 nothing proven. A stdio server that exits is restarted once.
+  and the artifacts `report.json` (`mode: "mcp"`), `report.md`, `mcp-evidence.json` and `testcases/`. Exit codes: 0 at least one
+  case passed and no case failed, could not run or needs review (a guard refusal does not count), 1 failed or stopped, 3 coverage,
+  4 budget, 5 not proven. A stdio server that exits is restarted once; later results are marked `afterRestart`.
+  Review round: a timeout or a closed connection is decided only by facts on this side (the call's own timer, the transport
+  closing), never by an error code or text the server sent; one answer is bounded while it is read (HTTP body counter, stdio
+  message cap that stops the child); the tool is read again before every call and a failed read means no call; a Negative case
+  passes only on an error its `expect` lists, any other code is `needs-review`; an output schema is compiled once per tool;
+  `--max-response-bytes` is a whole number from 1 to 67108864.
 - **`cairn mcp-test --adversarial` (MCP-E3).** Adds `psycho` and `hacker` cases for tool arguments (extreme numbers, long,
   empty, zero-byte and unpaired-surrogate strings, a deep array, a forbidden extra property, a `__proto__` key, and four
   harmless injection strings with their WSTG ids) and tags the `normal` and `curious` ones. Cases are written to

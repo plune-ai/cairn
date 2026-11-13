@@ -159,8 +159,8 @@ describe("CLI · mcp-test · runner · command level", () => {
 
 describe("MCP-E5 · coverage and exit code rules", () => {
   const tool = (name: string) => ({ name, inputSchema: { type: "object", properties: { q: { type: "string" } } } }) as never;
-  const res = (name: string, state: CaseResult["state"]) => ({ name, state }) as CaseResult;
-  const cs = (name: string, t: string) => ({ name, tool: t, args: { q: "a" } });
+  const res = (name: string, state: CaseResult["state"]) => ({ name, stableId: name, state }) as CaseResult;
+  const cs = (name: string, t: string) => ({ stableId: name, name, tool: t, args: { q: "a" } });
 
   it("a case that was not sent covers nothing; the tool is uncovered and named", () => {
     const c = computeMcpCoverage([tool("a"), tool("b")], [cs("1", "a"), cs("2", "b")], [res("1", "passed"), res("2", "not-sent")]);
@@ -190,6 +190,17 @@ describe("MCP-E5 · coverage and exit code rules", () => {
     expect(mcpExitCode({ ...base, budgetExhausted: true, results: [res("1", "passed")] })).toBe(4);
     const gate = { passed: false } as never;
     expect(mcpExitCode({ ...base, gate, results: [res("1", "passed")] })).toBe(3);
+  });
+
+  it("exit 0 only when no case was left unjudged: could-not-run or needs-review beside a pass is 5, a guard refusal is the user's choice", () => {
+    const base = { budgetExhausted: false };
+    expect(mcpExitCode({ ...base, results: [res("1", "passed"), res("2", "could-not-run")] })).toBe(5);
+    expect(mcpExitCode({ ...base, results: [res("1", "passed"), res("2", "needs-review")] })).toBe(5);
+    expect(mcpExitCode({ ...base, results: [res("1", "passed"), res("2", "not-sent")] })).toBe(0);
+    // Precedence: failed 1, coverage 3, budget 4, not proven 5.
+    expect(mcpExitCode({ ...base, results: [res("1", "failed"), res("2", "could-not-run")] })).toBe(1);
+    expect(mcpExitCode({ ...base, budgetExhausted: true, results: [res("1", "passed"), res("2", "could-not-run")] })).toBe(4);
+    expect(mcpExitCode({ ...base, stopped: "gone", results: [res("1", "passed")] })).toBe(1);
   });
 });
 
@@ -232,5 +243,25 @@ describe("CLI · mcp-test · adversarial criteria the runner unblocks", () => {
     expect(x.starts.length).toBeGreaterThanOrEqual(2);
     expect(x.r.exitCode).toBe(1);
     expect(err.join("")).toMatch(/stopped early/);
+  });
+});
+
+describe("CLI · mcp-test · --max-response-bytes and the stop", () => {
+  it.each(["0", "-5", "1e3", "0x10", "67108865", "abc"])("%s is a usage error and nothing is connected", async (v) => {
+    await expect(run({}, { allowTools: "echo", maxResponseBytes: v })).rejects.toThrow(/--max-response-bytes/);
+  });
+
+  it("an HTTP run that was stopped does not send the call without credentials", async () => {
+    const modelFixture2 = resolve(here, "..", "fixtures", "mcp-model-server.mjs");
+    const fx = await ((await import(modelFixture2)) as { startHttpFixture: (o: object) => Promise<{ url: string; close: () => Promise<void> }> }).startHttpFixture({ requireAuth: "Bearer tok-stop-1234" });
+    try {
+      const o = dir();
+      await runMcpTest({ url: fx.url, out: o, timeout: 20, callTimeout: 5, allowTools: "search_notes", allowMutations: true, adversarial: "hacker", maxCalls: 1, header: ["Authorization: Bearer tok-stop-1234"] }, io);
+      const report = JSON.parse(readFileSync(join(o, "report.json"), "utf8"));
+      expect(report.cases.filter((c: { kind: string }) => c.kind === "no-credentials")).toEqual([]);
+      expect(report.guardrails.budgetExhausted).toBe(true);
+    } finally {
+      await fx.close();
+    }
   });
 });

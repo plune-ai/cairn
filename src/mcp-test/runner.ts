@@ -49,8 +49,8 @@ export interface RunnableCase {
   humanOracle?: boolean;
   expect:
     | { outcome: "success"; outputSchema?: boolean }
-    | { outcome: "rejected"; forms?: unknown }
-    | { outcome: "robust"; failedWhen: readonly string[] };
+    | { outcome: "rejected"; forms?: ReadonlyArray<{ jsonRpcErrorCode: number } | { resultIsError: true }> }
+    | { outcome: "robust"; failedWhen: readonly string[]; accepts?: readonly string[] };
 }
 
 export interface CaseResult {
@@ -74,11 +74,13 @@ export interface CaseResult {
   observations: string[];
   advice: AdviceFinding[];
   humanOracle?: boolean;
+  /** The server was started again earlier in this run: it had lost whatever state the earlier cases made. */
+  afterRestart?: true;
 }
 
 /** A connection the runner can ask: the current one, and how to start the server again (stdio only). */
 export interface Link {
-  request: ToolRpc["request"];
+  invokeTool: ToolRpc["invokeTool"];
   transport: "stdio" | "streamable-http";
   /** Reads this connection's tool list again (a new connection brings its own). */
   relist?: () => Promise<McpToolEntry[]>;
@@ -111,12 +113,14 @@ export interface RunResult {
 type Anomaly = "process-exit" | "connection-closed" | "timeout" | "http-5xx";
 
 type Answer =
+  | { kind: "too-large" }
   | { kind: "result"; result: Obj; bytes: number; truncated: boolean }
   | { kind: "rpc-error"; code: number; message: string }
   | { kind: "anomaly"; anomaly: Anomaly; message: string }
   | { kind: "unjudgeable"; message: string };
 
 function classify(transport: Link["transport"], outcome: string, error: CallError | undefined, response: unknown, max: number): Answer {
+  if (outcome === "too-large") return { kind: "too-large" };
   if (outcome === "timeout") return { kind: "anomaly", anomaly: "timeout", message: "no answer within the call timeout" };
   if (outcome === "process-exit") {
     return transport === "stdio"
@@ -135,7 +139,7 @@ function classify(transport: Link["transport"], outcome: string, error: CallErro
   if (!response || typeof response !== "object" || Array.isArray(response)) return { kind: "unjudgeable", message: "the answer is not an object" };
   let bytes: number;
   try {
-    bytes = JSON.stringify(response).length;
+    bytes = Buffer.byteLength(JSON.stringify(response), "utf8");
   } catch {
     return { kind: "unjudgeable", message: "the answer cannot be read as JSON" };
   }
@@ -169,14 +173,23 @@ function isErrorResult(r: Obj): boolean {
   return r["isError"] === true;
 }
 
+/** What a Negative case lists as a refusal: JSON-RPC error codes, and whether an error result counts. A case without a list means -32602 or isError. */
+function rejectionForms(forms: ReadonlyArray<{ jsonRpcErrorCode: number } | { resultIsError: true }> | undefined): { codes: number[]; isError: boolean } {
+  const list = forms ?? [{ jsonRpcErrorCode: -32602 }, { resultIsError: true as const }];
+  return { codes: list.flatMap((f) => ("jsonRpcErrorCode" in f ? [f.jsonRpcErrorCode] : [])), isError: list.some((f) => "resultIsError" in f) };
+}
+
+const DEFAULT_ACCEPTS = ["json-rpc-error", "result-isError", "accepted-without-harm"];
+const acceptsOf = (e: { accepts?: readonly string[] }): readonly string[] => e.accepts ?? DEFAULT_ACCEPTS;
+
 export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions): Promise<RunResult> {
   const secrets = o.secrets ?? [];
   const max = o.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const host = new OracleHost();
   const toolByName = new Map(o.tools.map((t) => [t.name, t]));
   const results: CaseResult[] = [];
-  const observed = new Set<string>();
   let link = o.link;
+  let afterRestart = false;
   let alive = true; // an answer (or the start of this connection) was seen since the last silence
   let silent = 0;
   let crashes = 0;
@@ -196,22 +209,42 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       observations: [],
       advice: [],
       ...(c.humanOracle ? { humanOracle: true } : {}),
+      ...(afterRestart ? { afterRestart: true as const } : {}),
       ...extra,
     });
   };
 
   /** The output check of a successful result: undefined when it holds, else the verdict. */
+  // One validator per tool, built once; a tool whose schema could not be built or timed out is not checked again in this run.
+  type Compiled = { oracle: ReturnType<OracleHost["oracle"]>; generation: number } | { unchecked: string };
+  const compiled = new Map<string, Compiled>();
+  const unchecked = (what: string): string => `the outputSchema could not be checked (${safeText(maskSecrets(what, secrets), 120)})`;
   const checkOutput = async (tool: McpToolEntry | undefined, result: Obj): Promise<{ state: CaseState; reason: string } | undefined> => {
     const schema = tool?.outputSchema;
-    if (!schema) return undefined;
+    if (!schema || !tool) return undefined;
     if (result["structuredContent"] === undefined) return { state: "failed", reason: "the tool declares an outputSchema but the result has no structuredContent" };
-    const problem = scanSchema(schema);
-    if (problem) return { state: "needs-review", reason: `the outputSchema could not be checked (${problem.keyword}: ${safeText(problem.message, 120)})` };
+    let entry = compiled.get(tool.name);
+    // A timeout for another tool restarted the worker, and a validator of the old one is gone: build this one again.
+    if (!entry || ("oracle" in entry && entry.generation !== host.generation)) {
+      const problem = scanSchema(schema);
+      if (problem) entry = { unchecked: unchecked(`${problem.keyword}: ${problem.message}`) };
+      else {
+        try {
+          entry = { oracle: host.oracle(schema, { perCheck: true }), generation: host.generation };
+        } catch (e) {
+          entry = { unchecked: unchecked((e as Error).message) };
+        }
+      }
+      compiled.set(tool.name, entry);
+    }
+    if ("unchecked" in entry) return { state: "needs-review", reason: entry.unchecked };
     try {
-      const valid = host.oracle(schema).check(result["structuredContent"]).valid;
+      const valid = entry.oracle.check(result["structuredContent"]).valid;
       return valid ? undefined : { state: "failed", reason: "structuredContent does not match the tool's outputSchema" };
     } catch (e) {
-      return { state: "needs-review", reason: `the outputSchema could not be checked (${safeText((e as Error).message, 120)})` };
+      const reason = unchecked((e as Error).message);
+      compiled.set(tool.name, { unchecked: reason });
+      return { state: "needs-review", reason };
     }
   };
 
@@ -221,29 +254,49 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
         finish(c, "could-not-run", stopped ?? "interrupted");
         continue;
       }
-      // A tool that changed since the user looked is refused by the guard: ask it to compare before the first call.
+      // The tool is read again before EVERY call: one that changed since the user looked is refused by the guard, and a list
+      // that cannot be read (or is cut short) means the call is not sent. The read takes a rate slot but no call of the budget.
       const relist = link.relist ?? o.relist;
-      if (!observed.has(c.tool) && relist) {
-        observed.add(c.tool);
+      if (relist && o.guard.decide({ tool: c.tool, ...(c.style ? { style: c.style } : {}) }).allowed) {
+        await o.guard.waitSlot();
         try {
           o.guard.observe(await relist());
         } catch {
-          /* the guard keeps the list it was given */
+          finish(c, "not-sent", "the tool list could not be re-read, so the call was not sent");
+          continue;
         }
       }
       const call = await guardedToolCall(o.guard, link, { tool: c.tool, ...(c.style ? { style: c.style } : {}), arguments: c.args }, {
         callTimeoutMs: o.callTimeoutMs,
+        maxBytes: max,
         secrets,
         ...(o.signal ? { signal: o.signal } : {}),
         ...(o.logDir ? { log: (e) => appendCallLog(o.logDir as string, e) } : {}),
       });
       if (!call.sent) {
-        finish(c, "not-sent", `the call guard refused it: ${call.decision.reason}`);
+        // The guard did not refuse the case itself: the run's time ran out before its turn.
+        if (call.decision.reason === "time budget exhausted") finish(c, "could-not-run", "the time budget ran out before this case was sent (--time-budget)");
+        else finish(c, "not-sent", `the call guard refused it: ${call.decision.reason}`);
         continue;
       }
       const answer = classify(link.transport, call.entry.result, call.error, call.response, max);
       const base: Partial<CaseResult> = { durationMs: call.entry.durationMs, request: call.entry.arguments };
 
+      if (answer.kind === "too-large") {
+        // The server did answer; the answer was cut off while it was read. A stdio connection was closed to stop the flood.
+        alive = true;
+        silent = 0;
+        finish(c, "needs-review", "the answer is larger than the limit and was not read to the end", { ...base, truncated: true, observations: [`answer passed the ${max} byte limit while it was read`] });
+        if (link.transport === "stdio") {
+          const next = o.restart ? await o.restart() : undefined;
+          if (next) {
+            link = next;
+            restarts += 1;
+            afterRestart = true;
+          } else stopped = "the server connection was closed to stop an oversized answer and could not be started again; the run was stopped";
+        }
+        continue;
+      }
       if (answer.kind === "anomaly") {
         const aliveBefore = alive;
         alive = false;
@@ -260,9 +313,9 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
             if (next) {
               link = next;
               restarts += 1;
+              afterRestart = true;
               alive = true;
               silent = 0;
-              observed.clear();
             } else stopped = "the server process could not be started again; the run was stopped";
           } else stopped = "the server connection is gone; the run was stopped";
         } else if (silent >= MAX_SILENT_IN_A_ROW) stopped = `${MAX_SILENT_IN_A_ROW} cases in a row got no answer; the run was stopped`;
@@ -288,9 +341,14 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
         const advice = adviceOf(text);
         const extra = { response: text, advice };
         const e = c.expect;
-        if (e.outcome === "rejected") answered("passed", `refused with a JSON-RPC error (${answer.code})`, extra);
-        else if (e.outcome === "robust") answered(c.humanOracle ? "needs-review" : "passed", c.humanOracle ? `refused with a JSON-RPC error (${answer.code}); whether the payload was handled safely needs a person` : `refused with a JSON-RPC error (${answer.code})`, extra);
-        else answered("failed", `the server answered a JSON-RPC error (${answer.code}) to a value its schema allows`, extra);
+        if (e.outcome === "rejected") {
+          const listed = rejectionForms(e.forms).codes;
+          if (listed.includes(answer.code)) answered("passed", `refused with a JSON-RPC error (${answer.code})`, extra);
+          else answered("needs-review", `refused with JSON-RPC error ${answer.code}, which the case does not list (${listed.join(", ")}): the server refused, but not for the stated reason`, extra);
+        } else if (e.outcome === "robust") {
+          if (!acceptsOf(e).includes("json-rpc-error")) answered("needs-review", `answered JSON-RPC error ${answer.code}, which the case does not accept as a safe answer`, extra);
+          else answered(c.humanOracle ? "needs-review" : "passed", c.humanOracle ? `refused with a JSON-RPC error (${answer.code}); whether the payload was handled safely needs a person` : `refused with a JSON-RPC error (${answer.code})`, extra);
+        } else answered("failed", `the server answered a JSON-RPC error (${answer.code}) to a value its schema allows`, extra);
         continue;
       }
 
@@ -312,12 +370,17 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
       const e = c.expect;
       if (e.outcome === "rejected") {
         if (answer.truncated) answered("needs-review", "the answer is larger than the limit and was not kept", extra);
-        else if (isErrorResult(r)) answered("passed", "refused with an error result (isError)", extra);
-        else answered("failed", "the server accepted a value that violates its schema", extra);
+        else if (isErrorResult(r)) {
+          if (rejectionForms(e.forms).isError) answered("passed", "refused with an error result (isError)", extra);
+          else answered("needs-review", "refused with an error result (isError), which the case does not list: it expects a JSON-RPC error", extra);
+        } else answered("failed", "the server accepted a value that violates its schema", extra);
         continue;
       }
       if (e.outcome === "robust") {
+        const accepts = acceptsOf(e);
         if (answer.truncated) answered("needs-review", "the answer is larger than the limit and was not kept", extra);
+        else if (isErrorResult(r) && !accepts.includes("result-isError")) answered("needs-review", "answered with an error result (isError), which the case does not accept as a safe answer", extra);
+        else if (!isErrorResult(r) && !accepts.includes("accepted-without-harm")) answered("needs-review", "the server accepted the value, which the case does not accept as a safe answer", extra);
         else if (c.humanOracle) answered("needs-review", "the server answered; whether the payload was handled safely needs a person", extra);
         else answered("passed", isErrorResult(r) ? "refused with an error result (isError)" : "accepted; no failure seen", extra);
         continue;
@@ -348,6 +411,7 @@ export interface AnonymousProbeOptions {
   /** Connects with no credentials at all. `"auth-required"`: the server refused the connection itself. */
   connect: () => Promise<{ link: Link; close: () => Promise<void> } | "auth-required" | undefined>;
   callTimeoutMs: number;
+  maxBytes?: number;
   secrets?: readonly string[];
   logDir?: string;
 }
@@ -368,6 +432,7 @@ export async function runAnonymousProbe(o: AnonymousProbeOptions): Promise<{ res
   try {
     const call = await guardedToolCall(o.guard, opened.link, { tool, arguments: args }, {
       callTimeoutMs: o.callTimeoutMs,
+      maxBytes: o.maxBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
       secrets: o.secrets ?? [],
       ...(o.logDir ? { log: (e) => appendCallLog(o.logDir as string, e) } : {}),
     });
@@ -376,7 +441,7 @@ export async function runAnonymousProbe(o: AnonymousProbeOptions): Promise<{ res
     if (call.error) {
       const code = typeof call.error.code === "number" ? call.error.code : undefined;
       if (call.error.name === "StreamableHTTPError" && (code === 401 || code === 403)) return done("passed", `the server answered HTTP ${code} without credentials`, extra);
-      if (call.error.name === "McpError" && code !== undefined && code !== -32000 && code !== -32001) return done("needs-review", "an error without credentials: only a person can tell if it is an authentication error", extra);
+      if (call.error.name === "McpError" && code !== undefined) return done("needs-review", "an error without credentials: only a person can tell if it is an authentication error", extra);
       return done("could-not-run", "no answer without credentials", { ...extra, error: safeText(maskSecrets(call.error.message, o.secrets ?? []), 200) });
     }
     const r = (call.response ?? {}) as Obj;

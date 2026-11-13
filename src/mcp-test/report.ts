@@ -26,14 +26,16 @@ export function countStates(results: readonly CaseResult[]): Record<CaseState, n
 
 /**
  * 1 when a case failed or the run was stopped before the end; 3 when coverage fell short; 4 when a budget ran out;
- * 5 when nothing was proven (no case passed); 0 otherwise. A run in which every answer needed a person is not green.
+ * 5 when the run is not proven: no case passed, or a case got no answer (`could-not-run`) or needs a person
+ * (`needs-review`); 0 only when at least one case passed and every other case that was sent passed too. A case the guard
+ * refused (`not-sent`) is the user's choice and does not change the code; the summary states the counts.
  */
 export function mcpExitCode(o: { results: readonly CaseResult[]; stopped?: string; gate?: McpCoverageGate; budgetExhausted: boolean }): number {
   const n = countStates(o.results);
   if (n.failed > 0 || o.stopped) return 1;
   if (o.gate && !o.gate.passed) return COVERAGE_GATE_EXIT_CODE;
   if (o.budgetExhausted) return BUDGET_EXIT_CODE;
-  if (n.passed === 0) return NOTHING_PROVEN_EXIT_CODE;
+  if (n.passed === 0 || n["could-not-run"] > 0 || n["needs-review"] > 0) return NOTHING_PROVEN_EXIT_CODE;
   return 0;
 }
 
@@ -51,6 +53,7 @@ export function buildEvidence(results: readonly CaseResult[]): unknown[] {
     ...(r.response !== undefined ? { response: r.response } : {}),
     ...(r.responseBytes !== undefined ? { responseBytes: r.responseBytes } : {}),
     ...(r.truncated ? { truncated: true } : {}),
+    ...(r.afterRestart ? { afterRestart: true } : {}),
     observations: r.observations,
     advice: r.advice,
     ...(r.humanOracle ? { humanOracle: true } : {}),
@@ -69,6 +72,8 @@ export interface ReportInput {
   gate?: McpCoverageGate;
   findings: readonly Finding[];
   stopped?: string;
+  /** How many times the server was started again during the run. */
+  restarts?: number;
   /** Parts that could not be built, by name. */
   lost: readonly string[];
 }
@@ -76,7 +81,7 @@ export interface ReportInput {
 export function buildReportJson(r: ReportInput): unknown {
   const n = countStates(r.results);
   const sent = r.results.length - n["not-sent"];
-  const byName = new Map(r.results.map((x) => [x.name, x]));
+  const byId = new Map(r.results.map((x) => [x.stableId, x]));
   return {
     schemaVersion: ARTIFACT_SCHEMA_VERSION,
     runId: r.runId,
@@ -94,12 +99,13 @@ export function buildReportJson(r: ReportInput): unknown {
       ...(c.technique ? { technique: c.technique } : {}),
       ...(c.rationale ? { rationale: c.rationale } : {}),
       ...(c.style ? { adversarialStyle: c.style } : {}),
-      state: byName.get(c.name)?.state ?? "not-sent",
+      state: byId.get(c.stableId)?.state ?? "not-sent",
     })),
     ...(r.coverage ? { coverage: r.coverage } : {}),
     ...(r.gate ? { coverageGate: r.gate } : {}),
     findings: r.findings,
     ...(r.stopped ? { stopped: r.stopped } : {}),
+    ...(r.restarts ? { restarts: r.restarts } : {}),
     ...(r.lost.length ? { lost: r.lost } : {}),
     cost: { usd: 0, tokens: 0, model: false },
   };
@@ -113,6 +119,7 @@ export function renderMcpReportMd(r: ReportInput): string {
   lines.push(`- **Server:** ${safeText(r.url, 200)}`, `- **Run ID:** ${r.runId}`);
   lines.push(`- **Cases:** ${n.passed} passed, ${n.failed} failed, ${n["needs-review"]} need review, ${n["could-not-run"]} could not run, ${n["not-sent"]} not sent`);
   if (r.stopped) lines.push(`- **Stopped early:** ${safeText(r.stopped, 200)}`);
+  if (r.restarts) lines.push(`- **The server was started again ${r.restarts} time(s):** the cases after that ran against a server that lost the state the earlier cases made (marked afterRestart in mcp-evidence.json).`);
   if (n["needs-review"]) lines.push(`- **${n["needs-review"]} case(s) were answered but not judged: a person has to look.**`);
   if (r.lost.length) lines.push(`- **Not built:** ${r.lost.join(", ")}`);
   lines.push("", `## Cases (${r.results.length})`, "", "| state | tool | case | why |", "|---|---|---|---|");
@@ -135,10 +142,10 @@ export function renderMcpReportMd(r: ReportInput): string {
 
 /** ATC documents, one per case; "Passed" only when that case's own result says passed. */
 export function buildMcpTestCaseDocs(cases: readonly RunnableCase[], results: readonly CaseResult[], suite: string): Array<{ id: string; md: string }> {
-  const byName = new Map(results.map((x) => [x.name, x]));
+  const byId = new Map(results.map((x) => [x.stableId, x]));
   return cases.map((c, i) => {
     const id = `ATC-${suite}-${String(i + 1).padStart(3, "0")}`;
-    const state = byName.get(c.name)?.state;
+    const state = byId.get(c.stableId)?.state;
     const status = state === "passed" ? "✅ Passed" : state === "failed" ? "❌ Failed" : state === "needs-review" ? "⚠ Needs review" : "❌ Not run";
     return { id, md: renderMcpTestCaseMd(c, { id, suite, status }) };
   });

@@ -299,7 +299,8 @@ A case whose arguments hold a value that the secret masking would change (a valu
 `--url`) is not written masked; it is listed under `skipped` with the reason `value masked`.
 
 The expected answer in a case: a Positive case expects a successful result; a Negative case accepts either a JSON-RPC
-error with code -32602 or a result with `isError: true`. Nothing executes the cases yet.
+error or a result with `isError: true`, as each case lists (the cases written by `cairn mcp-test` list -32602 and `isError`).
+The cases are run by the flags described under "Running the cases" below.
 
 ### Adversarial cases (`--adversarial`)
 
@@ -345,28 +346,53 @@ nothing uses it yet.
 
 ### Running the cases (`--allow-tools`, `--allow-read-only-hints`, `--allow-mutations`)
 
+**These calls run on the server you point at, with the tools you allow. They can change data. Use a test account on a
+test server, never one with real data.** Without a flag nothing is called.
+
 With any of the three flags the command also sends the generated cases, one call per case and only through the call guard
-(a case the guard refuses is `not-sent`). Without them nothing is called, as before. Each case ends in one of five states:
+(a case the guard refuses is `not-sent`). Each case ends in one of five states:
 
 | state | meaning |
 | --- | --- |
 | `passed` | the server answered as the case expects |
-| `failed` | the server's own answer broke a rule written in the case (or its process exited during the call while it was alive before) |
-| `not-sent` | the guard refused the call, or the run stopped before it |
-| `could-not-run` | no answer: timeout, closed connection, server gone |
-| `needs-review` | answered, but a person has to judge (an `isError` on a made-up valid value, an answer over `--max-response-bytes`, a payload only a person can judge) |
+| `failed` | the server's own answer broke a rule written in the case (or its process exited during the call while it was answering before) |
+| `not-sent` | the call guard refused it (a tool not allowed, a budget, a tool that changed since permission, a tool list that could not be re-read) |
+| `could-not-run` | no answer: timeout, closed connection, server gone, or the run stopped or ran out of `--time-budget` before it |
+| `needs-review` | answered, but a person has to judge (an `isError` on a made-up valid value, an error the case does not list, an answer over `--max-response-bytes`, a payload only a person can judge) |
 
-Rules: a valid case passes on a success (and, when the tool declares an `outputSchema`, a `structuredContent` that fits it);
-a JSON-RPC error on a valid case fails. A case that breaks the schema passes when the server refuses it (JSON-RPC error or
-`isError`) and fails when it accepts it. A stdio server that exits fails that case; the run restarts it once and a second exit
-stops the run (the rest is `could-not-run`). Observations (empty content, text only, time, size, stack-trace-like text) are
-listed in `mcp-evidence.json` and never change a state or the exit code. Answers are cut to `--max-response-bytes`
-(default 262144) after secrets are masked; an answer over the limit is not stored.
+Rules. A valid case passes on a success (and, when the tool declares an `outputSchema`, a `structuredContent` that fits it;
+the schema is compiled once per tool, and a tool whose check timed out is `needs-review` for the rest of the run). A JSON-RPC
+error on a valid case fails. A case that breaks the schema passes only on what its `expect` lists: a JSON-RPC error with one of
+the listed codes (-32602), or an `isError` result. Any other error code (-32603, -32601, -32700, ...) is `needs-review` with
+the code named: the server refused, but not for the stated reason. It fails when the server accepts the value. A robustness
+case (adversarial) follows its own `accepts` list literally. Observations (empty content, text only, time, size,
+stack-trace-like text) are listed in `mcp-evidence.json` and never change a state or the exit code.
+
+How a lost connection is told from a server's answer: only a fact on this side counts. "Timeout" is this side's own timer
+firing; "the connection is gone" is the transport reporting that it closed (for stdio the child's exit). The code or text of
+an error the server sent never counts: a live server that answers -32000, -32001 or the text "Connection closed" gave an
+ordinary error answer, judged by the case's rule. A stdio server that exits fails that case; the run starts it once more and a
+second exit stops the run (the rest is `could-not-run`). Every result after the restart carries `afterRestart: true`, because
+the server lost the state the earlier cases made.
+
+Before every call the tool is read again (`tools/list`); a tool that changed since you looked (its schema, its description or
+its `readOnlyHint`) is refused as "changed since permission", and when the list cannot be read or is cut short the call is not
+sent. Each read takes a rate slot (`--rps`) but no call of `--max-calls`.
+
+Size. `--max-response-bytes` (default 262144; a plain decimal whole number from 1 to 67108864) limits one answer, counted in
+bytes. Over HTTP the response body is read through a counter and reading stops once the limit is passed. Over stdio the child's
+output is counted per message: the reader refuses to buffer more than the larger of the limit and 1 MiB, and the child is
+stopped when one message passes that cap (the run starts it again, as after an exit). What remains unbounded: a message
+between the limit and the cap (up to 1 MiB) is parsed before it is judged, and a `tools/list` page above the cap ends the
+connection. An answer over the limit is `needs-review` and is not stored; what is stored is masked first and cut after.
 
 `--min-coverage <percent>` and `--count-partial` gate the share of tools that were covered (a tool is covered when every
 declared parameter was sent by a case that was sent and judged; a tool with no such case is listed as not measured).
 
-Exit codes: `0` every sent case passed; `1` a case failed or the run stopped early; `3` coverage below `--min-coverage`;
-`4` a guard budget ran out; `5` nothing was proven (no case passed, or the server has no tools). Artifacts in
-`runs/mcp-<id>/`: `report.json` (`mode: "mcp"`), `report.md`, `mcp-model.json`, `mcp-cases.json`, `mcp-evidence.json`,
-`mcp-calls.jsonl`, `testcases/` (one ATC document per case). The cost is zero and no model is used.
+Exit codes: `0` at least one case passed and every other case that was sent passed too (cases the guard refused do not change
+the code; the summary states the counts); `1` a case failed or the run stopped early; `3` coverage below `--min-coverage`; `4` a
+guard budget ran out; `5` not proven: no case passed, or a case could not run or needs a person, or the server has no tools.
+The order is 1, 3, 4, 5; when `--time-budget` ran out and a case also failed, the code is 1 and the budget is named in the
+output. The call without credentials (HTTP, with `--adversarial` hacker) is not sent once the run was stopped or a budget ran
+out. Artifacts in `runs/mcp-<id>/`: `report.json` (`mode: "mcp"`), `report.md`, `mcp-model.json`, `mcp-cases.json`,
+`mcp-evidence.json`, `mcp-calls.jsonl`, `testcases/` (one ATC document per case). The cost is zero and no model is used.

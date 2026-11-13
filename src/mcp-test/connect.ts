@@ -13,6 +13,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { LocalFailure, TOOL_CALL_METHOD } from "./call.js";
 import type { McpListKind } from "./model.js";
 import type { DiscoverSource, ListPage } from "./discover.js";
 import { safeText } from "./model.js";
@@ -49,6 +50,8 @@ export interface ConnectOptions {
   signal?: AbortSignal;
   /** Values to mask in what the server writes to stderr. */
   secrets?: readonly string[];
+  /** The most bytes of one answer to a call that is read (default 256 KiB); a stdio message is cut off while it is read, never after it was parsed. */
+  maxResponseBytes?: number;
   /** Replaces `import()`; a test uses it to make the SDK look uninstalled. */
   importer?: (specifier: string) => Promise<unknown>;
 }
@@ -58,8 +61,14 @@ export interface McpConnection {
   transport: "stdio" | "streamable-http";
   /** The stdio server's process id (null for HTTP). */
   pid: number | null;
-  /** One request on this connection; the answer is whatever object the server sent. Only `call.ts` names a method to call a tool. */
-  request(req: { method: string; params: Record<string, unknown> }, opts: { timeout: number; signal?: AbortSignal }): Promise<unknown>;
+  /**
+   * Sends one tool call (the only request this connection sends besides reading lists) and returns the answer as the server
+   * sent it. A failure this side saw (its own timer, the transport closing, the answer passing `maxBytes` while it was read)
+   * is thrown as a `LocalFailure`; whatever the server answered, a JSON-RPC error included, is thrown as it came.
+   */
+  invokeTool(name: string, args: Record<string, unknown>, opts: { timeoutMs: number; maxBytes?: number; signal?: AbortSignal }): Promise<unknown>;
+  /** Bytes read from the server since the connection was made (stdout of the child, or response bodies). */
+  readonly bytesRead: number;
   /** What the server wrote to stderr, as is (the caller masks it). */
   stderrText(): string;
   /** Ends the session and makes sure the server process is gone. */
@@ -67,6 +76,9 @@ export interface McpConnection {
 }
 
 const STDERR_CAP = 64 * 1024;
+/** The stdio reader refuses a message above this even when no limit is set (the SDK's own default is 10 MiB). */
+const MIN_MESSAGE_CAP = 1024 * 1024;
+export const DEFAULT_RESPONSE_BYTES = 256 * 1024;
 const REDIRECT_MESSAGE = "The server answered with a redirect; redirects are not followed.";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -188,10 +200,16 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     return (rawStderr.length >= rawCap ? maskCutTail(masked, secrets) : masked).slice(0, STDERR_CAP);
   };
   const isStdio = o.command !== undefined;
+  // What this side saw, read by `invokeTool`: the limit of the call in flight, an answer that passed it, bytes read.
+  const state: { limit: number | undefined; tooLarge: boolean; bytesRead: number; closed: boolean } = { limit: undefined, tooLarge: false, bytesRead: 0, closed: false };
   let transport: any;
+  let messageCap = MIN_MESSAGE_CAP;
   if (isStdio) {
     const [command, ...args] = o.command as string[];
-    transport = new sdk.StdioClientTransport({ command, args, env: o.env, ...(o.cwd ? { cwd: o.cwd } : {}), stderr: "pipe" });
+    // The reader of the SDK stops at this many buffered bytes, before it parses a line: it reports an error and closes the child.
+    const maxBufferSize = Math.max(o.maxResponseBytes ?? DEFAULT_RESPONSE_BYTES, MIN_MESSAGE_CAP);
+    messageCap = maxBufferSize;
+    transport = new sdk.StdioClientTransport({ command, args, env: o.env, ...(o.cwd ? { cwd: o.cwd } : {}), stderr: "pipe", maxBufferSize });
     transport.stderr?.on("data", (chunk: Buffer) => {
       const text = decoder.write(chunk);
       if (rawStderr.length < rawCap) rawStderr += text.slice(0, rawCap - rawStderr.length);
@@ -209,7 +227,36 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
         throw new McpTestError("protocol", REDIRECT_MESSAGE);
       }
       if (res.status === 401) auth.header = res.headers.get("www-authenticate");
-      return res;
+      return limitBody(res);
+    };
+    // Reads the body through a counter: past the limit of the call in flight it stops reading and fails the stream.
+    const limitBody = (res: Response): Response => {
+      const limit = state.limit;
+      const source = res.body;
+      if (!source) return res;
+      const declared = Number(res.headers.get("content-length"));
+      const reader = source.getReader();
+      let seen = 0;
+      const fail = async (): Promise<never> => {
+        state.tooLarge = true;
+        await reader.cancel().catch(() => undefined);
+        throw new Error("the answer is over the size limit");
+      };
+      const body = new ReadableStream<Uint8Array>({
+        async pull(ctrl) {
+          if (limit !== undefined && declared > limit && seen === 0) await fail().catch((e) => ctrl.error(e));
+          else {
+            const { done, value } = await reader.read();
+            if (done) return ctrl.close();
+            seen += value.byteLength;
+            state.bytesRead += value.byteLength;
+            if (limit !== undefined && seen > limit) return void (await fail().catch((e) => ctrl.error(e)));
+            ctrl.enqueue(value);
+          }
+        },
+        cancel: (reason) => reader.cancel(reason),
+      });
+      return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
     };
     transport = new sdk.StreamableHTTPClientTransport(url, { requestInit: { headers: o.headers }, fetch: guardedFetch });
   }
@@ -223,6 +270,23 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     transport.start = (): Promise<void> => {
       const started = start();
       pid = transport.pid ?? pid;
+      // A counter beside the SDK's own reader: it only adds up what the child writes.
+      // It also stops the flood: the SDK's reader only refuses to buffer, and its close waits for the child, which goes on writing.
+      // A message (the bytes since the last newline) past the cap makes this side stop reading and kill the child at once.
+      let line = 0;
+      let tripped = false;
+      const stdout = transport._process?.stdout;
+      stdout?.on("data", (chunk: Buffer) => {
+        state.bytesRead += chunk.length;
+        const nl = chunk.lastIndexOf(10);
+        line = nl === -1 ? line + chunk.length : chunk.length - nl - 1;
+        if (line > messageCap && !tripped) {
+          tripped = true;
+          state.tooLarge = true;
+          stdout.destroy();
+          if (pid !== null) killTree(pid);
+        }
+      });
       return started;
     };
   }
@@ -237,8 +301,14 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   const client = new sdk.Client({ name: "cairn-mcp-test", version: "0.0.0" }, { capabilities: {} });
   // A process that cannot start is reported to the transport's error hook, while connect() itself only sees "Connection closed".
   let startError: { code?: unknown } | undefined;
-  client.onerror = (e: { code?: unknown }) => {
+  client.onerror = (e: { code?: unknown; message?: string }) => {
     if (typeof e?.code === "string") startError ??= e;
+    // The SDK's own reader refused a message over the cap (a local fact, raised by the transport, not an answer).
+    if (e instanceof Error && /ReadBuffer exceeded maximum size/.test(e.message)) state.tooLarge = true;
+  };
+  // The transport said it closed: this is the only thing that makes a failed call "the connection is gone".
+  client.onclose = () => {
+    state.closed = true;
   };
   const close = async (): Promise<void> => {
     pid = transport.pid ?? pid;
@@ -294,7 +364,34 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
     get pid() {
       return pid;
     },
-    request: (req, opts) => client.request(req, sdk.ResultSchema, opts),
+    get bytesRead() {
+      return state.bytesRead;
+    },
+    async invokeTool(name, args, opts) {
+      const stop = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        stop.abort();
+      }, opts.timeoutMs);
+      const forward = (): void => stop.abort();
+      opts.signal?.addEventListener("abort", forward, { once: true });
+      state.limit = opts.maxBytes;
+      state.tooLarge = false;
+      try {
+        // The SDK's own timeout is set well past ours, so ours is the one that fires; an error code is never read as a timeout.
+        return await client.request({ method: TOOL_CALL_METHOD, params: { name, arguments: args } }, sdk.ResultSchema, { signal: stop.signal, timeout: opts.timeoutMs + 60_000 });
+      } catch (e) {
+        if (state.tooLarge) throw new LocalFailure("too-large", "the answer passed the size limit while it was read");
+        if (state.closed) throw new LocalFailure("closed", "the connection was closed before an answer");
+        if (timedOut) throw new LocalFailure("timeout", "no answer within the call timeout");
+        throw e;
+      } finally {
+        clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", forward);
+        state.limit = undefined;
+      }
+    },
     stderrText,
     close,
   };

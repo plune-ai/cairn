@@ -13,7 +13,7 @@ export { COVERAGE_GATE_EXIT_CODE };
 export type McpCoverageStatus = "covered" | "partial" | "uncovered";
 
 export interface CoverableCase {
-  name: string;
+  stableId: string;
   tool: string;
   args: Record<string, unknown>;
   covers?: Covers;
@@ -54,10 +54,10 @@ export const JUDGED_STATES = new Set(["passed", "failed", "needs-review"]);
 const own = (o: unknown): string[] => (o && typeof o === "object" && !Array.isArray(o) ? Object.keys(o) : []);
 
 export function computeMcpCoverage(tools: readonly McpToolEntry[], cases: readonly CoverableCase[], results: readonly CaseResult[]): McpCoverageReport {
-  const judgedNames = new Set(results.filter((r) => JUDGED_STATES.has(r.state)).map((r) => r.name));
+  const judgedIds = new Set(results.filter((r) => JUDGED_STATES.has(r.state)).map((r) => r.stableId));
   const out: ToolCoverage[] = tools.map((t) => {
     const mine = cases.filter((c) => c.tool === t.name);
-    const judged = mine.filter((c) => judgedNames.has(c.name));
+    const judged = mine.filter((c) => judgedIds.has(c.stableId));
     const declared = new Set(own((t.inputSchema as { properties?: unknown }).properties));
     const sentParams = new Set<string>();
     for (const c of judged) for (const k of Object.keys(c.args)) if (declared.has(k)) sentParams.add(k);
