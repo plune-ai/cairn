@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runMcpTest, type McpTestOptions } from "../../src/mcp-test/run.js";
-import { noProcessImporter } from "./helpers/no-process-importer.js";
+import { failingImporter, noProcessImporter } from "./helpers/no-process-importer.js";
 import { computeMcpCoverage, evaluateMcpGate } from "../../src/mcp-test/coverage.js";
 import { mcpExitCode } from "../../src/mcp-test/report.js";
 import type { CaseResult } from "../../src/mcp-test/runner.js";
@@ -293,5 +293,14 @@ describe("CLI · mcp-test · second review, command level", () => {
     const x = await run({ FIXTURE_ECHO: "errtext" }, { allowTools: "echo", allowMutations: true, adversarial: true, maxCalls: 400, rps: 1000, maxCasesPerTool: 200, adversarialMaxString: 50 });
     expect(out.join("")).toMatch(/internal error/i);
     expect(JSON.parse(x.read("report.json")).advice.internalErrorsOnHostileInput).toBeGreaterThan(0);
+  });
+});
+
+describe("CLI · mcp-test · the size counter flag survives a failed restart (third review)", () => {
+  it("remembers the value of the last live connection; the restart that failed does not turn it into 'active'", async () => {
+    const x = await run({}, { allowTools: "echo,crash", maxCalls: 50, importer: failingImporter(2) });
+    const report = JSON.parse(x.read("report.json"));
+    expect(report.stopped, JSON.stringify([report.stopped, out.join("").slice(-600), err.join("")])).toMatch(/could not be started again/);
+    expect(report.stdioSizeCounter).toBe("unavailable");
   });
 });

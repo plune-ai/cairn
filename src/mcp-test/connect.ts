@@ -209,7 +209,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   };
   const isStdio = o.command !== undefined;
   // What this side saw, read by `invokeTool`: the limit of the call in flight, an answer that passed it, bytes read.
-  const state: { limit: number | undefined; tooLarge: boolean; bytesRead: number; closed: boolean; tripped: boolean; counterMissing: boolean; abortCall: (() => void) | undefined } = { limit: undefined, tooLarge: false, bytesRead: 0, closed: false, tripped: false, counterMissing: false, abortCall: undefined };
+  const state: { limit: number | undefined; tooLarge: boolean; bytesRead: number; closed: boolean; selfClose: boolean; tripped: boolean; counterMissing: boolean; abortCall: (() => void) | undefined } = { limit: undefined, tooLarge: false, bytesRead: 0, closed: false, selfClose: false, tripped: false, counterMissing: false, abortCall: undefined };
   let transport: any;
   let messageCap = MIN_MESSAGE_CAP;
   if (isStdio) {
@@ -288,6 +288,7 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
       // It also stops the flood: the SDK's reader only refuses to buffer, and its close waits for the child, which goes on writing.
       // A message (the bytes since the last newline) past the cap makes this side stop reading and kill the child at once.
       let line = 0;
+      let killed = false;
       const stdout = transport._process?.stdout;
       // The counter reads a private field of the SDK transport; a version without it leaves only the transport's own limit.
       if (!stdout) state.counterMissing = true;
@@ -295,7 +296,8 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
         state.bytesRead += chunk.length;
         const nl = chunk.lastIndexOf(10);
         line = nl === -1 ? line + chunk.length : chunk.length - nl - 1;
-        if (line > messageCap && !state.tripped) {
+        if (line > messageCap && !killed) {
+          killed = true;
           state.tripped = true;
           state.tooLarge = true;
           state.abortCall?.();
@@ -320,11 +322,21 @@ export async function connectMcp(o: ConnectOptions): Promise<McpConnection> {
   client.onerror = (e: { code?: unknown; message?: string }) => {
     if (typeof e?.code === "string") startError ??= e;
     // The SDK's own reader refused a message over the cap (a local fact, raised by the transport, not an answer).
-    if (e instanceof Error && /ReadBuffer exceeded maximum size/.test(e.message)) state.tooLarge = true;
+    if (e instanceof Error && /ReadBuffer exceeded maximum size/.test(e.message)) {
+      state.tooLarge = true;
+      state.tripped = true;
+    }
   };
   // The transport said it closed: this is the only thing that makes a failed call "the connection is gone".
+  // A close the transport was asked for (by our close(), or by the SDK after a failed connect) says nothing about the server:
+  // an HTTP transport fires onclose at once when the SDK cleans up after an error ANSWER to initialize.
+  const closeTransport = transport.close.bind(transport) as () => Promise<void>;
+  transport.close = (): Promise<void> => {
+    state.selfClose = true;
+    return closeTransport();
+  };
   client.onclose = () => {
-    state.closed = true;
+    if (!state.selfClose) state.closed = true;
   };
   const close = async (): Promise<void> => {
     pid = transport.pid ?? pid;

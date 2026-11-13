@@ -378,6 +378,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
         ...(opts.signal ? { signal: opts.signal } : {}),
         ...(opts.importer ? { importer: opts.importer } : {}),
       });
+    let lastCounter: "active" | "unavailable" | "unknown" = "unknown";
+    const counterOf = (c: McpConnection): "active" | "unavailable" => (c.transport === "stdio" ? c.sizeCounter : "active");
     const limits = { maxPages, maxEntries };
     const linkOf = (c: McpConnection): Link => ({
       // The connection's own method, handed over as it is (it does not use `this`); the call site is in call.ts.
@@ -389,6 +391,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     err(`▸ Running ${runnable.length} case(s) through the call guard…\n`);
     try {
       conn = await open(headers);
+      lastCounter = counterOf(conn);
     } catch (e) {
       if (!(e instanceof McpTestError)) throw e;
       pid = e.pid;
@@ -400,6 +403,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       try {
         await conn?.close();
         conn = await open(headers);
+        lastCounter = counterOf(conn);
         pid = conn.pid ?? pid;
         return linkOf(conn);
       } catch (e) {
@@ -418,7 +422,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       logDir: outDir,
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
-    const sizeCounter = conn?.transport === "stdio" ? conn.sizeCounter : "active";
+    // The value of the last connection that was alive: a restart that failed leaves no connection to ask.
+    const sizeCounter = lastCounter;
     if (sizeCounter === "unavailable") err(`⚠ ${STDIO_COUNTER_LINE}.\n`);
     const results: CaseResult[] = [...run.results];
     const findings: Finding[] = [];
