@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`cairn mcp-test`: test cases from `inputSchema` (MCP-E2).** Besides `mcp-model.json` and `mcp-guard.json`, the command
+  writes `mcp-cases.json`: for every tool, a valid case, one case per missing required argument and per wrong type,
+  boundary cases on and beyond each limit, one case per `oneOf`/`anyOf` branch and per `enum` value, and one with every
+  argument. No model, no network, no tool call. Each case is checked against the tool's schema (Ajv, 2020-12): a case that
+  does not pass or fail as expected is not written but listed as skipped with the keyword. `$ref` is followed when local;
+  external, cyclic, too deep or too large schemas are skipped. `--max-cases-per-tool` (default 12) cuts the rest and the
+  summary counts them; `--examples <file>` gives the arguments of the valid case. Every schema check
+  runs in a worker thread, with a 2 second limit per tool, a 15 second budget for the run, and a 256 KiB limit on a
+  tool's schema; the cases are made after the server connection is closed. Tools with the same name are all skipped.
+  See `docs/mcp.md`.
+
 - **`cairn mcp-test` call guard (MCP-E4).** Nothing is called by default. `--allow-tools` takes exact names (no "all", no
   patterns), `--allow-read-only-hints` trusts the server's `readOnlyHint` claim only for a plain ASCII name whose first word is a read verb (`get`, `list`, `search`, ...), and the report says so,
   `--allow-mutations` needs the name in `--allow-tools` as well and prints a test-account banner. A tool whose name or

@@ -6,13 +6,14 @@
  * authentication, spoke something else); 5 it was read but offers no tool - nothing to test, which is not "all well".
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parsePositiveInt, parsePositiveNumber, parseBaseUrl, tooShortSecrets } from "../api/guard.js";
 import { buildSecrets, maskSecrets, maskStrings } from "./secrets.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
+import { CASES_FILE, DEFAULT_MAX_CASES_PER_TOOL, dropMaskedCases, generateMcpCases, renderCasesSummary } from "./cases.js";
 import { canonicalModel, renderModelSummary, safeText, serializeCanonical, sortKeys, type McpModel } from "./model.js";
 import {
   DEFAULT_CALL_RPS,
@@ -31,6 +32,8 @@ export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const MODEL_FILE = "mcp-model.json";
 export const STDERR_FILE = "server-stderr.log";
 export const GUARD_FILE = "mcp-guard.json";
+/** The most an `--examples` file may weigh. */
+export const MAX_EXAMPLES_BYTES = 1024 * 1024;
 
 export interface McpTestOptions {
   /** stdio: the server command and its arguments (what follows `--`). */
@@ -57,6 +60,10 @@ export interface McpTestOptions {
   callTimeout?: string | number;
   /** Seconds for the whole run of calls. */
   timeBudget?: string | number;
+  /** Cases (MCP-E2): most cases kept per tool. */
+  maxCasesPerTool?: string | number;
+  /** Cases: a JSON file, tool name to the arguments of its valid case. */
+  examples?: string;
   signal?: AbortSignal;
   importer?: (specifier: string) => Promise<unknown>;
 }
@@ -94,6 +101,27 @@ function parseEnv(list: string[] | undefined): Record<string, string> {
   return out;
 }
 
+/** Reads an `--examples` file: size limit, strict JSON, an object of tool name to an object of arguments. */
+async function readExamples(path: string): Promise<Record<string, Record<string, unknown>>> {
+  const file = resolve(path);
+  const info = await stat(file).catch(() => undefined);
+  if (!info?.isFile()) throw new Error("--examples: the file does not exist or is not a file.");
+  if (info.size > MAX_EXAMPLES_BYTES) throw new Error(`--examples: the file is larger than ${MAX_EXAMPLES_BYTES} bytes.`);
+  let data: unknown;
+  try {
+    data = JSON.parse(await readFile(file, "utf8"));
+  } catch {
+    throw new Error("--examples: the file is not valid JSON.");
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error('--examples: expected an object like {"tool": {"argument": value}}.');
+  for (const [name, args] of Object.entries(data)) {
+    if (!args || typeof args !== "object" || Array.isArray(args)) {
+      throw new Error(`--examples: the value for "${safeText(name, 60)}" must be an object of arguments.`);
+    }
+  }
+  return data as Record<string, Record<string, unknown>>;
+}
+
 /** The last lines of the server's stderr, safe to print. */
 function stderrTail(text: string): string[] {
   return text
@@ -118,6 +146,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const callRps = opts.rps === undefined ? DEFAULT_CALL_RPS : parsePositiveNumber("--rps", opts.rps, 0.01);
   if (opts.callTimeout !== undefined) parsePositiveNumber("--call-timeout", opts.callTimeout); // used by the runner that sends calls
   const timeBudgetSeconds = opts.timeBudget === undefined ? undefined : parsePositiveNumber("--time-budget", opts.timeBudget);
+  const maxCasesPerTool = opts.maxCasesPerTool === undefined ? DEFAULT_MAX_CASES_PER_TOOL : parsePositiveInt("--max-cases-per-tool", opts.maxCasesPerTool);
+  const examples = opts.examples === undefined ? undefined : await readExamples(opts.examples);
   const callsRequested = allowTools.length > 0 || opts.allowReadOnlyHints === true || opts.allowMutations === true;
   const headers = parseHeaders(opts.header);
   const env = parseEnv(opts.env);
@@ -233,8 +263,27 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     // The report and the hint/name disagreements are written on every read, whether or not calls are asked for.
     const report = maskStrings(guard.report(), secrets);
     await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(report), null, 2)}\n`]]);
+    // Cases are built from the schemas as listed; nothing here sends a call.
+    // Nothing after this needs the server, and checking schemas can take a while: let it go first.
+    pid = conn.pid ?? pid;
+    await conn.close();
+    conn = undefined;
+    err(`checking ${tools.length} tool schemas…\n`);
+    // A case whose argument holds a masked value is moved to `skipped`: the masked copy would no longer match the schema.
+    const cases = maskStrings(dropMaskedCases(generateMcpCases(tools, { maxCasesPerTool, ...(examples ? { examples } : {}) }), secrets), secrets);
+    await writeFiles([[CASES_FILE, `${JSON.stringify(sortKeys(cases), null, 2)}\n`]]);
+    // Both kinds of --examples error come after the file is written.
+    const toolNames = new Set(tools.map((t) => t.name));
+    const unknownExamples = Object.keys(examples ?? {}).filter((n) => !toolNames.has(n));
+    if (unknownExamples.length) {
+      err(`✗ --examples names tools the server does not have: ${unknownExamples.map((n) => `"${safeText(n, 60)}"`).join(", ")}.\n`);
+    }
+    for (const e of cases.errors) err(`✗ ${e.message}\n`);
+    if (unknownExamples.length || cases.errors.length) return { exitCode: 1, outDir, model, pid };
     if (!callsRequested) {
       for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
+      for (const line of renderCasesSummary(cases)) out(`${line}\n`);
+      out(`  Cases: ${join(outDir, CASES_FILE).replace(/\\/g, "/")}\n`);
       return { exitCode: 0, outDir, model, pid };
     }
     for (const line of renderGuardReport(report)) out(`${line}\n`);
