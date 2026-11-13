@@ -8,14 +8,19 @@
 import type { ApiCaseTechnique, ApiCaseType } from "../api/cases.js";
 import { stableCaseId } from "../artifacts/contract.js";
 import { safeText, type McpToolEntry } from "./model.js";
+import { maskSecrets } from "./secrets.js";
 import {
   CannotBuild,
   MAX_ARRAY_ITEMS,
   MAX_STRING_LENGTH,
   SchemaBuilder,
   compileOracle,
+  has,
+  isIntegerType,
+  put,
   scanSchema,
   type Oracle,
+  type OracleError,
 } from "./schema.js";
 
 export const MCP_CASES_VERSION = 1;
@@ -78,12 +83,27 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+/** Why a Negative case must fail: an error with this keyword at this place (and, for `required`, naming this property). */
+interface Reason {
+  keyword: string;
+  path: string;
+  missing?: string;
+}
+
 interface Candidate {
   kind: McpCaseKind;
   detail: string;
   type: ApiCaseType;
   make: () => Obj;
+  reason?: Reason;
 }
+
+/** A JSON pointer to a top-level property. */
+const pointerTo = (k: string): string => `/${k.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+const failsFor = (errors: OracleError[], r: Reason): boolean =>
+  errors.some((e) => e.keyword === r.keyword && e.path === r.path && (r.missing === undefined || e.missing === r.missing));
+/** Every part of an id keeps case and spaces: stableCaseId folds them, the code points do not fold. */
+const exact = (text: string): string => Array.from(text, (c) => (c.codePointAt(0) as number).toString(16)).join(".");
 
 const TECHNIQUE: Record<McpCaseKind, ApiCaseTechnique> = {
   valid: "equivalence-partitioning",
@@ -122,11 +142,17 @@ function why(e: unknown): { keyword: string; reason: string } {
 function boundaryCandidates(prop: string, schema: Obj, builder: SchemaBuilder, base: () => Obj): Candidate[] {
   const out: Candidate[] = [];
   const num = (k: string): number | undefined => (typeof schema[k] === "number" ? (schema[k] as number) : undefined);
-  const integer = schema["type"] === "integer";
+  const integer = isIntegerType(schema);
   const step = integer ? 1 : 0.5;
   const withValue = (v: unknown): Obj => ({ ...base(), [prop]: v });
   const add = (keyword: string, side: "on" | "beyond", type: ApiCaseType, v: () => unknown): void => {
-    out.push({ kind: "boundary", detail: `${prop}.${keyword}.${side}`, type, make: () => withValue(v()) });
+    out.push({
+      kind: "boundary",
+      detail: `${prop}.${keyword}.${side}`,
+      type,
+      make: () => withValue(v()),
+      ...(type === "Negative" ? { reason: { keyword, path: pointerTo(prop) } } : {}),
+    });
   };
   const min = num("minimum");
   const max = num("maximum");
@@ -188,7 +214,13 @@ interface ToolOutcome {
   errors: Array<{ tool: string; message: string }>;
 }
 
-function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "maxCasesPerTool">> & GenerateOptions): ToolOutcome {
+interface ToolOptions {
+  maxCasesPerTool: number;
+  /** Own entries only: a tool called `toString` or `__proto__` must not find anything inherited. */
+  examples: ReadonlyMap<string, Obj>;
+}
+
+function casesForTool(tool: McpToolEntry, opts: ToolOptions): ToolOutcome {
   const skipped: McpCaseSkipped[] = [];
   const errors: Array<{ tool: string; message: string }> = [];
   const skipTool = (e: unknown): ToolOutcome => {
@@ -208,15 +240,29 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
   } catch (e) {
     return skipTool(e);
   }
+  try {
+    return buildCases(tool, opts, oracle, builder, rootView);
+  } catch (e) {
+    // The schema check ran out of time or could not run: the tool gives no cases, only this entry.
+    if (e instanceof CannotBuild) return skipTool(e);
+    throw e;
+  } finally {
+    oracle.close();
+  }
+}
+
+function buildCases(tool: McpToolEntry, opts: ToolOptions, oracle: Oracle, builder: SchemaBuilder, rootView: Obj): ToolOutcome {
+  const skipped: McpCaseSkipped[] = [];
+  const errors: Array<{ tool: string; message: string }> = [];
   const props = isObj(rootView["properties"]) ? rootView["properties"] : {};
   const propNames = Object.keys(props).sort();
   if (propNames.length === 0) return { cases: [], skipped, noCases: true, errors };
-  const required = (Array.isArray(rootView["required"]) ? rootView["required"] : []).filter((r): r is string => typeof r === "string").sort();
+  const required = [...new Set((Array.isArray(rootView["required"]) ? rootView["required"] : []).filter((r): r is string => typeof r === "string"))].sort();
 
   // The arguments of the `valid` case: the file's, or built from the schema.
   let source: McpCase["source"] = "schema";
   let baseArgs: Obj | undefined;
-  const fromFile = opts.examples?.[tool.name];
+  const fromFile = opts.examples.get(tool.name);
   if (fromFile !== undefined) {
     source = "examples-file";
     baseArgs = clone(fromFile);
@@ -243,19 +289,33 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
 
   const cands: Candidate[] = [{ kind: "valid", detail: "required", type: "Positive", make: base }];
   for (const k of required) {
-    if (k in (baseArgs as Obj)) cands.push({ kind: "missing-required", detail: k, type: "Negative", make: () => { const a = base(); delete a[k]; return a; } });
+    if (has(baseArgs as Obj, k)) {
+      cands.push({
+        kind: "missing-required",
+        detail: k,
+        type: "Negative",
+        make: () => {
+          const a = base();
+          delete a[k];
+          return a;
+        },
+        reason: { keyword: "required", path: "", missing: k },
+      });
+    }
   }
   for (const k of propNames) {
     cands.push({
       kind: "wrong-type",
       detail: k,
       type: "Negative",
+      reason: { keyword: "type", path: pointerTo(k) },
       make: () => {
         for (const w of WRONG_TYPE_CANDIDATES) {
           const a = { ...base(), [k]: clone(w) };
-          if (!oracle.check(a).valid) return a;
+          const r = oracle.check(a);
+          if (!r.valid && failsFor(r.errors, { keyword: "type", path: pointerTo(k) })) return a;
         }
-        throw new CannotBuild("type", `no value of another JSON type is refused for "${safeText(k, 60)}"`);
+        throw new CannotBuild("type", `no value of another JSON type is refused by a type check for "${safeText(k, 60)}"`);
       },
     });
   }
@@ -291,7 +351,10 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
       continue;
     }
     if (!Array.isArray(view["enum"])) continue;
+    const seenValues = new Set<string>();
     for (const v of view["enum"].slice(0, 32)) {
+      if (seenValues.has(JSON.stringify(v))) continue;
+      seenValues.add(JSON.stringify(v));
       cands.push({ kind: "enum", detail: `${k}=${JSON.stringify(v)}`, type: "Positive", make: () => ({ ...base(), [k]: clone(v) }) });
     }
   }
@@ -301,7 +364,7 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
     type: "Positive",
     make: () => {
       const a = base();
-      for (const k of propNames) if (!(k in a)) a[k] = builder.value(props[k], 1);
+      for (const k of propNames) if (!has(a, k)) put(a, k, builder.value(props[k], 1));
       return a;
     },
   });
@@ -319,6 +382,16 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
         continue;
       }
       const r = oracle.check(args);
+      if (cand.type === "Negative" && !r.valid && cand.reason && !failsFor(r.errors, cand.reason)) {
+        skipped.push({
+          tool: tool.name,
+          kind: cand.kind,
+          detail: cand.detail,
+          keyword: cand.reason.keyword,
+          reason: `the schema refuses it, but not for the reason of its kind (no ${cand.reason.keyword} error${cand.reason.path ? ` at ${safeText(cand.reason.path, 60)}` : ""}; first error: ${r.keyword ?? "unknown"})`,
+        });
+        continue;
+      }
       if ((cand.type === "Positive") !== r.valid) {
         skipped.push({
           tool: tool.name,
@@ -330,8 +403,9 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
         continue;
       }
       const key = `${cand.type}:${JSON.stringify(args)}`;
-      // The same arguments twice add nothing; a branch case is kept even when it equals another, because the branch is the point.
-      if (cand.kind !== "branch" && seenArgs.has(key)) continue;
+      // Every-argument-at-once adds nothing when it equals the valid case. Other kinds are kept even when their arguments
+      // match another case: which of two equal cases survives must not depend on the order of the schema's lists.
+      if (cand.kind === "all-params" && seenArgs.has(key)) continue;
       seenArgs.add(key);
       kept.push({ cand, args });
     }
@@ -349,20 +423,11 @@ function casesForTool(tool: McpToolEntry, opts: Required<Pick<GenerateOptions, "
     }
   }
 
-  // Ids and names are fixed before the cut, so the limit never changes them.
-  const ids = new Set<string>();
-  const names = new Set<string>();
+  // An id is a function of the exact tool name, kind and detail alone: not of the order, the limit or the values.
   const cases: McpCase[] = kept.map(({ cand, args }) => {
-    let stableId = stableCaseId(["mcp", tool.name, cand.kind, cand.detail]);
-    for (let i = 2; ids.has(stableId); i++) stableId = stableCaseId(["mcp", tool.name, cand.kind, cand.detail, String(i)]);
-    ids.add(stableId);
-    const label = `${tool.name} · ${cand.kind} · ${cand.detail}`;
-    let name = label;
-    for (let i = 2; names.has(name); i++) name = `${label} (${i})`;
-    names.add(name);
     return {
-      name,
-      stableId,
+      name: `${tool.name} · ${cand.kind} · ${cand.detail}`,
+      stableId: stableCaseId(["mcp", exact(tool.name), exact(cand.kind), exact(cand.detail)]),
       tool: tool.name,
       kind: cand.kind,
       detail: cand.detail,
@@ -386,19 +451,32 @@ export function generateMcpCases(tools: McpToolEntry[], options: GenerateOptions
   const maxCasesPerTool = options.maxCasesPerTool ?? DEFAULT_MAX_CASES_PER_TOOL;
   const report: McpCasesReport = { version: MCP_CASES_VERSION, maxCasesPerTool, cases: [], skipped: [], cut: [], noCases: [], errors: [] };
   const seen = new Set<string>();
+  const examples = new Map<string, Obj>(Object.entries(options.examples ?? {}));
   for (const tool of [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     if (seen.has(tool.name)) {
       report.skipped.push({ tool: tool.name, kind: "tool", detail: "", keyword: "name", reason: "another tool has the same name; only the first is used" });
       continue;
     }
     seen.add(tool.name);
-    const r = casesForTool(tool, { ...options, maxCasesPerTool });
+    const r = casesForTool(tool, { maxCasesPerTool, examples });
     report.cases.push(...r.cases);
     report.skipped.push(...r.skipped);
     report.errors.push(...r.errors);
+    if (examples.has(tool.name) && r.cases.length === 0 && r.errors.length === 0) {
+      report.errors.push({ tool: tool.name, message: `--examples gives a value for "${safeText(tool.name, 60)}", but no cases could be made for that tool (${r.noCases ? "its input schema declares no properties" : "see skipped"})` });
+    }
     if (r.cut) report.cut.push(r.cut);
     if (r.noCases) report.noCases.push(tool.name);
   }
+  // One id per case, one name per case, in the whole run. Names that read the same (a tool name can hold " · ") also carry the id.
+  const ids = new Set<string>();
+  for (const c of report.cases) {
+    if (ids.has(c.stableId)) throw new Error(`internal error: two cases share the id ${c.stableId} (${c.tool} · ${c.kind} · ${c.detail})`);
+    ids.add(c.stableId);
+  }
+  const labelCount = new Map<string, number>();
+  for (const c of report.cases) labelCount.set(c.name, (labelCount.get(c.name) ?? 0) + 1);
+  for (const c of report.cases) if ((labelCount.get(c.name) ?? 0) > 1) c.name = `${c.name} [${c.stableId}]`;
   return report;
 }
 
@@ -426,4 +504,16 @@ export function renderCasesSummary(report: McpCasesReport): string[] {
     if (report.skipped.length > 20) lines.push(`    … and ${report.skipped.length - 20} more (see ${CASES_FILE}).`);
   }
   return lines;
+}
+
+/** Cases whose arguments hold something the secret list masks are moved to `skipped`: a masked value would no longer match the schema. */
+export function dropMaskedCases(report: McpCasesReport, secrets: readonly string[]): McpCasesReport {
+  const keep: McpCase[] = [];
+  const skipped = [...report.skipped];
+  for (const c of report.cases) {
+    const text = JSON.stringify(c.args);
+    if (maskSecrets(text, secrets) === text) keep.push(c);
+    else skipped.push({ tool: c.tool, kind: c.kind, detail: c.detail, keyword: "masked", reason: "value masked" });
+  }
+  return { ...report, cases: keep, skipped };
 }

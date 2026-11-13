@@ -237,20 +237,22 @@ tool, reason, masked arguments, duration, result).
 
 `cairn mcp-test` also builds test cases from each tool's `inputSchema` and writes them to `mcp-cases.json` next to
 `mcp-model.json` and `mcp-guard.json`. It uses no model and no network, and it sends no tool call: the cases are data for a
-runner that comes later. The console shows a summary (cases per tool by kind, what was cut, what was skipped).
+runner that comes later. The console summary (cases per tool by kind, what was cut, what was skipped) is printed when no call flag is given; when
+calls are asked for, the file is still written but the summary is not printed.
 
 Every case is checked against the tool's own schema with Ajv (JSON Schema 2020-12, with formats) before it is kept: a
-Positive case must pass the schema and a Negative case must fail it. A case that does not behave so is not written; it is
+Positive case must pass the schema and a Negative case must fail it, and for the reason its kind names (`missing-required` needs a `required` error for that
+argument, `wrong-type` a `type` error on it, a `boundary` case an error for that keyword on it). A case that does not behave so is not written; it is
 listed under `skipped` with the schema keyword that explains it (`pattern`, `not`, `minLength`, ...). A schema that
-declares a `$schema` other than `https://json-schema.org/draft/2020-12/schema` is skipped as a whole, with `$schema` as the
-keyword.
+declares a `$schema` other than `https://json-schema.org/draft/2020-12/schema` (written with or without a trailing `#`) is
+skipped as a whole, with `$schema` as the keyword.
 
 Kinds, in the order they are kept when a tool has more cases than `--max-cases-per-tool` (default 12):
 
 1. `valid`: the required arguments only. Values come from `const`, the first of `examples`, `default`, the first `enum`
    value, the first `oneOf`/`anyOf` branch, then the simplest value of the type.
 2. `missing-required`: one case per required argument, left out.
-3. `wrong-type`: one case per argument, set to the first value of another JSON type that the schema refuses.
+3. `wrong-type`: one case per argument, set to the first value of another JSON type that the schema refuses with a `type` error.
 4. `boundary`: for `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `minLength`, `maxLength`, `minItems`,
    `maxItems`: a value on the limit and one just beyond it.
 5. `branch`: one case per `oneOf`/`anyOf` branch, at the top of the schema and on each argument.
@@ -265,20 +267,33 @@ What the generator does with a schema from a foreign server:
 
 - `$ref` is followed only when it is a local pointer (`#`, `#/$defs/...`, `#/definitions/...`). Any other reference is not
   loaded and the tool is skipped with `$ref`; so is a reference that leads back to itself.
-- A schema deeper than 32 levels or with more than 5000 nodes is skipped with `limit`. Strings are built up to 256
+- A schema deeper than 32 levels or with more than 5000 nodes is skipped with `limit`, wherever the nesting is (a
+  property that is called `default` or `enum` is looked into like any other). A `oneOf`, `anyOf` or `allOf` with more than
+  100 branches is skipped with that keyword. Strings are built up to 256
   characters and arrays up to 64 items; a limit that needs more is skipped with `minLength`, `maxLength`, `minItems`
   or `maxItems`.
 - A `pattern` is never turned into a regular expression to make a value, so a schema with a `pattern` usually ends in
-  `skipped`. Ajv does compile the pattern to validate the generated value, and Ajv has no time limit for a regular
-  expression: a pattern that backtracks badly on the short generated strings could keep the run busy. Nothing in
-  `cairn mcp-test` bounds that.
+  `skipped`. Ajv does run the pattern to validate the generated value, and a regular expression cannot be interrupted
+  where it runs. So when a tool's schema holds `pattern` or `patternProperties` anywhere, all schema checks for that tool
+  (compile and every validation) run in a worker thread with one time limit of 2 seconds for the whole tool. When the
+  limit is passed the worker is terminated, the tool gets no cases, and one `skipped` entry with the keyword `pattern`
+  says the check took too long. Tools without those keywords are checked in the main thread. Other tools in the run are
+  not affected.
+- Ids: the `stableId` is a hash of the exact tool name, kind and detail (case and spaces kept), so it does not depend on
+  the order of tools, properties or enum values, or on `--max-cases-per-tool`. A name shown to people is
+  `tool · kind · detail`.
 - Only the top-level properties of the arguments get `wrong-type`, `boundary`, `branch` and `enum` cases; nested objects
   are built whole.
 - A tool with no properties gets no cases; the summary says so.
 
 `--examples <file>` is a JSON object `{"tool_name": {"argument": value}}` (at most 1 MiB, strict JSON). The value is used as
 the arguments of the `valid` case, and the other cases are built from it. A value the tool's schema refuses is an error
-that names the tool (exit code 1), and so is a tool name the server does not have.
+that names the tool (exit code 1). So is a tool name the server does not have, and a value for a tool that gets no cases
+(for example one with no properties). `mcp-cases.json` is written first in every one of these errors, then the command
+exits with code 1.
+
+A case whose arguments hold a value that the secret masking would change (a value taken from `--env`, `--header` or the
+`--url`) is not written masked; it is listed under `skipped` with the reason `value masked`.
 
 The expected answer in a case: a Positive case expects a successful result; a Negative case accepts either a JSON-RPC
 error with code -32602 or a result with `isError: true`. Nothing executes the cases yet.

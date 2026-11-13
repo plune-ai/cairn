@@ -12,7 +12,10 @@
  * The generator does not need to understand every keyword. It builds the value it can and the oracle is the judge, so a
  * keyword it cannot satisfy (`pattern`, `not`, `uniqueItems`, ...) ends as a skipped case that names the keyword.
  */
-import { Ajv2020, type ErrorObject } from "ajv/dist/2020.js";
+import { createRequire } from "node:module";
+import { MessageChannel, Worker, receiveMessageOnPort } from "node:worker_threads";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { safeText } from "./model.js";
 
@@ -21,13 +24,24 @@ export const SCHEMA_2020_12 = "https://json-schema.org/draft/2020-12/schema";
 export const MAX_SCHEMA_DEPTH = 32;
 /** More schema nodes than this (scan) or visited while building (generator) ends the tool. */
 export const MAX_SCHEMA_NODES = 5000;
+/** More branches than this in one oneOf/anyOf/allOf end the tool: Ajv overflows its stack on very wide lists. */
+export const MAX_BRANCHES = 100;
 /** The longest string and the most items the generator builds. */
 export const MAX_STRING_LENGTH = 256;
 export const MAX_ARRAY_ITEMS = 64;
+/** The time one tool's schema check (compile and every validation) may take when the schema holds a `pattern`. */
+export const ORACLE_TIME_LIMIT_MS = 2000;
+/** The time the checking worker may take to start (no schema is involved yet). */
+const WORKER_START_LIMIT_MS = 10000;
 
 type Obj = Record<string, unknown>;
 
 const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
+/** Names that come from a server index plain objects only through these two. */
+export const has = (o: object, k: string): boolean => Object.hasOwn(o, k);
+export function put(o: Obj, k: string, v: unknown): void {
+  Object.defineProperty(o, k, { value: v, enumerable: true, writable: true, configurable: true });
+}
 
 /** Why a schema (or a part of it) cannot be used, named by the keyword that is the cause. */
 export class CannotBuild extends Error {
@@ -40,34 +54,50 @@ export class CannotBuild extends Error {
   }
 }
 
+/** The schema check of a tool ran out of time; the tool is dropped. */
+export class OracleTimeout extends CannotBuild {}
+
 /** Keys whose values are data, not schemas: not looked into for `$ref`. */
 const DATA_KEYS = new Set(["const", "enum", "default", "examples", "example"]);
+/** Keywords whose value is a map from NAMES to schemas: inside it every key is a name, not a keyword. */
+const NAME_MAPS = new Set(["properties", "$defs", "definitions", "patternProperties", "dependentSchemas"]);
+const isLocalRef = (v: string): boolean => v === "#" || v.startsWith("#/");
 
 /**
  * Looks at the whole schema once, without recursion, before anything is built: a different draft, an external or dynamic
- * reference, too much nesting, too many nodes. Returns the problem, or undefined when the schema may be used.
+ * reference, too much nesting, too many nodes, too many branches. Returns the problem, or undefined when the schema may be used.
  */
 export function scanSchema(root: unknown): CannotBuild | undefined {
   if (!isObj(root)) return new CannotBuild("type", "the input schema is not an object");
   const declared = root["$schema"];
-  if (declared !== undefined && declared !== SCHEMA_2020_12) {
+  if (declared !== undefined && declared !== SCHEMA_2020_12 && declared !== `${SCHEMA_2020_12}#`) {
     return new CannotBuild("$schema", `the schema declares $schema ${safeText(declared, 80)}; only ${SCHEMA_2020_12} is supported`);
   }
   let nodes = 0;
-  const stack: Array<[unknown, number]> = [[root, 0]];
+  const stack: Array<[unknown, number, boolean]> = [[root, 0, false]];
   while (stack.length) {
-    const [node, depth] = stack.pop() as [unknown, number];
+    const [node, depth, isNameMap] = stack.pop() as [unknown, number, boolean];
     if (!node || typeof node !== "object") continue;
     if (++nodes > MAX_SCHEMA_NODES) return new CannotBuild("limit", `the schema has more than ${MAX_SCHEMA_NODES} nodes`);
     if (depth > MAX_SCHEMA_DEPTH) return new CannotBuild("limit", `the schema is nested deeper than ${MAX_SCHEMA_DEPTH} levels`);
     if (Array.isArray(node)) {
-      for (const x of node) stack.push([x, depth + 1]);
+      for (const x of node) stack.push([x, depth + 1, false]);
       continue;
     }
     const o = node as Obj;
+    if (isNameMap) {
+      // Every key here is a name chosen by the server (even `default` or `$ref`); only the value is a schema.
+      for (const v of Object.values(o)) stack.push([v, depth + 1, false]);
+      continue;
+    }
     for (const [k, v] of Object.entries(o)) {
-      if (k === "$ref" && typeof v === "string") {
-        if (!v.startsWith("#/") && v !== "#") return new CannotBuild("$ref", `the reference ${safeText(v, 80)} is not a local pointer; it is not loaded`);
+      if ((k === "oneOf" || k === "anyOf" || k === "allOf") && Array.isArray(v) && v.length > MAX_BRANCHES) {
+        return new CannotBuild(k, `${k} has ${v.length} branches; the limit is ${MAX_BRANCHES}`);
+      }
+      if (NAME_MAPS.has(k) && isObj(v)) {
+        stack.push([v, depth + 1, true]);
+      } else if (k === "$ref" && typeof v === "string") {
+        if (!isLocalRef(v)) return new CannotBuild("$ref", `the reference ${safeText(v, 80)} is not a local pointer; it is not loaded`);
         // A chain of references that leads back to itself says nothing; Ajv would overflow its stack on it.
         const seen = new Set<string>();
         let ref: string = v;
@@ -76,17 +106,44 @@ export function scanSchema(root: unknown): CannotBuild | undefined {
           seen.add(ref);
           const target = pointer(root, ref);
           const next = isObj(target) ? target["$ref"] : undefined;
-          if (typeof next !== "string" || (!next.startsWith("#/") && next !== "#")) break;
+          if (typeof next !== "string" || !isLocalRef(next)) break;
           ref = next;
         }
       } else if ((k === "$dynamicRef" || k === "$recursiveRef") && typeof v === "string") {
         return new CannotBuild(k, `${k} is not supported`);
       } else if (!DATA_KEYS.has(k)) {
-        stack.push([v, depth + 1]);
+        stack.push([v, depth + 1, false]);
       }
     }
   }
   return undefined;
+}
+
+/** True when `pattern` or `patternProperties` appears anywhere in the schema (a superset of the keywords that run a RegExp). */
+export function usesPattern(schema: unknown): boolean {
+  const stack: unknown[] = [schema];
+  let seen = 0;
+  while (stack.length && seen++ < 4 * MAX_SCHEMA_NODES) {
+    const n = stack.pop();
+    if (!n || typeof n !== "object") continue;
+    if (Array.isArray(n)) {
+      stack.push(...n);
+      continue;
+    }
+    for (const [k, v] of Object.entries(n)) {
+      if ((k === "pattern" && typeof v === "string") || (k === "patternProperties" && isObj(v))) return true;
+      stack.push(v);
+    }
+  }
+  return false;
+}
+
+export interface OracleError {
+  keyword: string;
+  /** Where in the value the error is (JSON pointer). */
+  path: string;
+  /** For `required`: the missing property. */
+  missing?: string;
 }
 
 export interface OracleResult {
@@ -95,30 +152,160 @@ export interface OracleResult {
   keyword?: string;
   /** Where in the value the first error is. */
   path?: string;
+  /** Every error (the check collects all of them). */
+  errors: OracleError[];
 }
 
 export interface Oracle {
+  /** Throws {@link CannotBuild} when the validator cannot run (stack overflow) and {@link OracleTimeout} when it takes too long. */
   check(value: unknown): OracleResult;
+  close(): void;
+}
+
+/** The compile-and-validate code shared by the in-process oracle and the worker (as text, so it can be run in both). */
+const CHECK_SOURCE = `
+function toResult(validate, value) {
+  if (validate(value)) return { valid: true, errors: [] };
+  const errors = (validate.errors || []).map((e) => {
+    const r = { keyword: e.keyword, path: e.instancePath };
+    if (e.keyword === "required" && e.params && typeof e.params.missingProperty === "string") r.missing = e.params.missingProperty;
+    return r;
+  });
+  const first = errors[0];
+  return { valid: false, keyword: first && first.keyword, path: first && first.path, errors };
+}`;
+
+const WORKER_SOURCE = `
+const { workerData } = require("node:worker_threads");
+const { ajvPath, formatsPath, port, flag } = workerData;
+const A = require(ajvPath);
+const Ajv2020 = A.Ajv2020 || A.default || A;
+const F = require(formatsPath);
+const addFormats = F.default || F;
+${CHECK_SOURCE}
+const sig = new Int32Array(flag);
+const reply = (m) => { port.postMessage(m); Atomics.store(sig, 0, 1); Atomics.notify(sig, 0); };
+let validate;
+port.on("message", (msg) => {
+  if (msg.init) return reply({ ok: true });
+  if (msg.schema) {
+    try {
+      const ajv = new Ajv2020({ strict: false, allErrors: true, ownProperties: true, logger: false });
+      addFormats(ajv);
+      validate = ajv.compile(msg.schema);
+      return reply({ ok: true });
+    } catch (e) {
+      return reply({ ok: false, overflow: e instanceof RangeError, message: String(e && e.message) });
+    }
+  }
+  try { reply({ ok: true, result: toResult(validate, msg.value) }); }
+  catch (e) { reply({ ok: false, overflow: e instanceof RangeError, message: String(e && e.message) }); }
+});`;
+
+function toResultOf(validate: ValidateFunction, value: unknown): OracleResult {
+  if (validate(value)) return { valid: true, errors: [] };
+  const errors: OracleError[] = (validate.errors ?? []).map((e) => {
+    const missing = e.keyword === "required" ? (e.params as { missingProperty?: unknown }).missingProperty : undefined;
+    return { keyword: e.keyword, path: e.instancePath, ...(typeof missing === "string" ? { missing } : {}) };
+  });
+  return { valid: false, ...(errors[0] ? { keyword: errors[0].keyword, path: errors[0].path } : {}), errors };
+}
+
+function compileFailure(e: unknown): CannotBuild {
+  if (e instanceof RangeError) return new CannotBuild("limit", "the schema is too deeply nested for the validator");
+  return new CannotBuild("schema", `the schema does not compile: ${safeText((e as Error).message, 200)}`);
+}
+
+/** The schema as Ajv gets it: without `$schema` (the scan already checked it), so either spelling of the 2020-12 URI compiles. */
+function forAjv(schema: Obj): Obj {
+  const copy: Obj = {};
+  for (const [k, v] of Object.entries(schema)) if (k !== "$schema") put(copy, k, v);
+  return copy;
+}
+
+function inProcessOracle(schema: Obj): Oracle {
+  // One instance per schema: two tools may declare the same `$id`.
+  const ajv = new Ajv2020({ strict: false, allErrors: true, ownProperties: true, logger: false });
+  (addFormats as unknown as (a: Ajv2020) => void)(ajv);
+  let validate;
+  try {
+    validate = ajv.compile(forAjv(schema));
+  } catch (e) {
+    throw compileFailure(e);
+  }
+  return {
+    check(value: unknown): OracleResult {
+      try {
+        return toResultOf(validate, value);
+      } catch (e) {
+        throw compileFailure(e);
+      }
+    },
+    close() {},
+  };
+}
+
+/**
+ * The same checks in a worker thread with one time limit for the whole tool. A RegExp in a schema cannot be interrupted
+ * where it runs, but a worker can be terminated. The worker is an inline script (a string): the package is compiled with
+ * plain `tsc`, which would not copy a separate worker file, and the script gets the absolute paths of the two libraries
+ * from this module's own resolution, so it needs no working directory.
+ */
+function workerOracle(schema: Obj): Oracle {
+  const req = createRequire(import.meta.url);
+  const { port1, port2 } = new MessageChannel();
+  const flag = new SharedArrayBuffer(4);
+  const sig = new Int32Array(flag);
+  const worker = new Worker(WORKER_SOURCE, {
+    eval: true,
+    workerData: { ajvPath: req.resolve("ajv/dist/2020.js"), formatsPath: req.resolve("ajv-formats"), port: port2, flag },
+    transferList: [port2],
+  });
+  worker.unref();
+  worker.on("error", () => {}); // a worker that fails to start shows up as a start timeout below
+  let dead = false;
+  let deadline = 0;
+  const stop = (): void => {
+    dead = true;
+    void worker.terminate();
+    port1.close();
+  };
+  const ask = (msg: unknown, ms: number): { ok: boolean; overflow?: boolean; message?: string; result?: OracleResult } | undefined => {
+    if (dead || ms <= 0) return undefined;
+    Atomics.store(sig, 0, 0);
+    port1.postMessage(msg);
+    if (Atomics.wait(sig, 0, 0, ms) === "timed-out") return undefined;
+    return receiveMessageOnPort(port1)?.message as ReturnType<typeof ask>;
+  };
+  const timeout = (): OracleTimeout => {
+    stop();
+    return new OracleTimeout("pattern", `the schema check took too long (more than ${ORACLE_TIME_LIMIT_MS} ms; a pattern may backtrack badly), so the tool was skipped`);
+  };
+  if (!ask({ init: true }, WORKER_START_LIMIT_MS)) {
+    stop();
+    throw new CannotBuild("pattern", "the checking worker did not start");
+  }
+  deadline = Date.now() + ORACLE_TIME_LIMIT_MS;
+  const compiled = ask({ schema: forAjv(schema) }, deadline - Date.now());
+  if (!compiled) throw timeout();
+  if (!compiled.ok) {
+    stop();
+    throw compiled.overflow ? compileFailure(new RangeError()) : new CannotBuild("schema", `the schema does not compile: ${safeText(compiled.message, 200)}`);
+  }
+  return {
+    check(value: unknown): OracleResult {
+      const r = ask({ value }, deadline - Date.now());
+      if (!r) throw timeout();
+      if (!r.ok || !r.result) throw compileFailure(r.overflow ? new RangeError() : new Error(r.message));
+      return r.result;
+    },
+    close: stop,
+  };
 }
 
 /** A validator for the schema (Ajv, 2020-12, with formats). Throws {@link CannotBuild} when it does not compile. */
 export function compileOracle(schema: Obj): Oracle {
-  // One instance per schema: two tools may declare the same `$id`.
-  const ajv = new Ajv2020({ strict: false, allErrors: false, logger: false });
-  (addFormats as unknown as (a: Ajv2020) => void)(ajv);
-  let validate;
-  try {
-    validate = ajv.compile(schema);
-  } catch (e) {
-    throw new CannotBuild("schema", `the schema does not compile: ${safeText((e as Error).message, 200)}`);
-  }
-  return {
-    check(value: unknown): OracleResult {
-      if (validate(value)) return { valid: true };
-      const first = (validate.errors ?? [])[0] as ErrorObject | undefined;
-      return { valid: false, ...(first ? { keyword: first.keyword, path: first.instancePath } : {}) };
-    },
-  };
+  return usesPattern(schema) ? workerOracle(schema) : inProcessOracle(schema);
 }
 
 /** `#/a/b` → the node, or undefined. `~1` and `~0` and percent escapes are decoded. */
@@ -199,11 +386,11 @@ export class SchemaBuilder {
     for (const p of parts) {
       for (const [k, v] of Object.entries(p)) {
         if (k === "properties" && isObj(v)) {
-          for (const [pk, pv] of Object.entries(v)) if (!(pk in properties)) properties[pk] = pv;
+          for (const [pk, pv] of Object.entries(v)) if (!has(properties, pk)) put(properties, pk, pv);
         } else if (k === "required" && Array.isArray(v)) {
           for (const r of v) if (typeof r === "string" && !required.includes(r)) required.push(r);
-        } else if (!(k in out)) {
-          out[k] = v;
+        } else if (!has(out, k)) {
+          put(out, k, v);
         }
       }
     }
@@ -281,7 +468,7 @@ export class SchemaBuilder {
     const out: Obj = {};
     const props = isObj(s["properties"]) ? s["properties"] : {};
     const required = Array.isArray(s["required"]) ? s["required"].filter((r): r is string => typeof r === "string") : [];
-    for (const key of required) out[key] = key in props ? this.value(props[key], depth + 1) : "value";
+    for (const key of required) put(out, key, has(props, key) ? this.value(props[key], depth + 1) : "value");
     return out;
   }
 
@@ -300,7 +487,7 @@ export class SchemaBuilder {
 
   /** A string of at least `minLength` characters, cut to `maxLength`. A `pattern` is not read: the oracle judges the result. */
   private string(s: Obj): string {
-    let text = typeof s["format"] === "string" && s["format"] in FORMATS ? (FORMATS[s["format"]] as string) : "a";
+    let text = typeof s["format"] === "string" && has(FORMATS, s["format"]) ? (FORMATS[s["format"]] as string) : "a";
     const min = typeof s["minLength"] === "number" ? s["minLength"] : 0;
     if (min > MAX_STRING_LENGTH) throw new CannotBuild("minLength", `the string needs ${min} characters; the limit is ${MAX_STRING_LENGTH}`);
     if (text.length < min) text = text.padEnd(min, "a");
@@ -329,4 +516,10 @@ export class SchemaBuilder {
     if (integer) v = Math.ceil(v);
     return Number.isFinite(v) ? v : 0;
   }
+}
+
+/** True for `type: "integer"` and for a type list that has integer but not number. */
+export function isIntegerType(schema: Obj): boolean {
+  const t = schema["type"];
+  return t === "integer" || (Array.isArray(t) && t.includes("integer") && !t.includes("number"));
 }

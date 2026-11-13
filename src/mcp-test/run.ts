@@ -13,7 +13,7 @@ import { buildSecrets, maskSecrets, maskStrings } from "./secrets.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
-import { CASES_FILE, DEFAULT_MAX_CASES_PER_TOOL, generateMcpCases, renderCasesSummary } from "./cases.js";
+import { CASES_FILE, DEFAULT_MAX_CASES_PER_TOOL, dropMaskedCases, generateMcpCases, renderCasesSummary } from "./cases.js";
 import { canonicalModel, renderModelSummary, safeText, serializeCanonical, sortKeys, type McpModel } from "./model.js";
 import {
   DEFAULT_CALL_RPS,
@@ -245,14 +245,6 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     }
     // The call guard works on the tools as the server listed them (not the masked copy) and on the names as typed.
     const tools = canonicalModel(found).tools;
-    if (examples) {
-      const names = new Set(tools.map((t) => t.name));
-      const unknown = Object.keys(examples).filter((n) => !names.has(n));
-      if (unknown.length) {
-        err(`✗ --examples names tools the server does not have: ${unknown.map((n) => `"${safeText(n, 60)}"`).join(", ")}.\n`);
-        return { exitCode: 1, outDir, model, pid };
-      }
-    }
     const missing = unknownToolNames(allowTools, tools);
     if (missing.length) {
       err(`✗ --allow-tools names tools the server does not have: ${missing.map((n) => `"${safeText(n, 60)}"`).join(", ")}. Names are compared exactly (case and spaces included).\n`);
@@ -272,12 +264,17 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const report = maskStrings(guard.report(), secrets);
     await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(report), null, 2)}\n`]]);
     // Cases are built from the schemas as listed; nothing here sends a call.
-    const cases = maskStrings(generateMcpCases(tools, { maxCasesPerTool, ...(examples ? { examples } : {}) }), secrets);
+    // A case whose argument holds a masked value is moved to `skipped`: the masked copy would no longer match the schema.
+    const cases = maskStrings(dropMaskedCases(generateMcpCases(tools, { maxCasesPerTool, ...(examples ? { examples } : {}) }), secrets), secrets);
     await writeFiles([[CASES_FILE, `${JSON.stringify(sortKeys(cases), null, 2)}\n`]]);
-    if (cases.errors.length) {
-      for (const e of cases.errors) err(`✗ ${e.message}\n`);
-      return { exitCode: 1, outDir, model, pid };
+    // Both kinds of --examples error come after the file is written.
+    const toolNames = new Set(tools.map((t) => t.name));
+    const unknownExamples = Object.keys(examples ?? {}).filter((n) => !toolNames.has(n));
+    if (unknownExamples.length) {
+      err(`✗ --examples names tools the server does not have: ${unknownExamples.map((n) => `"${safeText(n, 60)}"`).join(", ")}.\n`);
     }
+    for (const e of cases.errors) err(`✗ ${e.message}\n`);
+    if (unknownExamples.length || cases.errors.length) return { exitCode: 1, outDir, model, pid };
     if (!callsRequested) {
       for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
       for (const line of renderCasesSummary(cases)) out(`${line}\n`);

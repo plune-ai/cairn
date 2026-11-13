@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { generateMcpCases, renderCasesSummary, CASES_FILE, type McpCase } from "../../src/mcp-test/cases.js";
+import { dropMaskedCases, generateMcpCases, renderCasesSummary, CASES_FILE, type McpCase } from "../../src/mcp-test/cases.js";
 import { runMcpTest } from "../../src/mcp-test/run.js";
 import type { McpToolEntry } from "../../src/mcp-test/model.js";
 
@@ -56,7 +56,7 @@ const FIXTURE_SET: McpToolEntry[] = [
 ];
 
 describe("CLI · mcp-test · cases · oracle over the whole fixture set (AC-1)", () => {
-  it("every Positive passes and every Negative fails the tool's own schema, checked by an independent validator", () => {
+  it("every Positive passes and every Negative fails the tool's own schema, checked with a second Ajv instance built in the test (same library)", () => {
     const report = gen(FIXTURE_SET);
     expect(report.cases.length).toBeGreaterThan(25);
     for (const tool of FIXTURE_SET) {
@@ -364,6 +364,7 @@ describe("CLI · mcp-test · cases · the command (AC-12)", () => {
       const a = await run({ examples: unknown });
       expect(a.r.exitCode).toBe(1);
       expect(a.stderr).toMatch(/no_such_tool/);
+      expect(existsSync(join(a.out, CASES_FILE))).toBe(true);
       cleanup(a.out);
       const bad = join(d, "bad.json");
       writeFileSync(bad, "{ not json");
@@ -380,5 +381,124 @@ describe("CLI · mcp-test · cases · the command (AC-12)", () => {
     const r = gen([t(evil, { type: "object", properties: { [`${evil}p`]: { enum: [evil] } }, required: [] })]);
     const text = renderCasesSummary(r).join("\n");
     expect(text).not.toContain("\u001b");
+  });
+});
+
+describe("CLI · mcp-test · cases · after review", () => {
+  // The hostile pattern needs exponential time on a string of a's with no b at the end; the length makes it hang for good.
+  const HOSTILE_N = 64;
+  const hostile = (name: string): McpToolEntry =>
+    t(name, { type: "object", properties: { a: { type: "string", pattern: "^(a+)+b$", minLength: HOSTILE_N } }, required: ["a"] });
+
+  it("B1 · a hostile pattern ends the tool as skipped under pattern within the test's own timeout; other tools are unaffected", () => {
+    const benign = t("benign", { type: "object", properties: { w: { type: "string", pattern: "^[a-z]+$" } }, required: ["w"] });
+    const start = Date.now();
+    const r = gen([hostile("hostile"), benign, FIXTURE_SET[4] as McpToolEntry]);
+    expect(Date.now() - start).toBeLessThan(12000);
+    expect(of(r.cases, "hostile")).toEqual([]);
+    expect(r.skipped.filter((s) => s.tool === "hostile")).toEqual([expect.objectContaining({ kind: "tool", keyword: "pattern", reason: expect.stringContaining("too long") })]);
+    expect(of(r.cases, "benign", "valid")[0]?.args).toEqual({ w: "a" });
+    const validate = new Ajv2020({ strict: false, logger: false }).compile((benign as McpToolEntry).inputSchema);
+    for (const c of of(r.cases, "benign")) expect(validate(c.args), c.name).toBe(c.type === "Positive");
+    expect(of(r.cases, "plain").length).toBeGreaterThan(0);
+  }, 20000);
+
+  it("B1 · a benign pattern still produces cases", () => {
+    const r = gen([t("benign", { type: "object", properties: { w: { type: "string", pattern: "^[a-z]+$" } }, required: ["w"] })]);
+    expect(r.cases.length).toBeGreaterThan(1);
+    expect(r.skipped).toEqual([]);
+  }, 20000);
+
+  const NAMES = ["toString", "constructor", "__proto__", "hasOwnProperty"];
+
+  it("B2 · tools named like inherited properties do not crash the run, with and without --examples", () => {
+    const tools = NAMES.map((n) => t(n, { type: "object", properties: { a: { type: "string" } }, required: ["a"] }));
+    const plain = gen(tools);
+    for (const n of NAMES) expect(of(plain.cases, n, "valid"), n).toHaveLength(1);
+    const examples = JSON.parse('{"__proto__":{"a":"mine"},"toString":{"a":"x"}}') as Record<string, Record<string, unknown>>;
+    const withEx = gen(tools, { examples });
+    expect(withEx.errors).toEqual([]);
+    expect(of(withEx.cases, "__proto__", "valid")[0]).toMatchObject({ args: { a: "mine" }, source: "examples-file" });
+    expect(of(withEx.cases, "toString", "valid")[0]).toMatchObject({ args: { a: "x" }, source: "examples-file" });
+    expect(of(withEx.cases, "constructor", "valid")[0]).toMatchObject({ source: "schema" });
+  });
+
+  it("B2 · argument names like inherited properties are kept as own properties", () => {
+    const props = JSON.parse('{"__proto__":{"type":"string"},"constructor":{"type":"string"},"toString":{"type":"string","format":"constructor"}}');
+    const r = gen([t("odd", { type: "object", properties: props, required: ["__proto__", "constructor", "toString"] })]);
+    const valid = of(r.cases, "odd", "valid")[0] as McpCase;
+    expect(Object.keys(valid.args).sort()).toEqual(["__proto__", "constructor", "toString"]);
+    expect(Object.hasOwn(valid.args, "__proto__")).toBe(true);
+    expect(of(r.cases, "odd", "missing-required").map((c) => c.detail).sort()).toEqual(["__proto__", "constructor", "toString"]);
+  });
+
+  it("B3 · tools Foo, foo and a name with a trailing space get distinct ids, in any order", () => {
+    const mk = (n: string): McpToolEntry => t(n, { type: "object", properties: { a: { type: "string" } }, required: ["a"] });
+    const tools = [mk("Foo"), mk("foo"), mk("foo ")];
+    const a = gen(tools);
+    expect(new Set(a.cases.map((c) => c.stableId)).size).toBe(a.cases.length);
+    expect(new Set(a.cases.map((c) => c.name)).size).toBe(a.cases.length);
+    const b = gen([...tools].reverse());
+    const ids = (r: typeof a): string[] => r.cases.map((c) => `${c.name}=${c.stableId}`).sort();
+    expect(ids(b)).toEqual(ids(a));
+  });
+
+  it("B3 · the id of an enum value does not depend on the order of the values or properties", () => {
+    const e = (vals: string[]): McpToolEntry => t("e", { type: "object", properties: { v: { enum: vals } }, required: ["v"] });
+    const idOf = (r: ReturnType<typeof gen>, d: string): string | undefined => r.cases.find((c) => c.detail === d)?.stableId;
+    const a = gen([e(["A", "a"])]);
+    const b = gen([e(["a", "A"])]);
+    expect(idOf(a, 'v="A"')).toBeDefined();
+    expect(idOf(a, 'v="A"')).toBe(idOf(b, 'v="A"'));
+    expect(idOf(a, 'v="a"')).toBe(idOf(b, 'v="a"'));
+    expect(idOf(a, 'v="A"')).not.toBe(idOf(a, 'v="a"'));
+    const p = (names: string[]): McpToolEntry => t("p", { type: "object", properties: Object.fromEntries(names.map((n) => [n, { type: "string" }])), required: names });
+    const x = gen([p(["Id", "id"])]);
+    const y = gen([p(["id", "Id"])]);
+    const key = (r: typeof x): string[] => r.cases.map((c) => `${c.name}=${c.stableId}`).sort();
+    expect(key(x)).toEqual(key(y));
+    expect(new Set(x.cases.map((c) => c.stableId)).size).toBe(x.cases.length);
+  });
+
+  it("N1 · a negative must fail for the reason its kind names; integer is detected in a type list", () => {
+    const r = gen([t("n", { type: "object", properties: { n: { type: ["integer", "null"], minimum: 3 }, m: { enum: ["a", "b"] } }, required: ["n"] })]);
+    expect(of(r.cases, "n", "boundary").find((c) => c.detail === "n.minimum.beyond")?.args).toEqual({ n: 2 });
+    expect(of(r.cases, "n", "wrong-type").map((c) => c.detail)).toEqual(["n"]);
+    expect(r.skipped).toContainEqual(expect.objectContaining({ tool: "n", kind: "wrong-type", detail: "m", keyword: "type" }));
+  });
+
+  it("N3 · a huge schema under a property named default is still caught by the scan limit", () => {
+    let deep: Record<string, unknown> = { type: "string" };
+    for (let i = 0; i < 3000; i++) deep = { type: "object", properties: { n: deep } };
+    const r = gen([t("hid", { type: "object", properties: { default: deep } })]);
+    expect(r.cases).toEqual([]);
+    expect(r.skipped).toEqual([expect.objectContaining({ tool: "hid", keyword: "limit" })]);
+  });
+
+  it("N3 · a oneOf of 1000 branches ends as a named skip, not a generic compile failure", () => {
+    const many = Array.from({ length: 1000 }, (_, i) => ({ type: "object", properties: { [`k${i}`]: { type: "string" } }, required: [`k${i}`] }));
+    const r = gen([t("wide", { type: "object", oneOf: many, properties: { k0: {} } })]);
+    expect(r.cases).toEqual([]);
+    expect(r.skipped).toEqual([expect.objectContaining({ tool: "wide", keyword: "oneOf", reason: expect.stringContaining("1000") })]);
+  });
+
+  it("N5 · a case whose argument holds a masked value is dropped to skipped, not written masked", () => {
+    const r = gen([t("m", { type: "object", properties: { token: { type: "string", default: "hunter2-secret-value" } }, required: ["token"] })]);
+    const cleaned = dropMaskedCases(r, ["hunter2-secret-value"]);
+    expect(of(cleaned.cases, "m", "valid")).toEqual([]);
+    expect(cleaned.skipped).toContainEqual(expect.objectContaining({ tool: "m", kind: "valid", keyword: "masked", reason: "value masked" }));
+    expect(JSON.stringify(cleaned.cases)).not.toContain("hunter2-secret-value");
+  });
+
+  it("N7 · an example for a tool that gets no cases is an error naming the tool", () => {
+    const r = gen([t("empty", { type: "object" })], { examples: { empty: { a: 1 } } });
+    expect(r.errors).toEqual([expect.objectContaining({ tool: "empty" })]);
+  });
+
+  it("N8 · a $schema with a trailing # is accepted, as is the exact URI", () => {
+    for (const s of ["https://json-schema.org/draft/2020-12/schema", "https://json-schema.org/draft/2020-12/schema#"]) {
+      const r = gen([t("ok", { $schema: s, type: "object", properties: { a: { type: "string" } }, required: ["a"] })]);
+      expect(of(r.cases, "ok").length, s).toBeGreaterThan(0);
+    }
   });
 });
