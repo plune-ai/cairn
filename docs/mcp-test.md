@@ -625,7 +625,7 @@ The list comes from `cairn mcp-test --help`.
 | `--header <header>` | - | Streamable HTTP: request header 'Name: Value' (repeatable); values are never saved or printed |
 | `--env <KEY=VALUE>` | - | stdio: environment variable for the server (repeatable); values are never saved or printed |
 | `--cwd <dir>` | - | stdio: working directory of the server |
-| `--timeout <seconds>` | `30` | how long to wait for one request |
+| `--timeout <seconds>` | `30` | how long to wait for the server to start and answer the handshake and each list request; it does not bound a tool call (that is `--call-timeout`) |
 | `--out <dir>` | `runs/mcp-<id>/` | where to write the files of the run |
 | `--max-pages <n>` | `20` | most pages to read from one list; a list cut short is marked complete: false |
 | `--max-entries <n>` | `1000` | most entries to keep from one list; a list cut short is marked complete: false |
@@ -634,7 +634,7 @@ The list comes from `cairn mcp-test --help`.
 | `--allow-mutations` | - | tool calls: also allow tools that are not proven read-only, but only those named in --allow-tools; may change data, use a test account |
 | `--max-calls <n>` | `100` | tool calls: most calls sent, retries included; exit code 4 when it runs out |
 | `--rps <n>` | `2` | tool calls: calls per second |
-| `--call-timeout <seconds>` | `30` | tool calls: how long to wait for one call |
+| `--call-timeout <seconds>` | `30` | tool calls: how long to wait for one call; a call with no answer by then is `could-not-run`, never `failed` |
 | `--min-coverage <percent>` | - | tool calls: exit 3 when fewer than this share of tools are covered |
 | `--count-partial` | - | tool calls: with --min-coverage, count partially covered tools as covered |
 | `--max-response-bytes <n>` | `262144` | tool calls: the most bytes of one answer that is read, 1 to 67108864 |
