@@ -9,11 +9,16 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { parsePositiveInt, parsePositiveNumber, parseBaseUrl, tooShortSecrets } from "../api/guard.js";
+import { parseMinCoverage } from "../api/coverage.js";
 import { buildSecrets, maskSecrets, maskStrings } from "./secrets.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
 import { connectMcp, McpTestError, type McpConnection } from "./connect.js";
 import { DEFAULT_MAX_LIST_ENTRIES, DEFAULT_MAX_LIST_PAGES, discoverModel } from "./discover.js";
 import { MCP_ADVERSARIAL_STYLES, parseAdversarialStyles, resolveLimits } from "./adversarial.js";
+import { STDIO_COUNTER_LINE, countInternalErrors, buildEvidence, buildMcpTestCaseDocs, buildReportJson, countStates, mcpExitCode, NOTHING_PROVEN_EXIT_CODE, renderMcpReportMd, settle, type Finding } from "./report.js";
+import { computeMcpCoverage, evaluateMcpGate, renderMcpCoverage } from "./coverage.js";
+import { type CaseResult, DEFAULT_MAX_RESPONSE_BYTES, type Link, type RunnableCase, runAnonymousProbe, runCases } from "./runner.js";
+import { discoverTools } from "./discover.js";
 import { CASES_FILE, DEFAULT_MAX_CASES_PER_TOOL, dropMaskedCases, generateMcpCases, renderCasesSummary } from "./cases.js";
 import { canonicalModel, renderModelSummary, safeText, serializeCanonical, sortKeys, type McpModel } from "./model.js";
 import {
@@ -33,6 +38,8 @@ export const DEFAULT_TIMEOUT_SECONDS = 30;
 export const MODEL_FILE = "mcp-model.json";
 export const STDERR_FILE = "server-stderr.log";
 export const GUARD_FILE = "mcp-guard.json";
+export const EVIDENCE_FILE = "mcp-evidence.json";
+export const REPORT_FILE = "report.json";
 /** The most an `--examples` file may weigh. */
 export const MAX_EXAMPLES_BYTES = 1024 * 1024;
 
@@ -71,6 +78,11 @@ export interface McpTestOptions {
   adversarialMaxDepth?: string | number;
   /** A call without credentials that goes through is a failure, not a finding. */
   expectAuth?: boolean;
+  /** Coverage gate: a percentage; exit code 3 when fewer tools are covered. */
+  minCoverage?: string | number;
+  countPartial?: boolean;
+  /** The most of one answer that is kept (bytes). */
+  maxResponseBytes?: string | number;
   signal?: AbortSignal;
   importer?: (specifier: string) => Promise<unknown>;
 }
@@ -113,6 +125,16 @@ function parseDecimal(flag: string, v: string | number): number {
   const text = String(v);
   if (!/^[0-9]+$/.test(text)) throw new Error(`${flag} must be a plain decimal whole number (got "${safeText(text, 20)}").`);
   return Number(text);
+}
+
+/** The most `--max-response-bytes` takes (64 MiB). */
+export const MAX_RESPONSE_BYTES_LIMIT = 64 * 1024 * 1024;
+
+/** `--max-response-bytes`: a plain decimal whole number from 1 to {@link MAX_RESPONSE_BYTES_LIMIT}. */
+function parseResponseBytes(v: string | number): number {
+  const n = parseDecimal("--max-response-bytes", v);
+  if (n < 1 || n > MAX_RESPONSE_BYTES_LIMIT) throw new Error(`--max-response-bytes must be from 1 to ${MAX_RESPONSE_BYTES_LIMIT} (got ${n}).`);
+  return n;
 }
 
 /** Reads an `--examples` file: size limit, strict JSON, an object of tool name to an object of arguments. */
@@ -158,7 +180,9 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const allowTools = parseAllowTools(opts.allowTools);
   const maxCalls = opts.maxCalls === undefined ? DEFAULT_MAX_CALLS : parsePositiveInt("--max-calls", opts.maxCalls);
   const callRps = opts.rps === undefined ? DEFAULT_CALL_RPS : parsePositiveNumber("--rps", opts.rps, 0.01);
-  if (opts.callTimeout !== undefined) parsePositiveNumber("--call-timeout", opts.callTimeout); // used by the runner that sends calls
+  const callTimeoutMs = Math.round((opts.callTimeout === undefined ? 30 : parsePositiveNumber("--call-timeout", opts.callTimeout)) * 1000);
+  const maxResponseBytes = opts.maxResponseBytes === undefined ? DEFAULT_MAX_RESPONSE_BYTES : parseResponseBytes(opts.maxResponseBytes);
+  const minCoverage = opts.minCoverage === undefined ? undefined : parseMinCoverage(opts.minCoverage);
   const timeBudgetSeconds = opts.timeBudget === undefined ? undefined : parsePositiveNumber("--time-budget", opts.timeBudget);
   const maxCasesPerTool = opts.maxCasesPerTool === undefined ? DEFAULT_MAX_CASES_PER_TOOL : parsePositiveInt("--max-cases-per-tool", opts.maxCasesPerTool);
   const examples = opts.examples === undefined ? undefined : await readExamples(opts.examples);
@@ -284,7 +308,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const report = maskStrings(guard.report(), secrets);
     await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(report), null, 2)}\n`]]);
     // Cases are built from the schemas as listed; nothing here sends a call.
-    // Nothing after this needs the server, and checking schemas can take a while: let it go first.
+    // Nothing after this needs this connection, and checking schemas can take a while: let it go first. A run that
+    // sends calls opens a new one afterwards (the guard compares the tool list again before the first call of a tool).
     pid = conn.pid ?? pid;
     await conn.close();
     conn = undefined;
@@ -315,7 +340,8 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       const d = guard.decide({ tool: c.tool, style: c.style });
       c.guard = { allowed: d.allowed, reason: d.reason };
     }
-    const cases = maskStrings(dropMaskedCases(generated, secrets), secrets);
+    const dropped = dropMaskedCases(generated, secrets);
+    const cases = maskStrings(dropped, secrets);
     await writeFiles([[CASES_FILE, `${JSON.stringify(sortKeys(cases), null, 2)}\n`]]);
     // Both kinds of --examples error come after the file is written.
     const toolNames = new Set(tools.map((t) => t.name));
@@ -325,9 +351,9 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     }
     for (const e of cases.errors) err(`✗ ${e.message}\n`);
     if (unknownExamples.length || cases.errors.length) return { exitCode: 1, outDir, model, pid };
-    // One line for both branches: this command only writes the cases, whatever flags were given.
-    if (cases.adversarial) {
-      out(`  Adversarial: none was sent (this command only writes the cases). ${cases.adversarial.length} cases are of the mutating styles (psycho, hacker): ${opts.allowMutations === true ? "they need the tool named in --allow-tools" : "not sent: mutations disabled"}.\n`);
+    // Without a flag that sends calls this command only writes the cases.
+    if (cases.adversarial && !callsRequested) {
+      out(`  Adversarial: none was sent (no flag asked for calls). ${cases.adversarial.length} cases are of the mutating styles (psycho, hacker): ${opts.allowMutations === true ? "they need the tool named in --allow-tools" : "not sent: mutations disabled"}.\n`);
     }
     if (!callsRequested) {
       for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
@@ -335,10 +361,136 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       out(`  Cases: ${join(outDir, CASES_FILE).replace(/\\/g, "/")}\n`);
       return { exitCode: 0, outDir, model, pid };
     }
-    for (const line of renderGuardReport(report)) out(`${line}\n`);
-    // This command reads the server; the runner that sends calls is a later step, so nothing is sent and nothing is tested.
-    err("✗ No tool call was sent: this command does not run calls yet, so nothing was tested. This is not a pass.\n");
-    return { exitCode: guard.exitCode(), outDir, model, pid };
+    // --- Sending: only through the guard, one call per case. ---
+    const runnable: RunnableCase[] = [
+      ...dropped.cases.map((c): RunnableCase => ({ ...c, type: c.type, expect: c.expect as RunnableCase["expect"] })),
+      ...(dropped.adversarial ?? []).map((c): RunnableCase => ({ ...c, expect: { outcome: "robust", failedWhen: c.expect.failedWhen, accepts: c.expect.accepts } })),
+    ];
+    const open = async (hdrs: Record<string, string>): Promise<McpConnection> =>
+      connectMcp({
+        ...(command ? { command } : { url: url as string }),
+        headers: hdrs,
+        env,
+        ...(opts.cwd ? { cwd: resolve(opts.cwd) } : {}),
+        timeoutMs,
+        secrets,
+        maxResponseBytes,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        ...(opts.importer ? { importer: opts.importer } : {}),
+      });
+    const limits = { maxPages, maxEntries };
+    const linkOf = (c: McpConnection): Link => ({
+      // The connection's own method, handed over as it is (it does not use `this`); the call site is in call.ts.
+      invokeTool: c.invokeTool,
+      dead: () => c.dead,
+      transport: c.transport,
+      relist: () => discoverTools(c.source, limits),
+    });
+    err(`▸ Running ${runnable.length} case(s) through the call guard…\n`);
+    try {
+      conn = await open(headers);
+    } catch (e) {
+      if (!(e instanceof McpTestError)) throw e;
+      pid = e.pid;
+      err(`✗ ${e.message}\n`);
+      return { exitCode: 1, outDir, model, pid };
+    }
+    pid = conn.pid ?? pid;
+    const restart = async (): Promise<Link | { error: string }> => {
+      try {
+        await conn?.close();
+        conn = await open(headers);
+        pid = conn.pid ?? pid;
+        return linkOf(conn);
+      } catch (e) {
+        conn = undefined;
+        return { error: e instanceof McpTestError ? e.message : (e as Error).message };
+      }
+    };
+    const run = await runCases(runnable, {
+      guard,
+      tools,
+      link: linkOf(conn),
+      restart,
+      callTimeoutMs: callTimeoutMs,
+      maxResponseBytes,
+      secrets,
+      logDir: outDir,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    const sizeCounter = conn?.transport === "stdio" ? conn.sizeCounter : "active";
+    if (sizeCounter === "unavailable") err(`⚠ ${STDIO_COUNTER_LINE}.\n`);
+    const results: CaseResult[] = [...run.results];
+    const findings: Finding[] = [];
+    const lost: string[] = [];
+    // The call without credentials: HTTP with credentials only, once, described by the case generator.
+    const anon = dropped.noCredentials;
+    // Not after the run was stopped or a budget ran out: nothing more is sent then.
+    if (anon && url !== undefined && !opts.signal?.aborted && !run.stopped && !guard.report().budgetExhausted) {
+      const probe = await runAnonymousProbe({
+        record: { tool: anon.tool, args: anon.args, expectAuth: anon.expectAuth },
+        guard,
+        connect: async () => {
+          try {
+            const c = await open({});
+            return { link: linkOf(c), close: () => c.close() };
+          } catch (e) {
+            return e instanceof McpTestError && e.kind === "auth-required" ? "auth-required" : undefined;
+          }
+        },
+        callTimeoutMs: callTimeoutMs,
+        maxBytes: maxResponseBytes,
+        secrets,
+        logDir: outDir,
+      });
+      results.push(probe.result);
+      if (probe.finding) findings.push({ kind: "anonymous-call-succeeded", tool: anon.tool });
+      runnable.push({ name: probe.result.name, stableId: probe.result.stableId, tool: anon.tool, kind: "no-credentials", type: "Negative", args: anon.args, expect: { outcome: "rejected" } });
+    }
+    // Everything below is an optional part: one that fails is named in the report and the results stay.
+    const guardReport = maskStrings(guard.report(), secrets);
+    // The file written before the run said nothing was sent; now it says what was.
+    await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(guardReport), null, 2)}\n`]]);
+    const coverCases = [...dropped.cases, ...runnable.filter((c) => !dropped.cases.some((d) => d.stableId === c.stableId))];
+    const coverage = settle("coverage", lost, () => computeMcpCoverage(tools, coverCases, results));
+    const gate = coverage && minCoverage !== undefined ? evaluateMcpGate(coverage, minCoverage, opts.countPartial === true) : undefined;
+    const reportInput = {
+      runId: basename(outDir),
+      url: maskSecrets(url ?? (command?.[0] ?? ""), secrets),
+      results,
+      cases: runnable,
+      toolCount: tools.length,
+      guard: guardReport,
+      ...(coverage ? { coverage } : {}),
+      ...(gate ? { gate } : {}),
+      findings,
+      ...(run.stopped ? { stopped: run.stopped } : {}),
+      restarts: run.restarts,
+      stdioSizeCounter: sizeCounter,
+      lost,
+    };
+    const put = (name: string, text: string | undefined): Promise<void> => (text === undefined ? Promise.resolve() : writeFiles([[name, maskSecrets(text, secrets)]]));
+    await put(EVIDENCE_FILE, settle("evidence", lost, () => `${JSON.stringify(buildEvidence(results), null, 2)}\n`));
+    await put(REPORT_FILE, settle("report.json", lost, () => `${JSON.stringify(buildReportJson(reportInput), null, 2)}\n`));
+    await put("report.md", settle("report.md", lost, () => renderMcpReportMd(reportInput)));
+    const docs = settle("case documents", lost, () => buildMcpTestCaseDocs(runnable, results, "MCP"));
+    for (const d of docs ?? []) {
+      await mkdir(join(outDir, "testcases"), { recursive: true });
+      await writeFile(join(outDir, "testcases", `${d.id}.md`), maskSecrets(d.md, secrets), "utf8");
+    }
+    const counts = countStates(results);
+    out(`=== Run: ${counts.passed} passed, ${counts.failed} failed, ${counts["needs-review"]} need review, ${counts["could-not-run"]} could not run, ${counts["not-sent"]} not sent ===\n`);
+    if (counts["needs-review"]) out(`  ${counts["needs-review"]} case(s) were answered but not judged: a person has to look.\n`);
+    const internalErrors = countInternalErrors(results);
+    if (internalErrors) out(`  Advice: ${internalErrors} adversarial case(s) got JSON-RPC -32603 (internal error) on hostile input; this changes no state and no exit code.\n`);
+    if (run.stopped) err(`✗ The run was stopped early: ${safeText(run.stopped, 200)}. The rest was not measured.\n`);
+    for (const f of findings) out(`  Finding: ${f.kind} (${safeText(f.tool, 60)})\n`);
+    for (const l of lost) err(`⚠ Not built: ${l}\n`);
+    if (coverage) for (const line of renderMcpCoverage(coverage, gate)) out(`${line}\n`);
+    for (const line of renderGuardReport(guard.report())) out(`${line}\n`);
+    const code = mcpExitCode({ results, ...(run.stopped ? { stopped: run.stopped } : {}), ...(gate ? { gate } : {}), budgetExhausted: guard.report().budgetExhausted });
+    if (code === NOTHING_PROVEN_EXIT_CODE) err("✗ Nothing was proven: no case passed (none was sent, or every answer needed a person or never came). This is not a pass.\n");
+    return { exitCode: code, outDir, model, pid };
   } finally {
     // The server never outlives the run, on success, error, timeout or interrupt.
     if (conn) {

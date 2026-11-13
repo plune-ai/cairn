@@ -5,12 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { MUTATING_STYLES } from "../../src/api/guard.js";
-import { dropMaskedCases, generateMcpCases, renderCasesSummary, type McpCase } from "../../src/mcp-test/cases.js";
+import { adversarialFor, dropMaskedCases, generateMcpCases, renderCasesSummary, type McpCase, type McpCaseSkipped } from "../../src/mcp-test/cases.js";
+import { CannotBuild, OracleTimeout, SchemaBuilder } from "../../src/mcp-test/schema.js";
 import {
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_STRING_LENGTH,
   MCP_ADVERSARIAL_STYLES,
   parseAdversarialStyles,
+  resolveLimits,
   type AdversarialStyle,
 } from "../../src/mcp-test/adversarial.js";
 import { findAdvice } from "../../src/mcp-test/advice.js";
@@ -244,17 +246,21 @@ describe("CLI · mcp-test · adversarial · advice (AC-6, part)", () => {
   });
 
   it("looks only at the first 2000 characters of a line and the first 200 lines", () => {
-    const frame = "at run (/srv/a.js:1:2)";
-    expect(findAdvice(`${"x".repeat(5000)} ${frame}`)).toEqual([]);
-    expect(findAdvice(`${"x".repeat(1000)} ${frame}`).map((x) => x.kind)).toContain("stack");
+    const mark = "Traceback (most recent call last)"; // 33 characters
+    // The mark ends at character 2000: found. One character later: cut away.
+    expect(findAdvice("x".repeat(2000 - mark.length) + mark)).toEqual([{ kind: "stack", line: 1 }]);
+    expect(findAdvice("x".repeat(2001 - mark.length) + mark)).toEqual([]);
     const lines = Array.from({ length: 10000 }, () => "ok");
-    lines[300] = frame;
+    lines[199] = mark;
+    expect(findAdvice(lines.join("\n"))).toEqual([{ kind: "stack", line: 200 }]);
+    lines[199] = "ok";
+    lines[200] = mark;
     expect(findAdvice(lines.join("\n"))).toEqual([]);
-    lines[100] = frame;
-    expect(findAdvice(lines.join("\n")).map((x) => x.line)).toContain(101);
     const start = Date.now();
     findAdvice(`${"at ".repeat(150000)}\n`.repeat(50));
-    expect(Date.now() - start).toBeLessThan(3000);
+    // Loose on purpose (2 s, not 300 ms): a loaded machine is slow and a tight bound flakes. The exact-limit checks above pin
+    // the cuts; this one only catches a pattern that backtracks.
+    expect(Date.now() - start).toBeLessThan(2000);
   });
 });
 
@@ -373,8 +379,8 @@ describe("CLI · mcp-test · adversarial · after review", () => {
     }
   });
 
-  it("4 · one honest line says nothing was sent, with and without --allow-mutations", async () => {
-    for (const extra of [{}, { allowMutations: true, allowTools: "ping" }]) {
+  it("4 · one honest line says nothing was sent when no flag asks for calls", async () => {
+    for (const extra of [{}]) {
       const x = await run({ adversarial: true, ...extra });
       try {
         expect(x.stdout, JSON.stringify(extra)).toMatch(/Adversarial: none was sent/);
@@ -391,5 +397,51 @@ describe("CLI · mcp-test · adversarial · docs say what the code does", () => 
     expect(text).not.toMatch(/with `--expect-auth`, an HTTP run/);
     expect(text).toMatch(/always true/);
     expect(text).toMatch(/test account/);
+  });
+});
+
+describe("CLI · mcp-test · adversarial · review notes", () => {
+  const build = (check: (v: unknown) => { valid: boolean; errors: never[] }) => {
+    const builder = new SchemaBuilder(RICH.inputSchema);
+    const rootView = builder.view(RICH.inputSchema);
+    const props = rootView["properties"] as Record<string, unknown>;
+    const skipped: McpCaseSkipped[] = [];
+    const r = adversarialFor(
+      RICH,
+      { styles: ["psycho"], limits: resolveLimits({ styles: ["psycho"] }) },
+      { check },
+      builder,
+      rootView,
+      props,
+      Object.keys(props).sort(),
+      { q: "a" },
+      skipped,
+    );
+    return { r, skipped };
+  };
+  const ok = { valid: true, errors: [] as never[] };
+
+  it("a timeout says only the adversarial cases were skipped, and skips the rest", () => {
+    let calls = 0;
+    const { r, skipped } = build(() => {
+      calls += 1;
+      if (calls === 3) throw new OracleTimeout("pattern", "the schema check took too long, so the tool was skipped");
+      return ok;
+    });
+    expect(skipped[0]?.reason).toMatch(/adversarial cases were skipped/);
+    expect(skipped[0]?.reason).not.toMatch(/the tool was skipped/);
+    expect(skipped[1]).toMatchObject({ detail: "the rest", count: expect.any(Number) });
+    expect(r.cases).toHaveLength(2);
+  });
+
+  it("a candidate that fails for its own reason is recorded alone; the next ones are still checked", () => {
+    const { r, skipped } = build((v) => {
+      if (JSON.stringify(v).includes("[[[")) throw new CannotBuild("limit", "the schema is too deeply nested for the validator");
+      return ok;
+    });
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({ kind: "adversarial", keyword: "limit" });
+    expect(r.cases.length).toBeGreaterThan(5);
+    expect(r.cases.some((c) => c.kind === "deep-array")).toBe(false);
   });
 });

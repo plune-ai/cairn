@@ -14,7 +14,7 @@ import {
   unknownToolNames,
   type McpGuardOptions,
 } from "../../src/mcp-test/guard.js";
-import { appendCallLog, describeArguments, guardedToolCall, CALL_LOG_FILE, type ToolRpc } from "../../src/mcp-test/call.js";
+import { appendCallLog, describeArguments, guardedToolCall, CALL_LOG_FILE, LocalFailure, type ToolRpc } from "../../src/mcp-test/call.js";
 import { runMcpTest } from "../../src/mcp-test/run.js";
 import type { McpToolEntry } from "../../src/mcp-test/model.js";
 
@@ -331,12 +331,12 @@ describe("CLI · mcp-test · the gateway sends only what the guard allows (AC-8)
     tmp = [];
   });
 
-  const rpcOf = (impl: ToolRpc["request"]): ToolRpc & { calls: number } => {
+  const rpcOf = (impl: ToolRpc["invokeTool"]): ToolRpc & { calls: number } => {
     const rpc = {
       calls: 0,
-      request: async (req: Parameters<ToolRpc["request"]>[0], o: Parameters<ToolRpc["request"]>[1]) => {
+      invokeTool: async (name: string, args: Record<string, unknown>, o: Parameters<ToolRpc["invokeTool"]>[2]) => {
         rpc.calls += 1;
-        return impl(req, o);
+        return impl(name, args, o);
       },
     };
     return rpc;
@@ -373,8 +373,11 @@ describe("CLI · mcp-test · the gateway sends only what the guard allows (AC-8)
 
   it.each([
     ["an error result", async () => ({ isError: true }), "error"],
-    ["a timeout", async () => Promise.reject(Object.assign(new Error("t"), { code: -32001 })), "timeout"],
-    ["the process exiting", async () => Promise.reject(Object.assign(new Error("Connection closed"), { code: -32000 })), "process-exit"],
+    ["a timeout this side saw", async () => Promise.reject(new LocalFailure("timeout", "t")), "timeout"],
+    ["the connection closing, as the transport said", async () => Promise.reject(new LocalFailure("closed", "gone")), "process-exit"],
+    ["an answer over the limit", async () => Promise.reject(new LocalFailure("too-large", "big")), "too-large"],
+    ["a server's own error with code -32001", async () => Promise.reject(Object.assign(new Error("t"), { code: -32001 })), "error"],
+    ["a server's own error with code -32000 and the text Connection closed", async () => Promise.reject(Object.assign(new Error("Connection closed"), { code: -32000 })), "error"],
     ["another failure", async () => Promise.reject(new Error("boom")), "error"],
   ] as const)("%s is logged as %s", async (_label, impl, expected) => {
     const g = make({ allowTools: ["get_report"], sleep: async () => undefined });
@@ -460,14 +463,15 @@ describe("CLI · mcp-test · the command (AC-1, AC-9, flags)", () => {
     expect(text).toMatch(/the server's claim, not a check/);
   });
 
-  it("AC-1: asking for calls with the command ends with exit code 5: nothing was sent, nothing was tested", async () => {
-    const { r, o, callLog } = await run({ allowTools: "get_report" });
-    expect(r.exitCode).toBe(5);
-    expect(err.join("")).toMatch(/No tool call was sent/);
-    expect(existsSync(callLog)).toBe(false);
-    expect(existsSync(join(o, CALL_LOG_FILE))).toBe(false);
+  it("AC-1: asking for calls sends them through the runner, only for the named tool, and the guard report counts them", async () => {
+    const { o, callLog } = await run({ allowTools: "get_report" });
+    expect(err.join("")).not.toMatch(/No tool call was sent/);
+    const called = readFileSync(callLog, "utf8").split("\n").filter(Boolean);
+    expect(called.length).toBeGreaterThan(0);
+    expect(new Set(called)).toEqual(new Set(["get_report"]));
+    expect(existsSync(join(o, CALL_LOG_FILE))).toBe(true);
     const report = JSON.parse(readFileSync(join(o, "mcp-guard.json"), "utf8")) as { sent: number; policy: { allowTools: string[] } };
-    expect(report.sent).toBe(0);
+    expect(report.sent).toBe(called.length);
     expect(report.policy.allowTools).toEqual(["get_report"]);
   });
 

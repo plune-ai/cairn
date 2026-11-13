@@ -158,6 +158,18 @@ describe("CLI · mcp-test · only one door sends a call", () => {
       .map((f) => f.slice(src.length + 1).replace(/\\/g, "/"));
     expect(found).toEqual(["mcp-test/call.ts"]);
   });
+
+  it("the low-level SDK request method is used in the connection module only, and the connection has no generic sender", () => {
+    const dir = resolve(here, "..", "..", "src", "mcp-test");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+    const text = (f: string): string => readFileSync(join(dir, f), "utf8");
+    // `.request(` is the SDK's raw sender (and a runner's link must not have one under that name).
+    expect(files.filter((f) => /\.request\(/.test(text(f)))).toEqual(["connect.ts"]);
+    // The connection offers a method by name for a tool call and no method that takes a method name.
+    expect(text("connect.ts")).not.toMatch(/request\s*:\s*\(?\s*req|request\(req/);
+    // A call goes through invokeTool( in call.ts only (the connection defines it, the gateway calls it).
+    expect(files.filter((f) => /\.invokeTool\(/.test(text(f)))).toEqual(["call.ts"]);
+  });
 });
 
 describe("CLI · mcp-test · the report is written on every read", () => {

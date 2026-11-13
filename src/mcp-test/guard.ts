@@ -300,6 +300,20 @@ export class McpCallGuard {
     for (const name of this.snapshot.keys()) if (!seen.has(name)) this.changedSet.add(name);
   }
 
+  /** Whether a call could still be admitted: the time budget and the call budget are not spent. */
+  budgetLeft(): boolean {
+    if (this.timeBudgetMs !== undefined && this.now() - this.startedAt >= this.timeBudgetMs) return false;
+    return this.used < this.maxCalls;
+  }
+
+  /** Takes one rate slot without taking a call of the budget: a read of the tool list before a call counts toward --rps only. */
+  async waitSlot(): Promise<void> {
+    const now = this.now();
+    const slot = Math.max(now, this.nextSlot);
+    this.nextSlot = slot + 1000 / this.rps;
+    if (slot > now) await this.sleepFn(slot - now);
+  }
+
   /** The decision for one call, by policy alone (budget and rate are applied in {@link admit}). Not recorded. */
   decide(call: { tool: string; style?: string }): McpCallDecision {
     const base = { tool: call.tool, ...(call.style ? { style: call.style } : {}) };

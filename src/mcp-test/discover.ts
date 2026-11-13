@@ -181,3 +181,12 @@ export async function discoverModel(
     prompts,
   };
 }
+
+/** The tool list again, entry by entry as {@link discoverModel} shapes it (so a changed tool compares equal to itself). */
+export async function discoverTools(src: DiscoverSource, limits: DiscoverLimits): Promise<McpToolEntry[]> {
+  if (!("tools" in src.capabilities)) return [];
+  const r = await readList(src, "tools", limits);
+  // A list that could not be read whole says nothing about what changed: it is an error, not an empty list.
+  if (r.truncation) throw new Error(`the tool list could not be read whole (${r.truncation.reason})`);
+  return r.items.map((raw) => toTool(raw, { cut: false }));
+}
