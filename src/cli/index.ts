@@ -16,6 +16,7 @@ import { makeGateway } from "../browser/index.js";
 import type { BackendKind, StorageState } from "../browser/index.js";
 import { installBrowsers, doctorReport } from "../browser/install.js";
 import { deciderDoctorReport } from "../decider/index.js";
+import { mailboxDoctorReport } from "../mailbox/doctor.js";
 import { capture } from "../observe/index.js";
 import { SessionStore, captureSession } from "../session/index.js";
 import { loadConfig } from "../config/index.js";
@@ -512,10 +513,11 @@ export function buildProgram(): Command {
 
   program
     .command("doctor")
-    .description("Diagnose the setup: Cairn's Playwright and the Chromium it expects (with the fix for a missing build), plus the decision layer when DECIDER is set")
+    .description("Diagnose the setup: Cairn's Playwright and the Chromium it expects (with the fix for a missing build), the decision layer when DECIDER is set, and the test mailbox (MAILSAC_API_KEY)")
     .action(async () => {
       for (const line of doctorReport()) process.stdout.write(`${line}\n`);
       for (const line of await deciderDoctorReport(process.env)) process.stdout.write(`${line}\n`);
+      for (const line of await mailboxDoctorReport(process.env)) process.stdout.write(`${line}\n`);
     });
 
   program

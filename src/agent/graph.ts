@@ -9,6 +9,9 @@ import { planSetup, type SetupPlan } from "../flow/setup.js";
 import { buildJourneySetupSuite } from "../codegen/journey-setup.js";
 import { isAutomated, type JourneyCase } from "../design/schema.js";
 import { generateSuite, type GeneratedSuite } from "../codegen/index.js";
+import { mailboxPromptSection, withMailboxFixture } from "../codegen/mailbox.js";
+import { mailboxNeed, type MailboxNeed } from "../mailbox/rule.js";
+import type { MailboxSession } from "../mailbox/session.js";
 import { probeTransitions, type Transition } from "../probe/index.js";
 import { looksLikeLoginPage, expiredSessionMessage } from "../session/index.js";
 import {
@@ -109,6 +112,11 @@ export interface ExploreDeps {
   decider?: Decider;
   /** #225: explore dialogs, drawers, menus and wizards as states. On unless `false`. */
   overlays?: boolean;
+  /**
+   * ADR-0023 §4: the mailbox/TOTP steps are on. Where a signal fires (a code/OTP field, "check your email" text, a case
+   * step naming the letter), the generated tests take them through the `mail` fixture. Absent → such a page is only marked.
+   */
+  mailbox?: Pick<MailboxSession, "totpSecretEnv" | "codeSecrets">;
 }
 
 export interface ExploreOutcome {
@@ -150,6 +158,8 @@ export interface ExploreOutcome {
    * `note` says why), and the writes it stopped, each with the element pressed before it.
    */
   overlayGuard?: { guard: "network" | "none"; blocked: BlockedRequest[]; note?: string };
+  /** ADR-0023 §4: the page or its cases need e-mail/TOTP (absent when no signal fired); `steps` only when they were on. */
+  mailbox?: MailboxNeed;
 }
 
 /** #224: the same gateway, keeping the effect of every click made through it. */
@@ -479,7 +489,21 @@ export async function runExploreGraph(
     }
   }
 
-  const overlayKeys = (): Pick<ExploreOutcome, "overlays" | "overlaySkipped" | "overlayToasts" | "overlayGuard"> => ({
+  // ── mailbox/TOTP (ADR-0023 §4): a rule over the page's fields and text and the cases' steps, not an LLM verdict ──
+  const mail = mailboxNeed(
+    { fields: verified, text: study.ariaYaml, steps: testCases.flatMap((t) => t.steps) },
+    { enabled: deps.mailbox !== undefined, totpSecretEnv: deps.mailbox?.totpSecretEnv },
+  );
+  if (mail) {
+    deps.onProgress?.(
+      mail.steps
+        ? `mailbox — ${mail.reason}: the tests take the steps ${mail.steps.map((s) => s.action).join(" → ")}`
+        : `mailbox — ${mail.reason}: this needs e-mail/OTP, and the mailbox steps are off (no MailboxSession), so none is added`,
+    );
+  }
+
+  const overlayKeys = (): Pick<ExploreOutcome, "overlays" | "overlaySkipped" | "overlayToasts" | "overlayGuard" | "mailbox"> => ({
+    ...(mail ? { mailbox: mail } : {}),
     ...(overlays ? { overlays } : {}),
     ...(overlaySkipped ? { overlaySkipped } : {}),
     ...(overlayToasts ? { overlayToasts } : {}),
@@ -508,11 +532,13 @@ export async function runExploreGraph(
         elements: verified.filter((v) => v.count >= 1),
         transitions,
         overlays: overlayText,
+        ...(mail?.steps ? { mailbox: mailboxPromptSection(mail) } : {}),
       },
       { invoke: deps.codegenInvoke, prompts: deps.prompts },
     );
-    await deps.runWriter.writeSuite(suite);
-    return suite;
+    const out = mail?.steps && deps.mailbox ? withMailboxFixture(suite, deps.mailbox.codeSecrets) : suite;
+    await deps.runWriter.writeSuite(out);
+    return out;
   };
 
   // locator-heal re-observes the start page on the run's own browser; nothing reads the page after this loop.

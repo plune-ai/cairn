@@ -36,8 +36,8 @@ Commands:
                                matches
   doctor                       Diagnose the setup: Cairn's Playwright and the
                                Chromium it expects (with the fix for a missing
-                               build), plus the decision layer when DECIDER is
-                               set
+                               build), the decision layer when DECIDER is set,
+                               and the test mailbox (MAILSAC_API_KEY)
   promote [options]            Promote manual MTC case(s) to automatable ATC
                                (.md only; run \`automate\` to generate code)
   view [options] <runDir>      Build view.html in a finished run: its screencast

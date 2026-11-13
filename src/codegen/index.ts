@@ -13,6 +13,7 @@ import { FLOW_FIXTURE_FILE } from "../api/flows.js";
 
 export type { GeneratedSuite, FileBlob } from "./schema.js";
 export { GeneratedSuiteSchema, FileBlobSchema } from "./schema.js";
+export { MAILBOX_FIXTURE_FILE, mailboxPromptSection, renderMailboxSteps, withMailboxFixture } from "./mailbox.js";
 
 export interface CodegenInput {
   study: PageStudy;
@@ -26,6 +27,8 @@ export interface CodegenInput {
   transitions?: Transition[];
   /** #225: the overlays found by exploration ({@link formatOverlays}); "" → none. */
   overlays?: string;
+  /** ADR-0023 §4: the mailbox/TOTP section ({@link mailboxPromptSection}) when a page needs it and the steps are on. */
+  mailbox?: string;
 }
 
 /** #225: heads the overlay block of the codegen prompt. */
@@ -73,9 +76,10 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
     overlays: input.overlays ? `${OVERLAYS_HEADER}\n${input.overlays}` : "",
   });
 
+  const base = input.mailbox ? `${prompt.text}\n\n${input.mailbox}` : prompt.text;
   const text = input.repairHint
-    ? `${prompt.text}\n\nREPAIR: the previous generation failed the tests: ${input.repairHint}\nFix the locators/navigation/assertions so the tests pass.`
-    : prompt.text;
+    ? `${base}\n\nREPAIR: the previous generation failed the tests: ${input.repairHint}\nFix the locators/navigation/assertions so the tests pass.`
+    : base;
   const suite = await deps.invoke(GeneratedSuiteSchema, [new HumanMessage(text)]);
   return { files: suite.files.map((f) => ({ path: sanitizePath(f.path), content: f.content })) };
 }
@@ -87,7 +91,7 @@ export async function generateSuite(input: CodegenInput, deps: CodegenDeps): Pro
 export async function automateCases(
   cases: ParsedTestCase[],
   /** #230: `apiFlows` — the available API flows (`formatFlowsForPrompt`); absent → the prompt is unchanged. */
-  ctx: { baseUrl: string; pageSemantics: string; apiFlows?: string },
+  ctx: { baseUrl: string; pageSemantics: string; apiFlows?: string; mailbox?: string },
   deps: CodegenDeps,
   /** Repair context: failing test names from the previous attempt (#40 — automate now repairs). */
   repairHint?: string,
@@ -123,7 +127,7 @@ export async function automateCases(
         })
       ).text
     : "";
-  const base = flowsSection ? `${prompt.text}\n\n${flowsSection}` : prompt.text;
+  const base = [prompt.text, flowsSection, ctx.mailbox ?? ""].filter(Boolean).join("\n\n");
   const text = repairHint
     ? `${base}\n\nREPAIR: the previous generation failed the tests: ${repairHint}\nFix the locators/navigation/assertions so the tests pass.`
     : base;

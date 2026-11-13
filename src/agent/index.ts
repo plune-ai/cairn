@@ -17,6 +17,8 @@ import { resolveProjectTarget, ejectSuiteToProject } from "../project/index.js";
 import { deadClicksOf, renderReportMd } from "../artifacts/report.js";
 import { parseTestCaseMd, parseApiTestCaseMd } from "../artifacts/testcase-md.js";
 import { automateCases, automateApiCases } from "../codegen/index.js";
+import { MAILBOX_FIXTURE_FILE, mailboxPromptSection, withMailboxFixture } from "../codegen/mailbox.js";
+import { mailboxNeed } from "../mailbox/rule.js";
 import { lintSuite, lintHint, lintErrors } from "../codegen/lint.js";
 import { deterministicScores, type Score } from "../eval/scorers.js";
 import { computeCoverage } from "../eval/coverage.js";
@@ -362,6 +364,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     experienceText,
     styleText,
     languageText,
+    mailbox: input.mailbox, // ADR-0023 §4: on → the steps go into the tests where a signal fires
     runWriter,
     validate: async (runDir: string) =>
       redactValidation(
@@ -833,6 +836,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     styleText,
     languageText,
     apiFlowsText: input.apiFlows ? formatFlowsForPrompt(input.apiFlows) : undefined, // #230
+    mailbox: input.mailbox, // ADR-0023 §4: design writes no code; a page that needs e-mail/OTP is marked in progress
     runWriter,
     validate: () => Promise.resolve({ results: [], greenRatio: 0, flakyCount: 0 }),
     maxRepair: 0,
@@ -1169,9 +1173,23 @@ export async function runAutomate(input: {
           (input.allowMutations && apiBase ? ` · flows that change data may run against ${new URL(apiBase).origin}` : " · flows that change data are skipped (no --allow-mutations)"),
       );
     }
+    // ADR-0023 §4: a case step that names the letter or a code from it → the specs take the mailbox steps (when on).
+    const mail = mailboxNeed(
+      { fields: [], text: "", steps: cases.flatMap((c) => c.steps) },
+      { enabled: input.mailbox !== undefined, totpSecretEnv: input.mailbox?.totpSecretEnv },
+    );
+    if (mail) {
+      onProgress(
+        mail.steps
+          ? `automate — ${mail.reason}: the specs take the steps ${mail.steps.map((s) => s.action).join(" → ")} (${MAILBOX_FIXTURE_FILE})`
+          : `automate — ${mail.reason}: this needs e-mail/OTP, and the mailbox steps are off (no MailboxSession), so none is added`,
+      );
+    }
+    const mailSection = mail?.steps ? mailboxPromptSection(mail) : undefined;
     const buildSuite = async (repairHint?: string): Promise<GeneratedSuite> => {
-      const s = await automateCases(cases, { baseUrl, pageSemantics, apiFlows: flowsText }, { invoke, prompts }, repairHint);
-      return fixture ? withFlowFixture(s, fixture) : s;
+      const s = await automateCases(cases, { baseUrl, pageSemantics, apiFlows: flowsText, mailbox: mailSection }, { invoke, prompts }, repairHint);
+      const withFlows = fixture ? withFlowFixture(s, fixture) : s;
+      return mailSection && input.mailbox ? withMailboxFixture(withFlows, input.mailbox.codeSecrets) : withFlows;
     };
 
     let sessionPath: string | undefined;

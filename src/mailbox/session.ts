@@ -23,6 +23,8 @@ export interface MailboxSessionOptions {
   runId: string;
   env?: Record<string, string | undefined>;
   wait?: Pick<WaitOptions, "timeoutMs" | "intervalMs">;
+  /** NAME of the variable with the base32 TOTP secret, for the steps the agent adds itself (ADR-0023 §4). Default `TOTP_SECRET`. */
+  totpSecretEnv?: string;
 }
 
 const VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -44,6 +46,16 @@ export class MailboxSession {
   /** Every secret value seen so far (for `redact()` in other layers). */
   get secrets(): string[] {
     return [...this.known];
+  }
+
+  get totpSecretEnv(): string {
+    return this.o.totpSecretEnv ?? "TOTP_SECRET";
+  }
+
+  /** {@link secrets} plus the values of MAILSAC_API_KEY and the TOTP variable: what generated code must never hold. */
+  get codeSecrets(): string[] {
+    const env = this.o.env ?? process.env;
+    return [...this.secrets, ...["MAILSAC_API_KEY", this.totpSecretEnv].flatMap((n) => (env[n] ? [env[n]] : []))];
   }
 
   redact(text: string): string {

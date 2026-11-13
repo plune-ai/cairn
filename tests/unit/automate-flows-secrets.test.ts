@@ -114,3 +114,23 @@ describe("runAutomate --flows --validate: the values the flow file names (#250)"
     expect(validateSuite.mock.calls[0]![1]).toMatchObject({ secretsInRun: true });
   });
 });
+
+describe("runAutomate with a mailbox session (ADR-0023 §4)", () => {
+  const md = "---\nid: ATC-1\nexecution: auto\n---\n# ATC-1: Sign up\n\n## Steps\n\n1. Fill Email\n2. Enter the code from the email\n";
+
+  it("a case step naming a code from the e-mail → the codegen gets the steps, the suite gets the fixture", async () => {
+    await writeFile(join(runDir, "testcases", "ATC-1.md"), md, "utf8");
+    const { MailboxSession, FakeMailbox } = await import("../../src/mailbox/index.js");
+    const mailbox = new MailboxSession({ provider: new FakeMailbox(), runId: "r", env: {} });
+    const out = await runAutomate({ runDir, config, mailbox, onProgress: () => undefined });
+    expect(automateCases.mock.calls[0]![1].mailbox).toContain('"action":"mailbox.extractCode"');
+    expect(out.specFiles.some((f) => f.endsWith("mailbox.fixture.ts"))).toBe(true);
+  });
+
+  it("no session → the codegen context and the suite are as before", async () => {
+    await writeFile(join(runDir, "testcases", "ATC-1.md"), md, "utf8");
+    const out = await runAutomate({ runDir, config, onProgress: () => undefined });
+    expect(automateCases.mock.calls[0]![1].mailbox).toBeUndefined();
+    expect(out.specFiles.some((f) => f.endsWith("mailbox.fixture.ts"))).toBe(false);
+  });
+});
