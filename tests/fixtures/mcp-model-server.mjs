@@ -14,6 +14,7 @@
 //   FIXTURE_STDERR_WORKFLOW=1  writes the lines `::error::x` and `##[group]y` to stderr
 //   FIXTURE_NAME_ENV / FIXTURE_NAME_PAD  the serverInfo name is that many "n" characters followed by the value of that variable
 //   FIXTURE_ERROR_ENV / FIXTURE_ERROR_PAD  (init-error) the error message is that many "e" characters followed by the value of that variable
+//   FIXTURE_GUARD=1       the tools are a set for the call guard; FIXTURE_CALL_LOG is a file that gets the name of every tool called
 //   FIXTURE_EXTRA=1       adds a tool `normal_x` and a resource with an application/json mime type
 //   FIXTURE_STDERR_PAD    that many "x" characters are written to stderr first, without a newline
 //   FIXTURE_SERVER_NAME   the serverInfo name (default fixture-server)
@@ -23,7 +24,7 @@
 // HTTP option `echoAuth` puts the received Authorization header into the description of `ping`, like a server that leaks it.
 // The tools are never run by the tests; they exist to be listed.
 
-import { writeFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
@@ -34,6 +35,7 @@ import {
   ListPromptsRequestSchema,
   ListResourceTemplatesRequestSchema,
   ListResourcesRequestSchema,
+  CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
@@ -103,6 +105,15 @@ const EXTRA_TOOL = {
   description: "A tool whose property is called like a common word.",
   inputSchema: { type: "object", properties: { normal: { type: "string", maxLength: 1000 } } },
 };
+// Added with the `guardTools` option (FIXTURE_GUARD=1): tools for the call guard. get_report claims read-only (and, in a
+// real server, could write a file); delete_everything claims read-only with a deleting name.
+const GUARD_TOOLS = [
+  { name: "get_report", description: "Reads a report.", inputSchema: { type: "object", properties: { id: { type: "string" } } }, annotations: { readOnlyHint: true } },
+  { name: "delete_everything", description: "Deletes everything.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+  { name: "list_items", description: "Lists items.", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+  { name: "update_item", description: "Updates an item.", inputSchema: { type: "object" }, annotations: { readOnlyHint: false } },
+  { name: "mystery", description: "No hints.", inputSchema: { type: "object" } },
+];
 const RESOURCES = [
   { uri: "note://inbox", name: "inbox", mimeType: "text/plain" },
   { uri: "note://archive", name: "archive", description: "Old notes." },
@@ -142,9 +153,15 @@ export function buildFixtureServer(opts = {}) {
   };
   const withEcho = (list) => list.map((t) => (t.name === "ping" && opts.echo ? { ...t, description: `Answers pong. Called with: ${opts.echo}` } : t));
   const resourcesList = opts.extra ? [...RESOURCES, { uri: "note://data", name: "data", mimeType: "application/json" }] : RESOURCES;
-  const toolsList = mode === "empty-tools" ? [] : mode === "endless" ? Array.from({ length: 500 }, (_, i) => ({ name: `tool_${String(i).padStart(3, "0")}`, inputSchema: { type: "object" } })) : withEcho(opts.extra ? [...TOOLS, EXTRA_TOOL] : TOOLS);
+  const toolsList = mode === "empty-tools" ? [] : mode === "endless" ? Array.from({ length: 500 }, (_, i) => ({ name: `tool_${String(i).padStart(3, "0")}`, inputSchema: { type: "object" } })) : withEcho(opts.guardTools ? GUARD_TOOLS : opts.extra ? [...TOOLS, EXTRA_TOOL] : TOOLS);
   if (mode !== "no-tools") {
     let marked = false;
+    // Every call that reaches the server is written down, so a test can see that none did.
+    server.setRequestHandler(CallToolRequestSchema, async (req) => {
+      if (opts.callLog) appendFileSync(opts.callLog, `${req.params.name}
+`);
+      return { content: [{ type: "text", text: "ok" }] };
+    });
     server.setRequestHandler(ListToolsRequestSchema, async (req) => {
       if (opts.listMark && !marked) {
         marked = true;
@@ -254,6 +271,8 @@ async function main() {
     order: env.FIXTURE_ORDER,
     serverName: env.FIXTURE_NAME_ENV ? "n".repeat(Number(env.FIXTURE_NAME_PAD ?? 0)) + env[env.FIXTURE_NAME_ENV] : env.FIXTURE_SERVER_NAME,
     extra: env.FIXTURE_EXTRA === "1",
+    guardTools: env.FIXTURE_GUARD === "1",
+    callLog: env.FIXTURE_CALL_LOG,
     echo: env.FIXTURE_ECHO_ENV ? env[env.FIXTURE_ECHO_ENV] : undefined,
     listDelayMs: env.FIXTURE_LIST_DELAY_MS,
     listMark: env.FIXTURE_LIST_MARK,

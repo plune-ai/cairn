@@ -186,6 +186,36 @@ limit is never passed off as whole: the model says `complete: false` and `trunca
   or `capabilities`) are replaced by a mark and the model is marked `complete: false`.
 - An interrupt (Ctrl-C) while the lists are read exits with `1` and keeps the model read so far, marked `complete: false`.
 - Needs the MCP client package (`npm i @modelcontextprotocol/sdk`); without it the command says so.
+### The call guard: nothing is called unless you say so
+
+A tool call is an action in someone else's system: the tool may delete a file, send a letter or spend money. The guard
+decides before every call, and by default no call is sent. A read of the server prints the tools in a table (tool, class,
+proposed for permission) and writes `mcp-guard.json`.
+
+- `--allow-tools a,b,c`: the exact names that may be called. Names are compared byte for byte (case and spaces count);
+  there is no "all", no empty name, no pattern: such a value is a usage error, not a permission. A name the server does not
+  have is an error (exit `1`).
+- `--allow-read-only-hints`: also allow the tools whose server claims `readOnlyHint: true`. The name says what it is: you
+  trust the server's claim, and the report says a permission rests on it. A claim is not a check.
+- `--allow-mutations`: needed, together with the tool's name in `--allow-tools`, for any tool that is not claimed
+  read-only with a clean name. Alone it allows nothing. It prints (and saves in the report) a banner: calls may change
+  data, use a test account or a stand.
+- Limits: `--max-calls` (default 100, retries included), `--rps` (default 2), `--call-timeout`, `--time-budget`. When a
+  budget runs out the rest are not sent and are not counted as passed (exit code `4`).
+
+Classes: `read-claimed` (the server says read-only and the name is clean; the only class that is proposed), `unknown` (no
+hint) and `mutating` (hint `false`, `destructiveHint: true`, or a name that reads as a deletion). Names and titles are
+split into words (`delete_file`, `deleteFile`, `remove-item`, `видалити_файл`) and checked with the crawler's deletion
+rules (English, Ukrainian, Russian); such a tool is never called on a hint, and the report lists every tool whose hint and
+name disagree. Names from the server are untrusted text: a name with control or invisible characters, or two tools whose
+names are the same after case folding and normalization, are refused even when named. A tool the server changes after
+you saw it (a different description, schema or hint) is refused from then on.
+
+In this version the command only reads the server: asking for calls (`--allow-*`) ends with exit code `5`, because nothing
+was sent and nothing was tested. The guard and the single function that may send a call (`src/mcp-test/call.ts`) are in
+place for the runner that comes next; `mcp-calls.jsonl` will list only the calls that really went to the server (time,
+tool, reason, masked arguments, duration, result).
+
 - Limits. The server is asked to stop (stdin closed), then killed. On Windows its process tree is killed if it is still
   running then; on Linux and macOS only the direct child is, so a grandchild the server started (a shell wrapper, `npx`)
   can outlive the run. The size of an HTTP response is not

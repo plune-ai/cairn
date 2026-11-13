@@ -21,7 +21,7 @@ export const METHOD_OVERRIDE_HEADER = /^x-http-method(-override)?$|^x-method-ove
 /** Query parameter some frameworks use for the same trick (`?_method=DELETE`). */
 export const METHOD_OVERRIDE_PARAM = /^_method$/i;
 /** Adversarial styles that only make sense as mutating probes — they need `--allow-mutations`. */
-const MUTATING_STYLES: ReadonlySet<string> = new Set(["psycho", "hacker"]);
+export const MUTATING_STYLES: ReadonlySet<string> = new Set(["psycho", "hacker"]);
 
 export const DEFAULT_MAX_REQUESTS = 300;
 export const DEFAULT_RPS = 5;
