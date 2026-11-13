@@ -21,6 +21,7 @@ import {
   assessTools,
   parseAllowTools,
   renderGuardReport,
+  renderMismatches,
   renderProposal,
   unknownToolNames,
 } from "./guard.js";
@@ -229,9 +230,13 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       ...(timeBudgetSeconds !== undefined ? { timeBudgetMs: Math.round(timeBudgetSeconds * 1000) } : {}),
     });
     for (const line of renderProposal(assessTools(tools))) out(`${line}\n`);
-    if (!callsRequested) return { exitCode: 0, outDir, model, pid };
+    // The report and the hint/name disagreements are written on every read, whether or not calls are asked for.
     const report = maskStrings(guard.report(), secrets);
     await writeFiles([[GUARD_FILE, `${JSON.stringify(sortKeys(report), null, 2)}\n`]]);
+    if (!callsRequested) {
+      for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
+      return { exitCode: 0, outDir, model, pid };
+    }
     for (const line of renderGuardReport(report)) out(`${line}\n`);
     // This command reads the server; the runner that sends calls is a later step, so nothing is sent and nothing is tested.
     err("✗ No tool call was sent: this command does not run calls yet, so nothing was tested. This is not a pass.\n");

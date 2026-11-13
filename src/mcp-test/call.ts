@@ -60,7 +60,9 @@ export function describeArguments(args: unknown, secrets: readonly string[] = []
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, SENSITIVE.test(k) ? "***" : walk(x, depth + 1)]));
   };
   const text = JSON.stringify(walk(args ?? {}, 0));
-  return text.length > ARGUMENT_TEXT_LIMIT ? `${text.slice(0, ARGUMENT_TEXT_LIMIT - 1)}…` : text;
+  // Cut on code points, so a surrogate pair is never split.
+  const points = Array.from(text);
+  return points.length > ARGUMENT_TEXT_LIMIT ? `${points.slice(0, ARGUMENT_TEXT_LIMIT - 1).join("")}…` : text;
 }
 
 function outcomeOf(e: unknown): CallOutcome {

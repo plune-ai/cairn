@@ -85,6 +85,25 @@ export function readsDestructive(text: string | undefined): boolean {
 const UNSAFE_NAME = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/u;
 export const hasUnsafeName = (name: string): boolean => UNSAFE_NAME.test(name) || name !== name.normalize("NFC");
 
+/**
+ * The first word of a tool name that lets the trust flag (`--allow-read-only-hints`) rely on the server's claim. A list of
+ * words that are harmful cannot be completed (`destroy`, `send_email`, `deploy`, ... all slip past one), so the flag goes
+ * the other way: only a tool that claims read-only AND starts with one of these verbs is allowed on the claim.
+ * Known ceiling: `get` or `query` can still hide a write (a tool that runs SQL, for one). The flag is trust in the
+ * server's claim; the description is free text and takes no part in the decision.
+ */
+export const READ_VERBS: readonly string[] = ["get", "list", "read", "search", "find", "describe", "show", "view", "fetch", "query", "count", "check", "lookup", "status"];
+
+/** Plain ASCII only: a look-alike letter from another alphabet is not accepted on the claim. */
+const PLAIN_NAME = /^[A-Za-z0-9_.-]+$/;
+
+/** Why a tool that claims read-only is still not trusted on the claim, if it is not. */
+export function claimProblem(name: string): string | undefined {
+  if (!PLAIN_NAME.test(name)) return "name has characters outside ASCII letters, digits, _ - .";
+  const first = nameWords(name).split(" ")[0] ?? "";
+  return READ_VERBS.includes(first) ? undefined : "name does not start with a read verb";
+}
+
 export type ToolClass = "read-claimed" | "unknown" | "mutating";
 
 export interface ToolAssessment {
@@ -99,8 +118,12 @@ export interface ToolAssessment {
   unsafeName: boolean;
   /** Another tool's name is the same, or the same after normalization and case folding. */
   ambiguous: boolean;
-  /** Only `read-claimed` tools are proposed. */
+  /** The server claims read-only and nothing contradicts it (the tool can be allowed by its exact name alone). */
+  claimClean: boolean;
+  /** Only `read-claimed` tools are proposed: a clean claim and a plain name that starts with a read verb. */
   proposed: boolean;
+  /** Why a clean read-only claim is not trusted on the claim. */
+  claimNote?: string;
   /** A claim of the server that its own name or hints contradict. */
   mismatch?: string;
 }
@@ -123,8 +146,10 @@ export function assessTools(tools: readonly McpToolEntry[]): ToolAssessment[] {
     const ambiguous = (count.get(foldName(name)) ?? 0) > 1;
     let cls: ToolClass;
     if (destructiveName || readOnlyHint === false || destructiveHint === true) cls = "mutating";
-    else if (readOnlyHint === true && !unsafeName && !ambiguous) cls = "read-claimed";
     else cls = "unknown";
+    const claimClean = readOnlyHint === true && !destructiveName && destructiveHint !== true && !unsafeName && !ambiguous;
+    const problem = claimClean ? claimProblem(name) : undefined;
+    if (claimClean && !problem) cls = "read-claimed";
     const mismatch =
       readOnlyHint === true && destructiveName
         ? "the server says read-only, the name or title reads as a deletion"
@@ -140,7 +165,9 @@ export function assessTools(tools: readonly McpToolEntry[]): ToolAssessment[] {
       destructiveName,
       unsafeName,
       ambiguous,
+      claimClean,
       proposed: cls === "read-claimed",
+      ...(problem ? { claimNote: `claims read-only; ${problem}` } : {}),
       ...(mismatch ? { mismatch } : {}),
     };
   });
@@ -149,7 +176,9 @@ export function assessTools(tools: readonly McpToolEntry[]): ToolAssessment[] {
 /** The table of tools and what is proposed for permission. */
 export function renderProposal(assessments: readonly ToolAssessment[]): string[] {
   const lines = ["Tools the server offers (nothing is called without your permission):", "  tool | class | proposed for permission"];
-  for (const a of assessments) lines.push(`  ${safeText(a.name, 60)} | ${a.class} | ${a.proposed ? "yes" : "no"}`);
+  for (const a of assessments) {
+    lines.push(`  ${safeText(a.name, 60)} | ${a.class} | ${a.proposed ? "yes" : "no"}${a.claimNote ? ` (${a.claimNote})` : ""}`);
+  }
   const proposed = assessments.filter((a) => a.proposed);
   if (proposed.length) {
     lines.push(`  Proposed with --allow-read-only-hints or by name in --allow-tools: ${proposed.map((a) => safeText(a.name, 60)).join(", ")}.`);
@@ -167,6 +196,7 @@ export type DenyReason =
   | "not in the model"
   | "ambiguous name"
   | "unsafe name"
+  | "claim not trusted"
   | "changed since permission"
   | "budget exhausted"
   | "time budget exhausted";
@@ -235,6 +265,13 @@ export class McpCallGuard {
   private exhausted = false;
 
   constructor(opts: McpGuardOptions) {
+    // A limit that is NaN, zero, negative or infinite would make the budget or the rate vanish: refused.
+    const positive = (v: number | undefined, label: string): void => {
+      if (v !== undefined && !(Number.isFinite(v) && v > 0)) throw new GuardUsageError(`${label} must be a finite number greater than 0.`);
+    };
+    positive(opts.maxCalls, "--max-calls");
+    positive(opts.rps, "--rps");
+    positive(opts.timeBudgetMs, "--time-budget (time budget)");
     this.allowList = [...(opts.allowTools ?? [])];
     this.allow = new Set(this.allowList);
     this.trustHints = opts.allowReadOnlyHints ?? false;
@@ -274,11 +311,14 @@ export class McpCallGuard {
     if (this.changedSet.has(call.tool)) return deny("changed since permission");
     const named = this.allow.has(call.tool);
     const mutatingStyle = MUTATING_STYLES.has(call.style ?? "");
-    const clean = a.class === "read-claimed" && !mutatingStyle;
+    const clean = a.claimClean && !mutatingStyle;
     if (a.destructiveName && !(named && this.mutations)) return deny("destructive name");
     if (clean) {
       if (named) return { ...base, allowed: true, reason: "named in --allow-tools", basis: "named" };
-      if (this.trustHints) return { ...base, allowed: true, reason: "server claims read-only, trusted by --allow-read-only-hints", basis: "server-claim" };
+      if (this.trustHints) {
+        if (a.class === "read-claimed") return { ...base, allowed: true, reason: "server claims read-only, trusted by --allow-read-only-hints", basis: "server-claim" };
+        return deny("claim not trusted");
+      }
       return deny("not allowed");
     }
     // Not proven safe: a mutation. It needs the name AND --allow-mutations; a hint never lifts it.
@@ -351,6 +391,12 @@ export class McpCallGuard {
   }
 }
 
+/** The tools whose hint and name disagree. */
+export function renderMismatches(mismatches: ReadonlyArray<{ tool: string; detail: string }>): string[] {
+  if (!mismatches.length) return [];
+  return ["  Hint and name disagree:", ...mismatches.map((m) => `    ${safeText(m.tool, 60)}: ${m.detail}`)];
+}
+
 /** Console lines of the guard's report: the banner first (when mutations are allowed), then what was decided and why. */
 export function renderGuardReport(r: McpGuardReport): string[] {
   const lines: string[] = [];
@@ -363,10 +409,7 @@ export function renderGuardReport(r: McpGuardReport): string[] {
   if (r.restsOnServerClaims) lines.push(`  Some permission rests on the server's own claim of read-only. ${CLAIM_NOTE}`);
   for (const d of r.decisions.filter((x) => !x.allowed)) lines.push(`  refused ${safeText(d.tool, 60)}: ${d.reason}`);
   for (const d of r.decisions.filter((x) => x.allowed)) lines.push(`  allowed ${safeText(d.tool, 60)}: ${d.reason}`);
-  if (r.mismatches.length) {
-    lines.push("  Hint and name disagree:");
-    for (const m of r.mismatches) lines.push(`    ${safeText(m.tool, 60)}: ${m.detail}`);
-  }
+  lines.push(...renderMismatches(r.mismatches));
   for (const n of r.notes) lines.push(`  Note: ${n}`);
   if (r.budgetExhausted) lines.push("  ✗ The call budget ran out: the rest were not sent and are not counted as passed.");
   return lines;

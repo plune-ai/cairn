@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`cairn mcp-test` call guard (MCP-E4).** Nothing is called by default. `--allow-tools` takes exact names (no "all", no
-  patterns), `--allow-read-only-hints` trusts the server's `readOnlyHint` claim (and the report says so),
+  patterns), `--allow-read-only-hints` trusts the server's `readOnlyHint` claim only for a plain ASCII name whose first word is a read verb (`get`, `list`, `search`, ...), and the report says so,
   `--allow-mutations` needs the name in `--allow-tools` as well and prints a test-account banner. A tool whose name or
   title reads as a deletion (`delete_file`, `deleteFile`, `видалити_файл`, ...) is never allowed on a hint; a tool changed
   after you saw it, a name with control characters and look-alike names are refused. `--max-calls`, `--rps`,

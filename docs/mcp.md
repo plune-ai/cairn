@@ -186,38 +186,49 @@ limit is never passed off as whole: the model says `complete: false` and `trunca
   or `capabilities`) are replaced by a mark and the model is marked `complete: false`.
 - An interrupt (Ctrl-C) while the lists are read exits with `1` and keeps the model read so far, marked `complete: false`.
 - Needs the MCP client package (`npm i @modelcontextprotocol/sdk`); without it the command says so.
-### The call guard: nothing is called unless you say so
-
-A tool call is an action in someone else's system: the tool may delete a file, send a letter or spend money. The guard
-decides before every call, and by default no call is sent. A read of the server prints the tools in a table (tool, class,
-proposed for permission) and writes `mcp-guard.json`.
-
-- `--allow-tools a,b,c`: the exact names that may be called. Names are compared byte for byte (case and spaces count);
-  there is no "all", no empty name, no pattern: such a value is a usage error, not a permission. A name the server does not
-  have is an error (exit `1`).
-- `--allow-read-only-hints`: also allow the tools whose server claims `readOnlyHint: true`. The name says what it is: you
-  trust the server's claim, and the report says a permission rests on it. A claim is not a check.
-- `--allow-mutations`: needed, together with the tool's name in `--allow-tools`, for any tool that is not claimed
-  read-only with a clean name. Alone it allows nothing. It prints (and saves in the report) a banner: calls may change
-  data, use a test account or a stand.
-- Limits: `--max-calls` (default 100, retries included), `--rps` (default 2), `--call-timeout`, `--time-budget`. When a
-  budget runs out the rest are not sent and are not counted as passed (exit code `4`).
-
-Classes: `read-claimed` (the server says read-only and the name is clean; the only class that is proposed), `unknown` (no
-hint) and `mutating` (hint `false`, `destructiveHint: true`, or a name that reads as a deletion). Names and titles are
-split into words (`delete_file`, `deleteFile`, `remove-item`, `видалити_файл`) and checked with the crawler's deletion
-rules (English, Ukrainian, Russian); such a tool is never called on a hint, and the report lists every tool whose hint and
-name disagree. Names from the server are untrusted text: a name with control or invisible characters, or two tools whose
-names are the same after case folding and normalization, are refused even when named. A tool the server changes after
-you saw it (a different description, schema or hint) is refused from then on.
-
-In this version the command only reads the server: asking for calls (`--allow-*`) ends with exit code `5`, because nothing
-was sent and nothing was tested. The guard and the single function that may send a call (`src/mcp-test/call.ts`) are in
-place for the runner that comes next; `mcp-calls.jsonl` will list only the calls that really went to the server (time,
-tool, reason, masked arguments, duration, result).
-
 - Limits. The server is asked to stop (stdin closed), then killed. On Windows its process tree is killed if it is still
   running then; on Linux and macOS only the direct child is, so a grandchild the server started (a shell wrapper, `npx`)
   can outlive the run. The size of an HTTP response is not
   limited. The time is bounded per request (`--timeout`, 30 s by default) and a list by `--max-pages` (20), so one list
   can take up to 20 pages times 30 s, and the four lists add up.
+
+### The call guard: nothing is called unless you say so
+
+A tool call is an action in someone else's system: the tool may delete a file, send a letter or spend money. The guard
+decides before every call, and by default no call is sent. Every read of the server prints the tools in a table (tool,
+class, proposed for permission), lists the tools whose hint and name disagree, and writes `mcp-guard.json`.
+
+- `--allow-tools a,b,c`: the exact names that may be called. Names are compared byte for byte (case and spaces count);
+  there is no "all", no empty name, no pattern: such a value is a usage error, not a permission. A name the server does not
+  have is an error (exit `1`).
+- `--allow-read-only-hints`: also allow the tools that the server claims read-only, **when the name passes a fixed
+  rule** (below). The flag is trust in the server's claim, and the report says a permission rests on it. A claim is not a
+  check: a tool called `get_` or `query_` can still write (one that runs SQL, for example).
+- `--allow-mutations`: needed, together with the tool's name in `--allow-tools`, for any tool that is not claimed
+  read-only with a clean name, or that reads as a deletion. Alone it allows nothing. It prints (and saves in the report) a
+  banner: calls may change data, use a test account or a stand.
+- Limits: `--max-calls` (default 100, retries included), `--rps` (default 2), `--call-timeout`, `--time-budget`. When a
+  budget runs out the rest are not sent and are not counted as passed (exit code `4`). `--call-timeout` and
+  `--time-budget` are accepted and checked, but nothing uses them until calls are sent; the other limits are enforced by the
+  guard, which the call runner will ask.
+
+What the trust flag requires. A tool is allowed on the server's claim only when all of these hold: `readOnlyHint` is `true`;
+`destructiveHint` is not `true`; the name is plain ASCII letters, digits, `_`, `-` and `.`; the first word of the name
+(after splitting `getReport`, `get_report`, `get-report` into words) is a read verb (`get`, `list`, `read`, `search`,
+`find`, `describe`, `show`, `view`, `fetch`, `query`, `count`, `check`, `lookup`, `status`); and the crawler's deletion
+words (English, Ukrainian, Russian) find nothing in the name or the title. Any other tool, whatever it claims
+(`send_email`, `deploy`, `deletefile`, a name with a look-alike letter), needs its exact name in `--allow-tools`, and
+`--allow-mutations` too when it is not claimed read-only with a clean name. The description is free text and takes no part
+in the decision.
+
+Classes: `read-claimed` (passes the rule above, and the only class that is proposed), `unknown` (no hint, or a read-only
+claim that the name rule does not trust; the table says why) and `mutating` (hint `false`, `destructiveHint: true`, or a name
+that reads as a deletion). Names from the server are untrusted text: a name with control or invisible characters, or two
+tools whose names are the same after case folding and normalization, are refused even when named. A tool the server
+changes after you saw it (a different description, schema or hint) is refused from then on, once the changed list has been
+passed to the guard (the command does not do that yet: it waits for the call runner).
+
+In this version the command only reads the server: asking for calls (`--allow-*`) ends with exit code `5`, because nothing
+was sent and nothing was tested. The guard and the single function that may send a call (`src/mcp-test/call.ts`) are in
+place for the runner that comes next; `mcp-calls.jsonl` will list only the calls that really went to the server (time,
+tool, reason, masked arguments, duration, result).
