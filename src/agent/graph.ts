@@ -359,9 +359,9 @@ export async function runExploreGraph(
       const msg = e instanceof Error ? e.message.split("\n")[0] : String(e);
       deps.onProgress?.(`exploreOverlays — skipped (${msg})`);
     }
-    // back to state-0. #252: also a new document for the crawler: reading the session for the write guard
-    // (storageState with IndexedDB) left Playwright's database connections open in the old one, where they would
-    // block an upgrade the app makes. No way to close them from here; a load ends them.
+    // back to state-0. #252: also a new document for the crawler: up to Playwright 1.61, reading the session for the
+    // write guard (storageState with IndexedDB) left Playwright's database connections open in the old one, where they
+    // would block an upgrade the app makes. 1.65 closes them; the load stays, since it is the way back to state-0 anyway.
     await deps.gateway.observe({ url }).catch(() => undefined);
   }
   const overlayText = formatOverlays(overlays ?? []);
