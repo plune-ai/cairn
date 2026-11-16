@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-16
+
 ### Changed
 
 - **Playwright is pinned to `~1.65.0`.** `playwright` and `@playwright/test` were `^1.60.0`, so a fresh install took
