@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Playwright is pinned to `~1.65.0`.** `playwright` and `@playwright/test` were `^1.60.0`, so a fresh install took
+  the newest minor on npm, and a trace it recorded did not open in a trace viewer of an older version. The range now
+  stays on 1.65.x, and a unit test keeps it there. With 1.65 the write guard of overlay exploration leaves no IndexedDB
+  connection open on the crawled page, and an IndexedDB record under the key 0 now goes over to the pressing browser
+  instead of stopping the guard.
+
 ## [0.11.1] - 2026-11-14
 
 ### Added

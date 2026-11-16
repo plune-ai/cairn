@@ -343,7 +343,7 @@ describe("what a press did never reaches the server later (integration, real Chr
     expect((await gateway.observe({ url: page })).ariaSnapshot).toContain("Sign in");
   }, 180_000);
 
-  it("#252: reading the session for the guard leaves IndexedDB connections open on the crawler's page; the graph's next load lets them go", async () => {
+  it("#252: reading the session for the guard leaves no IndexedDB connection open on the crawler's page", async () => {
     const page = lateWrites("idb");
     const study = await capture(gateway, page);
     const crawler = (backend as unknown as { page: Page }).page;
@@ -358,8 +358,9 @@ describe("what a press did never reaches the server later (integration, real Chr
     const upgrade = (): Promise<unknown> => crawler.evaluate(UPGRADE);
     expect(await upgrade()).toBe("upgraded"); // the app's own connection is closed: nothing holds it
     await exploreOverlays({ gateway, url: page, study });
-    // Known limit: Playwright's storageState({ indexedDB: true }) opens each database in this document and keeps it open
-    expect(await upgrade()).toBe("blocked");
+    // Up to Playwright 1.61 storageState({ indexedDB: true }) kept each database open in this document, and only the
+    // graph's next load let the app's upgrade through; from 1.65 on nothing is left open.
+    expect(await upgrade()).toBe("upgraded");
     await gateway.observe({ url: page }); // what runExploreGraph does right after exploring overlays
     expect(await upgrade()).toBe("upgraded");
   }, 180_000);
@@ -540,10 +541,28 @@ describe("what a press did never reaches the server later (integration, real Chr
     expect(server.writes).toEqual([]);
   }, 180_000);
 
-  it("IndexedDB that cannot be restored: that is the reason given, nothing is pressed, and no browser stays", async () => {
+  it("IndexedDB with a record under the key 0 goes over to the pressing browser (Playwright 1.61 could not restore it)", async () => {
+    const page = lateWrites("key-zero");
+    const study = await capture(gateway, page);
+    const out = await exploreOverlays({ gateway, url: page, study });
+    expect(out.guard).toBe("network");
+    expect(out.note ?? "").not.toContain("SESSION_RESTORE_FAILED");
+    await arrival();
+    expect(server.writes).toEqual([]);
+  }, 180_000);
+
+  it("a session the pressing browser cannot be given: that is the reason given, nothing is pressed, and no browser stays", async () => {
     const page = lateWrites("key-zero");
     const study = await capture(gateway, page);
     const started = browsersStarted();
+    // No session Playwright 1.65 fails to restore is known, so the pressing browser's new context is made to fail here;
+    // the crawler's own backend is left as it is.
+    type WithContext = { newContext(state?: unknown): Promise<unknown> };
+    const proto = PlaywrightLibBackend.prototype as unknown as WithContext;
+    const realNewContext = proto.newContext;
+    vi.spyOn(proto, "newContext").mockImplementation(function (this: unknown, state?: unknown) {
+      return this === backend ? realNewContext.call(this, state) : Promise.reject(new Error("Unable to restore IndexedDB"));
+    });
     const out = await exploreOverlays({ gateway, url: page, study });
     expect(out.guard).toBe("none");
     expect(out.note).toContain("the write guard did not start (SESSION_RESTORE_FAILED)");
