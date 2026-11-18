@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-11-19
+
 ### Fixed
 
 - **`--allow-read-only-hints` reads past a prefix every tool name shares**. A server that puts a
@@ -29,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A tool name that joins actions is not trusted on the claim.** With `--allow-read-only-hints`, a name with `and`,
   `or` or `then` as a separate word (`show_and_send_email`, `fetch_and_execute`) is refused as `claim not trusted`
   (`name joins actions (and, or, then)`), whatever its first word; naming it in `--allow-tools` still lets it through.
+
+### Security
+
+- **The GitHub Action passes `cairn-version` through the environment.** The input reached the shell as an expression
+  inside `run:`; it now goes through `env`, is quoted, and must be `latest` or a semver version, and a bad value is
+  refused without being echoed. `SECURITY.md` now says what leaves your machine: the pages of the app under test go to
+  the configured LLM provider.
 
 ## [0.11.2] - 2026-11-16
 
