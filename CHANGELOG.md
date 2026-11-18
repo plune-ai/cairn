@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`cairn mcp-test` works right after `npm i @plune-ai/cairn`.** The MCP client package `@modelcontextprotocol/sdk`
+  is now an optional dependency of the package, so it installs by default; if its install fails, the command still says
+  what to install (`npm i @modelcontextprotocol/sdk`).
 - **A tool name that joins actions is not trusted on the claim.** With `--allow-read-only-hints`, a name with `and`,
   `or` or `then` as a separate word (`show_and_send_email`, `fetch_and_execute`) is refused as `claim not trusted`
   (`name joins actions (and, or, then)`), whatever its first word; naming it in `--allow-tools` still lets it through.

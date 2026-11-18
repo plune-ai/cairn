@@ -6,7 +6,8 @@
 
 ## Before you start
 
-- You need the MCP client package once: `npm i @modelcontextprotocol/sdk` (the command says so when it is missing).
+- The MCP client package (`@modelcontextprotocol/sdk`) comes with `npm i @plune-ai/cairn` as an optional dependency. If
+  its install was skipped, the command says so and names the fix: `npm i @modelcontextprotocol/sdk`.
 - Have a **test account on a test server**. Calls run on the server you name and can change data; Cairn undoes nothing.
 - Put secrets in `--env KEY=VALUE` (stdio) or `--header "Name: Value"` (HTTP), never in the command after `--`. Their values
   are not saved or printed.

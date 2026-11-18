@@ -60,3 +60,10 @@ describe("optional Langfuse/OpenTelemetry (FIX D)", () => {
     }
   });
 });
+
+describe("MCP client package ships with the default install", () => {
+  it("lists @modelcontextprotocol/sdk in optionalDependencies, not devDependencies", () => {
+    expect(pkg.optionalDependencies ?? {}).toHaveProperty("@modelcontextprotocol/sdk");
+    expect(pkg.devDependencies ?? {}).not.toHaveProperty("@modelcontextprotocol/sdk");
+  });
+});
