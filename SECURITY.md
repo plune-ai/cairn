@@ -36,3 +36,15 @@ Saved sessions and run output can contain credentials and data from the target. 
 `runs/` are listed in `.gitignore`; keep them out of version control and out of shared CI
 artifacts. API runs write evidence, including response bodies, to `api-evidence.json`; only the
 secret values Cairn knows about and sensitive header names are masked there.
+
+## What leaves your machine
+
+Cairn decides what to do next by asking a language model, so what it sees of the target goes to the model provider
+you configured (and to the tracing backend, when one is set). Depending on the mode this includes the page's
+accessibility snapshot and text, screenshots when vision is on, and request and response bodies in API runs.
+Cairn scrubs the secret values it knows about (from your environment and knowledge files) before a model call, but
+it cannot recognise every piece of sensitive data a page shows.
+
+Do not point Cairn at an environment holding data that must not leave your organisation — real customer records,
+production credentials, personal data — unless your agreement with the provider allows it. Prefer a staging or
+test environment seeded with sample data.

@@ -1,0 +1,32 @@
+name: Dependency audit
+
+# The schedule catches a new advisory against an unchanged dependency, which no gate that fires on a change can see.
+# The pull request run fires only when the dependency set changes.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - package.json
+      - package-lock.json
+      - .github/workflows/audit.yml
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: npm audit (runtime dependencies, HIGH and above)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      # Reads package-lock.json; nothing is installed. --omit=dev: dev-only advisories are in tooling that is not
+      # shipped in the package.
+      - run: npm audit --omit=dev --audit-level=high
