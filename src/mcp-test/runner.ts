@@ -17,7 +17,7 @@ import { SENSITIVE } from "../api/guard.js";
 import type { ApiCaseTechnique } from "../api/cases.js";
 import { findAdvice, type AdviceFinding } from "./advice.js";
 import { guardedToolCall, appendCallLog, type CallError, type ToolRpc } from "./call.js";
-import type { McpCallGuard } from "./guard.js";
+import { budgetFlag, type McpCallGuard } from "./guard.js";
 import { safeText, type McpToolEntry } from "./model.js";
 import { OracleHost, scanSchema } from "./schema.js";
 import { maskSecrets } from "./secrets.js";
@@ -310,9 +310,9 @@ export async function runCases(cases: readonly RunnableCase[], o: RunnerOptions)
         ...(o.logDir ? { log: (e) => appendCallLog(o.logDir as string, e) } : {}),
       });
       if (!call.sent) {
-        // The guard did not refuse the case itself: the run's time ran out before its turn.
-        if (call.decision.reason === "time budget exhausted") finish(c, "could-not-run", "the time budget ran out before this case was sent (--time-budget)");
-        else finish(c, "not-sent", `the call guard refused it: ${call.decision.reason}`);
+        // A spent budget is one state whichever budget it was, and the reason names the flag.
+        const flag = budgetFlag(call.decision.reason);
+        finish(c, "not-sent", `the call guard refused it: ${call.decision.reason}${flag ? ` (${flag})` : ""}`);
         continue;
       }
       const answer = classify(link.transport, call.entry.result, call.error, call.response, max);

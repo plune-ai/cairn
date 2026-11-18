@@ -238,7 +238,12 @@ The adversarial styles `psycho` and `hacker` are never sent on this rule: they n
 A tool that nobody named is held to more. `--allow-read-only-hints` lets it through only when it also meets the rule above
 **and** its name is plain ASCII letters, digits, `_`, `-` and `.` and its first word (after splitting `getReport`,
 `get_report`, `get-report` into words) is one of `get`, `list`, `read`, `search`, `find`, `describe`, `show`, `view`,
-`fetch`, `query`, `count`, `check`, `lookup`, `status`. A tool that meets the rule but not this one is refused as `claim not
+`fetch`, `query`, `count`, `check`, `lookup`, `status`. When every tool of the server (two or more) starts with the same
+word that is not a read verb, such as `plune` in `plune_get` and `plune_list_runs`, that word is a namespace and the read
+verb must be the word right after it: `plune_get` passes, `plune_send_report` and `plune_mission_get` do not. A word that
+only some tools share is not skipped. A name that joins two actions with `and`, `or` or `then` as a separate word
+(`show_and_send_email`, `fetch_and_execute`, `getOrCreateUser`) is never trusted on the claim, whatever its first word.
+A tool that meets the rule but not this one is refused as `claim not
 trusted`; naming it in `--allow-tools` lets it through. Names from the server are untrusted text: a name with control or
 invisible characters, or two tools whose names are the same after case folding, are refused even when named.
 
@@ -249,7 +254,7 @@ Limits, all enforced before a call is sent:
 | `--max-calls <n>` | 100 | most calls sent (a retry would count; Cairn does not retry). When it runs out, the rest are not sent and the exit code is `4` |
 | `--rps <n>` | 2 | calls per second (the re-read of the tool list before each call takes a slot too) |
 | `--call-timeout <seconds>` | 30 | how long to wait for one call |
-| `--time-budget <seconds>` | none | time for the whole run of calls; when it runs out, the remaining cases are `could-not-run` and the exit code is `4` unless a case failed |
+| `--time-budget <seconds>` | none | time for the whole run of calls; when it runs out, the rest are not sent, as with `--max-calls`, and the exit code is `4` unless a case failed |
 | `--max-response-bytes <n>` | 262144 | the most bytes of one answer that is read (1 to 67108864, a plain decimal whole number) |
 
 ### Example: read-only tool by name
@@ -376,8 +381,8 @@ In `report.json` the case `search_notes · no-credentials` is `passed`: the serv
 |---|---|
 | `passed` | the server answered as the case expects |
 | `failed` | the server's own answer broke a rule written in the case, or its process exited during the call while it had been answering before |
-| `not-sent` | the call guard refused it (a tool not allowed, a budget, a tool that changed since permission). Only the guard's refusal is `not-sent` |
-| `could-not-run` | no answer, or an answer that cannot be judged (an HTTP 4xx status, a transport error, an answer that is not a JSON object): timeout, closed connection, server gone, an interrupt during the call, a tool list that could not be re-read, or the run stopped or ran out of `--time-budget` before it |
+| `not-sent` | the call guard refused it (a tool not allowed, a budget, a tool that changed since permission). Only the guard's refusal is `not-sent`. A case a budget stopped names the flag in its reason: `budget exhausted (--max-calls)` or `time budget exhausted (--time-budget)` |
+| `could-not-run` | no answer, or an answer that cannot be judged (an HTTP 4xx status, a transport error, an answer that is not a JSON object): timeout, closed connection, server gone, an interrupt during the call, a tool list that could not be re-read, or the run stopped before it |
 | `needs-review` | the server answered, but a person has to judge |
 
 Rules of the verdict:
@@ -474,7 +479,7 @@ cairn mcp-test --out runs/x4 --allow-tools echo --max-calls 2 -- node ./my-serve
   […]
   Sent: 2, refused: 13.
   […]
-  ✗ The call budget ran out: the rest were not sent and are not counted as passed.
+  ✗ The call budget ran out (--max-calls): the rest were not sent and are not counted as passed.
 exit 4
 ```
 
@@ -608,12 +613,12 @@ Messages copied from real runs. Folders named `runs/…` are the ones given with
 | `✗ The server closed the connection before it answered initialize.` | the command does not start the server; the lines after it are the server's own stderr | run the same command by hand |
 | `✗ Nothing was proven: no case passed (none was sent, or every answer needed a person or never came). This is not a pass.` (exit `5`) | `--allow-mutations` was given without a tool name | add `--allow-tools <name>` |
 | `⚠ --adversarial: unknown style "hackr" is ignored (styles: normal, curious, psycho, hacker).` | a misspelt style | styles are lower-case: `normal`, `curious`, `psycho`, `hacker` |
-| `✗ The call budget ran out: the rest were not sent and are not counted as passed.` (exit `4` or `1`) | `--max-calls` was too small for the cases | raise it; the exit code is `1` when a case also failed |
+| `✗ The call budget ran out (--max-calls): the rest were not sent and are not counted as passed.` (exit `4` or `1`) | the budget in brackets (`--max-calls` or `--time-budget`) was too small for the cases | raise it; the exit code is `1` when a case also failed |
 
 When the guard refuses a case, the reason is in `report.md` and `mcp-guard.json`. The reasons are: `not allowed` (the tool is
 not named and not trusted), `mutations not allowed`, `destructive name`, `not in the model`, `ambiguous name`,
-`unsafe name`, `claim not trusted`, `changed since permission`, `budget exhausted` and `time budget exhausted` (the last
-one is shown as `could-not-run` in the report).
+`unsafe name`, `claim not trusted`, `changed since permission`, `budget exhausted` and `time budget exhausted`. Both
+budget reasons make the case `not-sent`, and `mcp-guard.json` names the budget that ran out in `budgetExhaustedBy`.
 
 ## Flag reference
 

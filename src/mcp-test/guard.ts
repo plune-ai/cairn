@@ -97,11 +97,33 @@ export const READ_VERBS: readonly string[] = ["get", "list", "read", "search", "
 /** Plain ASCII only: a look-alike letter from another alphabet is not accepted on the claim. */
 const PLAIN_NAME = /^[A-Za-z0-9_.-]+$/;
 
-/** Why a tool that claims read-only is still not trusted on the claim, if it is not. */
-export function claimProblem(name: string): string | undefined {
+/** Words that join two actions in one name (`show_and_send_email`): such a tool is not trusted on the claim. */
+export const CONJUNCTIONS: readonly string[] = ["and", "or", "then"];
+
+/**
+ * The first word that EVERY tool name of the server starts with (`plune` in `plune_get`, `plune_list_runs`), when there
+ * are at least two tools and each has a word after it. Undefined otherwise. A namespace the server puts on all its tools
+ * says nothing about one tool, so the read verb is looked for after it; a word only some tools share is not skipped.
+ */
+export function sharedPrefix(names: readonly string[]): string | undefined {
+  if (names.length < 2) return undefined;
+  const words = names.map((n) => nameWords(n).split(" "));
+  const first = words[0]?.[0];
+  return first && words.every((w) => w.length > 1 && w[0] === first) ? first : undefined;
+}
+
+/**
+ * Why a tool that claims read-only is still not trusted on the claim, if it is not. With a shared `prefix` (see
+ * `sharedPrefix`) the read verb must be the word right after it; never any word further on.
+ */
+export function claimProblem(name: string, prefix?: string): string | undefined {
   if (!PLAIN_NAME.test(name)) return "name has characters outside ASCII letters, digits, _ - .";
-  const first = nameWords(name).split(" ")[0] ?? "";
-  return READ_VERBS.includes(first) ? undefined : "name does not start with a read verb";
+  const words = nameWords(name).split(" ");
+  if (words.some((w) => CONJUNCTIONS.includes(w))) return "name joins actions (and, or, then)";
+  const first = words[0] ?? "";
+  if (READ_VERBS.includes(first)) return undefined;
+  if (prefix === undefined || first !== prefix) return "name does not start with a read verb";
+  return READ_VERBS.includes(words[1] ?? "") ? undefined : `name has no read verb after the shared prefix "${safeText(prefix, 40)}"`;
 }
 
 export type ToolClass = "read-claimed" | "unknown" | "mutating";
@@ -135,6 +157,7 @@ const foldName = (n: string): string => n.normalize("NFKC").toLowerCase();
 export function assessTools(tools: readonly McpToolEntry[]): ToolAssessment[] {
   const count = new Map<string, number>();
   for (const t of tools) count.set(foldName(t.name ?? ""), (count.get(foldName(t.name ?? "")) ?? 0) + 1);
+  const prefix = sharedPrefix(tools.map((t) => t.name ?? ""));
   return tools.map((t) => {
     const name = t.name ?? "";
     const a = t.annotations ?? {};
@@ -148,7 +171,7 @@ export function assessTools(tools: readonly McpToolEntry[]): ToolAssessment[] {
     if (destructiveName || readOnlyHint === false || destructiveHint === true) cls = "mutating";
     else cls = "unknown";
     const claimClean = readOnlyHint === true && !destructiveName && destructiveHint !== true && !unsafeName && !ambiguous;
-    const problem = claimClean ? claimProblem(name) : undefined;
+    const problem = claimClean ? claimProblem(name, prefix) : undefined;
     if (claimClean && !problem) cls = "read-claimed";
     const mismatch =
       readOnlyHint === true && destructiveName
@@ -225,6 +248,13 @@ export interface McpGuardOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+export type BudgetFlag = "--max-calls" | "--time-budget";
+
+/** The flag behind a budget refusal, or undefined for any other decision. */
+export function budgetFlag(reason: McpCallDecision["reason"]): BudgetFlag | undefined {
+  return reason === "budget exhausted" ? "--max-calls" : reason === "time budget exhausted" ? "--time-budget" : undefined;
+}
+
 export interface McpGuardReport {
   policy: { allowTools: string[]; allowReadOnlyHints: boolean; allowMutations: boolean; maxCalls: number; rps: number; timeBudgetMs?: number };
   banner?: string;
@@ -238,6 +268,8 @@ export interface McpGuardReport {
   sent: number;
   denied: number;
   budgetExhausted: boolean;
+  /** Which budget ran out first, when one did. */
+  budgetExhaustedBy?: BudgetFlag;
   notes: string[];
 }
 
@@ -262,7 +294,7 @@ export class McpCallGuard {
   private readonly decisions: McpCallDecision[] = [];
   private used = 0;
   private nextSlot = 0;
-  private exhausted = false;
+  private exhaustedBy: BudgetFlag | undefined;
 
   constructor(opts: McpGuardOptions) {
     // A limit that is NaN, zero, negative or infinite would make the budget or the rate vanish: refused.
@@ -350,10 +382,10 @@ export class McpCallGuard {
     let d = this.decide(call);
     if (d.allowed) {
       if (this.timeBudgetMs !== undefined && this.now() - this.startedAt >= this.timeBudgetMs) {
-        this.exhausted = true;
+        this.exhaustedBy ??= "--time-budget";
         d = { ...d, allowed: false, reason: "time budget exhausted" };
       } else if (this.used >= this.maxCalls) {
-        this.exhausted = true;
+        this.exhaustedBy ??= "--max-calls";
         d = { ...d, allowed: false, reason: "budget exhausted" };
       }
     }
@@ -393,14 +425,15 @@ export class McpCallGuard {
       decisions: [...this.decisions],
       sent,
       denied: this.decisions.length - sent,
-      budgetExhausted: this.exhausted,
+      budgetExhausted: this.exhaustedBy !== undefined,
+      ...(this.exhaustedBy ? { budgetExhaustedBy: this.exhaustedBy } : {}),
       notes,
     };
   }
 
   /** 4 when a budget ran out, 5 when nothing was sent, 0 otherwise (a failed case is the runner's 1). */
   exitCode(): number {
-    if (this.exhausted) return CALL_BUDGET_EXIT_CODE;
+    if (this.exhaustedBy) return CALL_BUDGET_EXIT_CODE;
     return this.decisions.some((d) => d.allowed) ? 0 : NOTHING_SENT_EXIT_CODE;
   }
 }
@@ -425,6 +458,6 @@ export function renderGuardReport(r: McpGuardReport): string[] {
   for (const d of r.decisions.filter((x) => x.allowed)) lines.push(`  allowed ${safeText(d.tool, 60)}: ${d.reason}`);
   lines.push(...renderMismatches(r.mismatches));
   for (const n of r.notes) lines.push(`  Note: ${n}`);
-  if (r.budgetExhausted) lines.push("  ✗ The call budget ran out: the rest were not sent and are not counted as passed.");
+  if (r.budgetExhausted) lines.push(`  ✗ The call budget ran out${r.budgetExhaustedBy ? ` (${r.budgetExhaustedBy})` : ""}: the rest were not sent and are not counted as passed.`);
   return lines;
 }
