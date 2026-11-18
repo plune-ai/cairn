@@ -70,7 +70,7 @@ jobs:
 | `api-spec`       | —                                | OpenAPI 3.x spec (path or URL). When set, runs `cairn api --spec` after the UI step; `url` may then be omitted for an API-only job. |
 | `min-coverage`   | —                                | Minimum share (0-100) of spec operations that must be covered; below it the step fails with exit code `3`. Needs `api-spec`. |
 | `count-partial`  | `false`                          | Count partially covered operations as covered for `min-coverage`. |
-| `cairn-version`  | `latest`                         | npm version/tag of `@plune-ai/cairn` to install. |
+| `cairn-version`  | `latest`                         | Version of `@plune-ai/cairn` to install from npm: `latest` or an exact version such as `0.11.2`. |
 | `install-browsers` | `true`                         | Install Playwright Chromium before running. |
 
 ## Coverage gate
