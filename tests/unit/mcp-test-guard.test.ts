@@ -283,6 +283,21 @@ describe("CLI · mcp-test · guard · budget and rate (AC-6, AC-7)", () => {
     expect((await g.admit({ tool: "get_report" })).reason).toBe("time budget exhausted");
     expect(g.exitCode()).toBe(4);
   });
+
+  it("the report names the budget that ran out", async () => {
+    let t = 0;
+    const byTime = make({ allowTools: ["get_report"], timeBudgetMs: 1000, now: () => t, sleep: async () => undefined });
+    await byTime.admit({ tool: "get_report" });
+    t = 1500;
+    await byTime.admit({ tool: "get_report" });
+    expect(byTime.report().budgetExhaustedBy).toBe("--time-budget");
+    expect(renderGuardReport(byTime.report()).join(" ")).toContain("✗ The call budget ran out (--time-budget)");
+    const byCalls = make({ allowTools: ["get_report"], maxCalls: 1, now: () => 0, sleep: async () => undefined });
+    await byCalls.admit({ tool: "get_report" });
+    await byCalls.admit({ tool: "get_report" });
+    expect(byCalls.report().budgetExhaustedBy).toBe("--max-calls");
+    expect(renderGuardReport(byCalls.report()).join(" ")).toContain("✗ The call budget ran out (--max-calls)");
+  });
 });
 
 describe("CLI · mcp-test · guard · the report (AC-9)", () => {

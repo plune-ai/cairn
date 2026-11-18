@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--allow-read-only-hints` reads past a prefix every tool name shares**. A server that puts a
+  namespace on all its tools (`plune_get`, `plune_list_runs`) had no tool trusted on its claim, because the first word
+  was the namespace. When every tool of the server (two or more) starts with the same word that is not a read verb, the
+  read verb is now looked for in the word right after it; a tool without a read verb there is refused as before
+  (`name has no read verb after the shared prefix "plune"`), and a word only some tools share is not skipped. A shared
+  word that names an action (`send`, `run`, `execute`, `update`, ...) is never skipped: `send_get_x` on a server whose
+  tools all start with `send` is refused (`the shared prefix "send" is an action word`).
+- **A case a budget stopped is `not-sent` for both budgets**. One stopped by `--time-budget` was
+  counted as `could-not-run`, one stopped by `--max-calls` as `not-sent`. Both are `not-sent` now, the reason names the
+  flag (`budget exhausted (--max-calls)`, `time budget exhausted (--time-budget)`), the console line reads
+  `✗ The call budget ran out (--time-budget)`, and `mcp-guard.json` has `budgetExhaustedBy`.
+
+### Changed
+
+- **A tool name that joins actions is not trusted on the claim.** With `--allow-read-only-hints`, a name with `and`,
+  `or` or `then` as a separate word (`show_and_send_email`, `fetch_and_execute`) is refused as `claim not trusted`
+  (`name joins actions (and, or, then)`), whatever its first word; naming it in `--allow-tools` still lets it through.
+
 ## [0.11.2] - 2026-11-16
 
 ### Changed

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GuardUsageError, McpCallGuard, READ_VERBS, assessTools, renderProposal } from "../../src/mcp-test/guard.js";
+import { ACTION_WORDS, GuardUsageError, McpCallGuard, READ_VERBS, assessTools, renderProposal } from "../../src/mcp-test/guard.js";
 import { describeArguments } from "../../src/mcp-test/call.js";
 import { safeText, type McpToolEntry } from "../../src/mcp-test/model.js";
 import { runMcpTest } from "../../src/mcp-test/run.js";
@@ -101,6 +101,84 @@ describe("CLI · mcp-test · guard · the trust flag is an allow-list", () => {
     const tools = [ro("delete_x")];
     expect(new McpCallGuard({ tools, allowTools: ["delete_x"] }).decide({ tool: "delete_x" }).allowed).toBe(false);
     expect(new McpCallGuard({ tools, allowTools: ["delete_x"], allowMutations: true }).decide({ tool: "delete_x" }).allowed).toBe(true);
+  });
+});
+
+describe("CLI · mcp-test · guard · a prefix shared by every tool name", () => {
+  const trusted = (tools: McpToolEntry[], name: string): boolean => new McpCallGuard({ tools, allowReadOnlyHints: true }).decide({ tool: name }).allowed;
+  const PREFIXED = [ro("plune_get"), ro("plune_list_runs"), ro("plune-search"), ro("pluneShowRun"), ro("plune_mission_get"), ro("plune_send_report"), ro("plune_run_sql")];
+
+  it.each([["plune_get"], ["plune_list_runs"], ["plune-search"], ["pluneShowRun"]])("%s: a read verb after the shared prefix is allowed on the claim", (name) => {
+    expect(assessTools(PREFIXED).find((a) => a.name === name)).toMatchObject({ class: "read-claimed", proposed: true });
+    expect(trusted(PREFIXED, name)).toBe(true);
+  });
+
+  it.each([["plune_send_report"], ["plune_run_sql"], ["plune_mission_get"]])("%s: no read verb right after the shared prefix is refused on the claim", (name) => {
+    expect(assessTools(PREFIXED).find((a) => a.name === name)).toMatchObject({ class: "unknown", proposed: false });
+    expect(trusted(PREFIXED, name)).toBe(false);
+  });
+
+  it("the prefix is shown in the reason of a refused tool", () => {
+    expect(renderProposal(assessTools(PREFIXED)).join("\n")).toContain('plune_send_report | unknown | no (claims read-only; name has no read verb after the shared prefix "plune")');
+  });
+
+  it("a prefix that only some tools share is not skipped: those tools are judged as before", () => {
+    const tools = [ro("plune_get"), ro("plune_list"), ro("get_report")];
+    expect(trusted(tools, "plune_get")).toBe(false);
+    expect(trusted(tools, "get_report")).toBe(true);
+  });
+
+  it("one tool alone has no shared prefix", () => {
+    expect(trusted([ro("plune_get")], "plune_get")).toBe(false);
+  });
+
+  it("a prefix that is itself a read verb changes nothing", () => {
+    const tools = [ro("get_report"), ro("get_send_mail")];
+    expect(trusted(tools, "get_report")).toBe(true);
+    expect(trusted(tools, "get_send_mail")).toBe(true); // as before the prefix rule: the first word is a read verb
+  });
+
+  it("a deleting name stays mutating after the prefix", () => {
+    const tools = [ro("plune_get"), ro("plune_delete_run")];
+    expect(trusted(tools, "plune_delete_run")).toBe(false);
+    expect(assessTools(tools)[1]?.class).toBe("mutating");
+  });
+
+  it.each([
+    [["send_get_x", "send_list_y"], "send"],
+    [["run_list_jobs", "run_get_job"], "run"],
+    [["execute_get", "execute_list"], "execute"],
+    [["update_get_z", "update_list_z"], "update"],
+  ])("%j: a shared prefix that is an action word is not skipped", (names, prefix) => {
+    const tools = names.map((n) => ro(n));
+    for (const n of names) expect(trusted(tools, n), n).toBe(false);
+    expect(assessTools(tools)[0]?.claimNote).toBe(`claims read-only; the shared prefix "${prefix}" is an action word`);
+  });
+
+  it("the action words are one exported list", () => {
+    for (const w of ["send", "run", "execute", "update", "create", "write", "deploy", "pay"]) expect(ACTION_WORDS).toContain(w);
+    for (const v of READ_VERBS) expect(ACTION_WORDS).not.toContain(v);
+  });
+});
+
+describe("CLI · mcp-test · guard · a name that joins actions", () => {
+  const JOINED = ["show_and_send_email", "fetch_and_execute", "get_or_create_user", "list_then_tag", "readThenWrite", "plune_get_and_send"];
+
+  it.each(JOINED.map((n) => [n]))("%s is not allowed on the claim, and the reason says why", (name) => {
+    const tools = name.startsWith("plune") ? [ro(name), ro("plune_get")] : [ro(name)];
+    const a = assessTools(tools).find((x) => x.name === name);
+    expect(a).toMatchObject({ class: "unknown", proposed: false, claimClean: true });
+    expect(a?.claimNote).toMatch(/joins actions/);
+    expect(new McpCallGuard({ tools, allowReadOnlyHints: true }).decide({ tool: name })).toMatchObject({ allowed: false, reason: "claim not trusted" });
+  });
+
+  it.each(JOINED.map((n) => [n]))("%s is allowed by its exact name in --allow-tools", (name) => {
+    const tools = [ro(name)];
+    expect(new McpCallGuard({ tools, allowTools: [name], allowReadOnlyHints: true }).decide({ tool: name })).toMatchObject({ allowed: true, basis: "named" });
+  });
+
+  it.each([["get_order"], ["list_vendors"], ["show_brand"], ["get_android_info"], ["fetch_theme"]])("%s: a word that only contains a conjunction does not count", (name) => {
+    expect(new McpCallGuard({ tools: [ro(name)], allowReadOnlyHints: true }).decide({ tool: name }).allowed).toBe(true);
   });
 });
 

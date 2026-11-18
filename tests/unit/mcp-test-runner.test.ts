@@ -409,12 +409,17 @@ describe("CLI · mcp-test · runner · restarts, budget, and the stop (review 7)
     expect(r.restarts).toBe(1);
   }, 60000);
 
-  it("cases that came after the time budget ran out are could-not-run with the budget reason, not not-sent", async () => {
+  // A case a budget stopped before it was sent is in one state whichever budget it was, and the
+  // reason names the budget.
+  it.each([
+    ["--time-budget", { timeBudgetMs: 450 }],
+    ["--max-calls", { maxCalls: 1 }],
+  ] as const)("cases stopped by %s before they were sent are not-sent, and the reason names that budget", async (flag, budget) => {
     const h = await harness();
     let t = 0;
-    const r = await h.run([c("echo", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" })], { guard: { timeBudgetMs: 450, now: () => (t += 100) } });
-    expect(r.results.map((x) => x.state)).toEqual(["passed", "could-not-run"]);
-    expect(r.results[1]?.reason).toMatch(/time budget/);
+    const r = await h.run([c("echo", "Positive", { q: "a" }), c("echo", "Positive", { q: "b" })], { guard: { ...budget, now: () => (t += 100) } });
+    expect(r.results.map((x) => x.state)).toEqual(["passed", "not-sent"]);
+    expect(r.results[1]?.reason).toContain(`(${flag})`);
     expect(h.calls()).toHaveLength(1);
   });
 });
