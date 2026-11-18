@@ -101,6 +101,17 @@ const PLAIN_NAME = /^[A-Za-z0-9_.-]+$/;
 export const CONJUNCTIONS: readonly string[] = ["and", "or", "then"];
 
 /**
+ * Words that name an action. A prefix every tool shares is skipped only when it is not one of these: `send_get_x` on a
+ * server whose tools all start with `send` is not trusted on the claim. Known ceiling: an action word missing here is
+ * skipped like a namespace; the read verb right after it is still required.
+ */
+export const ACTION_WORDS: readonly string[] = [
+  "create", "add", "insert", "update", "edit", "modify", "patch", "set", "put", "post", "write", "save", "upload", "send",
+  "publish", "submit", "run", "exec", "execute", "invoke", "call", "trigger", "start", "stop", "restart", "kill", "deploy",
+  "apply", "approve", "reject", "merge", "push", "move", "rename", "copy", "transfer", "pay", "charge", "buy",
+];
+
+/**
  * The first word that EVERY tool name of the server starts with (`plune` in `plune_get`, `plune_list_runs`), when there
  * are at least two tools and each has a word after it. Undefined otherwise. A namespace the server puts on all its tools
  * says nothing about one tool, so the read verb is looked for after it; a word only some tools share is not skipped.
@@ -123,6 +134,7 @@ export function claimProblem(name: string, prefix?: string): string | undefined 
   const first = words[0] ?? "";
   if (READ_VERBS.includes(first)) return undefined;
   if (prefix === undefined || first !== prefix) return "name does not start with a read verb";
+  if (ACTION_WORDS.includes(prefix)) return `the shared prefix "${safeText(prefix, 40)}" is an action word`;
   return READ_VERBS.includes(words[1] ?? "") ? undefined : `name has no read verb after the shared prefix "${safeText(prefix, 40)}"`;
 }
 

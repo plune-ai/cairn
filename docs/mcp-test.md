@@ -241,7 +241,9 @@ A tool that nobody named is held to more. `--allow-read-only-hints` lets it thro
 `fetch`, `query`, `count`, `check`, `lookup`, `status`. When every tool of the server (two or more) starts with the same
 word that is not a read verb, such as `plune` in `plune_get` and `plune_list_runs`, that word is a namespace and the read
 verb must be the word right after it: `plune_get` passes, `plune_send_report` and `plune_mission_get` do not. A word that
-only some tools share is not skipped. A name that joins two actions with `and`, `or` or `then` as a separate word
+only some tools share is not skipped, and neither is one that names an action (`send`, `run`, `execute`, `update`,
+`create`, `write`, `deploy` and the rest of the guard's list): on a server whose tools all start with `send`,
+`send_get_x` is refused with `the shared prefix "send" is an action word`. A name that joins two actions with `and`, `or` or `then` as a separate word
 (`show_and_send_email`, `fetch_and_execute`, `getOrCreateUser`) is never trusted on the claim, whatever its first word.
 A tool that meets the rule but not this one is refused as `claim not
 trusted`; naming it in `--allow-tools` lets it through. Names from the server are untrusted text: a name with control or

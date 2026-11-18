@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace on all its tools (`plune_get`, `plune_list_runs`) had no tool trusted on its claim, because the first word
   was the namespace. When every tool of the server (two or more) starts with the same word that is not a read verb, the
   read verb is now looked for in the word right after it; a tool without a read verb there is refused as before
-  (`name has no read verb after the shared prefix "plune"`), and a word only some tools share is not skipped.
+  (`name has no read verb after the shared prefix "plune"`), and a word only some tools share is not skipped. A shared
+  word that names an action (`send`, `run`, `execute`, `update`, ...) is never skipped: `send_get_x` on a server whose
+  tools all start with `send` is refused (`the shared prefix "send" is an action word`).
 - **A case a budget stopped is `not-sent` for both budgets**. One stopped by `--time-budget` was
   counted as `could-not-run`, one stopped by `--max-calls` as `not-sent`. Both are `not-sent` now, the reason names the
   flag (`budget exhausted (--max-calls)`, `time budget exhausted (--time-budget)`), the console line reads

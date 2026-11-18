@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, unlinkSy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GuardUsageError, McpCallGuard, READ_VERBS, assessTools, renderProposal } from "../../src/mcp-test/guard.js";
+import { ACTION_WORDS, GuardUsageError, McpCallGuard, READ_VERBS, assessTools, renderProposal } from "../../src/mcp-test/guard.js";
 import { describeArguments } from "../../src/mcp-test/call.js";
 import { safeText, type McpToolEntry } from "../../src/mcp-test/model.js";
 import { runMcpTest } from "../../src/mcp-test/run.js";
@@ -142,6 +142,22 @@ describe("CLI · mcp-test · guard · a prefix shared by every tool name", () =>
     const tools = [ro("plune_get"), ro("plune_delete_run")];
     expect(trusted(tools, "plune_delete_run")).toBe(false);
     expect(assessTools(tools)[1]?.class).toBe("mutating");
+  });
+
+  it.each([
+    [["send_get_x", "send_list_y"], "send"],
+    [["run_list_jobs", "run_get_job"], "run"],
+    [["execute_get", "execute_list"], "execute"],
+    [["update_get_z", "update_list_z"], "update"],
+  ])("%j: a shared prefix that is an action word is not skipped", (names, prefix) => {
+    const tools = names.map((n) => ro(n));
+    for (const n of names) expect(trusted(tools, n), n).toBe(false);
+    expect(assessTools(tools)[0]?.claimNote).toBe(`claims read-only; the shared prefix "${prefix}" is an action word`);
+  });
+
+  it("the action words are one exported list", () => {
+    for (const w of ["send", "run", "execute", "update", "create", "write", "deploy", "pay"]) expect(ACTION_WORDS).toContain(w);
+    for (const v of READ_VERBS) expect(ACTION_WORDS).not.toContain(v);
   });
 });
 
