@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`cairn mcp-test --propose-scenarios`**: one model call proposes agent scenarios for `plune.yaml` (a request, the
+  tool it should lead to, and negative requests that must lead to no call). Every proposal is checked against the model
+  of the server before it is written: an unknown tool, arguments that do not fit the tool's `inputSchema`, a call of a
+  tool that may change data without `changes_data: true`, a request that repeats the tool name or is already in
+  `plune.yaml` (`--plune-config`) are rejected with the reason. The scenarios go to
+  `plune.mcp-scenarios.proposed.yaml`, each `proposed: true` and `disabled: true`, and to `scenarios/report.json` for
+  `plune ingest` and the review queue; none is run, `plune.yaml` is only read. The cost is printed and written to
+  `mcp-scenarios.json`. Without the flag nothing changes and no model is asked.
+
 ## [0.11.3] - 2026-11-19
 
 ### Fixed

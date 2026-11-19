@@ -21,6 +21,9 @@ import { type CaseResult, DEFAULT_MAX_RESPONSE_BYTES, type Link, type RunnableCa
 import { discoverTools } from "./discover.js";
 import { CASES_FILE, DEFAULT_MAX_CASES_PER_TOOL, dropMaskedCases, generateMcpCases, renderCasesSummary } from "./cases.js";
 import { canonicalModel, renderModelSummary, safeText, serializeCanonical, sortKeys, type McpModel } from "./model.js";
+import type { StructuredInvoke } from "../llm/structured.js";
+import type { CostReport } from "../llm/cost.js";
+import { askForProposals, buildScenarioReport, checkProposals, PROPOSED_FILE, renderProposedYaml, SCENARIOS_DIR, SCENARIOS_SUMMARY_FILE } from "./scenarios.js";
 import {
   DEFAULT_CALL_RPS,
   DEFAULT_MAX_CALLS,
@@ -83,6 +86,12 @@ export interface McpTestOptions {
   countPartial?: boolean;
   /** The most of one answer that is kept (bytes). */
   maxResponseBytes?: string | number;
+  /** Ask a model for agent scenarios (one paid call); needs `propose`. */
+  proposeScenarios?: boolean;
+  /** The `plune.yaml` whose scenarios are not proposed again (default `plune.yaml` in the working directory). */
+  pluneConfig?: string;
+  /** The model for `proposeScenarios` and what it has cost so far; the modality builds it from the provider settings. */
+  propose?: { invoke: StructuredInvoke; cost: () => CostReport };
   signal?: AbortSignal;
   importer?: (specifier: string) => Promise<unknown>;
 }
@@ -192,6 +201,9 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     ...(opts.adversarialMaxString !== undefined ? { maxStringLength: parseDecimal("--adversarial-max-string", opts.adversarialMaxString) } : {}),
     ...(opts.adversarialMaxDepth !== undefined ? { maxDepth: parseDecimal("--adversarial-max-depth", opts.adversarialMaxDepth) } : {}),
   });
+  if (opts.proposeScenarios === true && !opts.propose) {
+    throw new Error("--propose-scenarios needs a model provider (a key such as ANTHROPIC_API_KEY or OPENROUTER_API_KEY, see LLM_PROFILE). Without --propose-scenarios the command makes no model call and costs nothing.");
+  }
   const callsRequested = allowTools.length > 0 || opts.allowReadOnlyHints === true || opts.allowMutations === true;
   const headers = parseHeaders(opts.header);
   const env = parseEnv(opts.env);
@@ -351,6 +363,43 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     }
     for (const e of cases.errors) err(`✗ ${e.message}\n`);
     if (unknownExamples.length || cases.errors.length) return { exitCode: 1, outDir, model, pid };
+    // Agent scenarios: one model call over the masked model; nothing is run, plune.yaml is only read.
+    let proposeCode = 0;
+    if (opts.proposeScenarios === true && opts.propose) {
+      const planFile = resolve(opts.pluneConfig ?? "plune.yaml");
+      const planInfo = await stat(planFile).catch(() => undefined);
+      const existing = planInfo?.isFile() && planInfo.size <= MAX_EXAMPLES_BYTES ? await readFile(planFile, "utf8") : undefined;
+      err(`▸ Asking the model for agent scenarios (one paid call)…\n`);
+      let raw;
+      try {
+        raw = await askForProposals(opts.propose.invoke, model.tools);
+      } catch (e) {
+        err(`✗ --propose-scenarios: ${safeText(mask((e as Error).message), 300)}\n`);
+        raw = undefined;
+      }
+      const cost = opts.propose.cost();
+      if (raw === undefined) {
+        proposeCode = 1;
+      } else {
+        const checked = maskStrings(checkProposals(raw, model.tools, existing), secrets);
+        const server = safeText(model.serverInfo.name, 60) || "server";
+        await writeFiles([
+          [PROPOSED_FILE, renderProposedYaml(server, checked.accepted)],
+          [SCENARIOS_SUMMARY_FILE, `${JSON.stringify({ accepted: checked.accepted.length, rejected: checked.rejected, cost }, null, 2)}\n`],
+        ]);
+        await mkdir(join(outDir, SCENARIOS_DIR), { recursive: true });
+        const report = buildScenarioReport(`${basename(outDir)}-scenarios`, maskSecrets(url ?? (command?.[0] ?? ""), secrets), server, checked.accepted, cost);
+        await writeFile(join(outDir, SCENARIOS_DIR, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+        out(`  Scenarios: ${checked.accepted.length} proposed (all disabled), ${checked.rejected.length} rejected: ${join(outDir, PROPOSED_FILE).replace(/\\/g, "/")}\n`);
+        for (const r of checked.rejected) out(`    rejected ${safeText(r.id, 60)}: ${safeText(r.reason, 200)}\n`);
+        out(`  Review queue: plune ingest ${join(outDir, SCENARIOS_DIR).replace(/\\/g, "/")}\n`);
+        if (model.tools.length >= 2 && !checked.accepted.some((s) => s.kind === "negative")) {
+          err("✗ --propose-scenarios: no negative scenario passed the checks; a server with two or more tools needs one. Write one by hand.\n");
+          proposeCode = 1;
+        }
+      }
+      out(`  Proposals cost: ${cost.totalCostUsd === null ? "n/a (price unknown)" : `$${cost.totalCostUsd.toFixed(4)}`} (${cost.totalTokens} tokens)\n`);
+    }
     // Without a flag that sends calls this command only writes the cases.
     if (cases.adversarial && !callsRequested) {
       out(`  Adversarial: none was sent (no flag asked for calls). ${cases.adversarial.length} cases are of the mutating styles (psycho, hacker): ${opts.allowMutations === true ? "they need the tool named in --allow-tools" : "not sent: mutations disabled"}.\n`);
@@ -359,7 +408,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
       for (const line of renderMismatches(report.mismatches)) out(`${line}\n`);
       for (const line of renderCasesSummary(cases)) out(`${line}\n`);
       out(`  Cases: ${join(outDir, CASES_FILE).replace(/\\/g, "/")}\n`);
-      return { exitCode: 0, outDir, model, pid };
+      return { exitCode: proposeCode, outDir, model, pid };
     }
     // --- Sending: only through the guard, one call per case. ---
     const runnable: RunnableCase[] = [
@@ -495,7 +544,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     for (const line of renderGuardReport(guard.report())) out(`${line}\n`);
     const code = mcpExitCode({ results, ...(run.stopped ? { stopped: run.stopped } : {}), ...(gate ? { gate } : {}), budgetExhausted: guard.report().budgetExhausted });
     if (code === NOTHING_PROVEN_EXIT_CODE) err("✗ Nothing was proven: no case passed (none was sent, or every answer needed a person or never came). This is not a pass.\n");
-    return { exitCode: code, outDir, model, pid };
+    return { exitCode: code || proposeCode, outDir, model, pid };
   } finally {
     // The server never outlives the run, on success, error, timeout or interrupt.
     if (conn) {

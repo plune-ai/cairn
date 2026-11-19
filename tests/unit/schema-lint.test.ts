@@ -14,6 +14,7 @@ import { JudgeSchema, ChecklistCoverageSchema } from "../../src/eval/judge.js";
 import { PilotSchema } from "../../src/eval/pilot.js";
 import { PurposesSchema } from "../../src/agent/overlays.js";
 import { ScreenDescriptionSchema } from "../../src/documentarian/docs.js";
+import { proposalsSchema } from "../../src/mcp-test/scenarios.js";
 
 /**
  * Authoritative registry: every schema that is handed to a structured-output invoke (#89).
@@ -32,6 +33,7 @@ const STRUCTURED_SCHEMAS: Record<string, z.ZodType> = {
   PilotSchema,
   PurposesSchema,
   ScreenDescriptionSchema,
+  proposalsSchema,
 };
 
 describe("schema-lint: lintZodSchema (BORROW-01 / #89)", () => {
