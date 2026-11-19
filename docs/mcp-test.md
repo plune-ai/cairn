@@ -587,7 +587,9 @@ list with its reason:
   values the request itself gives);
 - a call of a tool that is not claimed read-only, or reads as destructive, carries `changes_data: true`;
 - the request does not repeat the tool's name, so the scenario tests more than word matching;
-- the request is not already in the file named by `--plune-config` (it is only read, never written);
+- the request and the id are not already in the file named by `--plune-config` (it is only read, never written; a
+  prompt written there over several lines or with escapes is not recognized, so it can be proposed again);
+- no two proposals carry the same request (the review queue knows a case by it);
 - the request fits the review queue (at most 380 characters, arguments at most 1000).
 
 What it writes, next to the other files of the run:

@@ -31,13 +31,19 @@ const proposalSchema = z.object({
   description: z.string().describe("one sentence: what the scenario checks"),
   prompt: z.string().describe("what a user types to the agent, in the language of the tool descriptions"),
   kind: z.enum(["positive", "negative"]),
-  tool: z.string().optional().describe("positive only: the exact name of the tool the request should lead to"),
-  args: z.string().optional().describe("positive only: a JSON object with only the argument values the prompt itself names"),
-  forbiddenTool: z.string().optional().describe("negative only: a tool the request must not lead to; omit when no tool at all may be called"),
-  changesData: z.boolean().optional().describe("positive only: true when the expected tool may change data"),
+  tool: z.string().nullable().describe("positive only: the exact name of the tool the request should lead to"),
+  args: z.string().nullable().describe("positive only: a JSON object with only the argument values the prompt itself names"),
+  forbiddenTool: z.string().nullable().describe("negative only: a tool the request must not lead to; omit when no tool at all may be called"),
+  changesData: z.boolean().nullable().describe("positive only: true when the expected tool may change data"),
 });
 export const proposalsSchema = z.object({ scenarios: z.array(proposalSchema) });
-export type RawProposal = z.infer<typeof proposalSchema>;
+/** A proposal as the model gives it; the optional fields are `null` (strict structured output) or absent. */
+export type RawProposal = Pick<z.infer<typeof proposalSchema>, "id" | "description" | "prompt" | "kind"> & {
+  tool?: string | null;
+  args?: string | null;
+  forbiddenTool?: string | null;
+  changesData?: boolean | null;
+};
 
 export interface Scenario {
   id: string;
@@ -89,6 +95,22 @@ export function buildMessages(tools: readonly McpToolEntry[]): BaseMessageLike[]
   ];
 }
 
+/**
+ * The ids and prompts of the scenarios a `plune.yaml` already has, read line by line (`id: x`, `prompt: x`, plain or quoted).
+ * Limit: not a YAML parse (Cairn has no YAML dependency); a prompt written over several lines or with escapes is not
+ * recognized, and is proposed again.
+ */
+function existingScenarios(text: string | undefined): { ids: Set<string>; prompts: Set<string> } {
+  const ids = new Set<string>();
+  const prompts = new Set<string>();
+  for (const m of (text ?? "").matchAll(/^[\s-]*(id|prompt):[ \t]*(.*?)[ \t]*$/gm)) {
+    const value = (m[2] ?? "").replace(/^(["'])(.*)\1$/, "$2");
+    if (m[1] === "id") ids.add(value);
+    else if (value) prompts.add(norm(value));
+  }
+  return { ids, prompts };
+}
+
 /** The schema with `required` taken away at the top: a proposal names part of the arguments, not all of them. */
 function partialSchema(schema: Record<string, unknown>): Record<string, unknown> {
   const rest = { ...schema };
@@ -98,14 +120,13 @@ function partialSchema(schema: Record<string, unknown>): Record<string, unknown>
 
 /**
  * Checks each proposal against the server's tools; `existing` is the text of `plune.yaml` when there is one.
- * Limit: "already in plune.yaml" is a substring match of the normalized prompt (or `id: <id>`) on the file's text, not a
- * YAML parse; a prompt written there with escapes or folded lines is not recognized and is proposed again.
  */
 export function checkProposals(raw: readonly RawProposal[], tools: readonly McpToolEntry[], existing?: string): { accepted: Scenario[]; rejected: Rejected[] } {
   const byName = new Map(tools.map((t) => [t.name, t]));
   // May change data: the server does not claim read-only, or its name or hints say otherwise.
   const mayChange = new Set(assessTools(tools).filter((a) => a.readOnlyHint !== true || a.class === "mutating").map((a) => a.name));
-  const plan = existing === undefined ? undefined : norm(existing);
+  const known = existingScenarios(existing);
+  const prompts = new Set<string>();
   const accepted: Scenario[] = [];
   const rejected: Rejected[] = [];
   const ids = new Set<string>();
@@ -118,7 +139,9 @@ export function checkProposals(raw: readonly RawProposal[], tools: readonly McpT
       const prompt = p.prompt.trim();
       if (!prompt || prompt.length > MAX_PROMPT) return reject(`the prompt is empty or longer than ${MAX_PROMPT} characters`);
       if (ids.has(id)) return reject("another proposal has the same id");
-      if (plan !== undefined && (plan.includes(norm(prompt)) || plan.includes(`id: ${id}`))) return reject("already in plune.yaml");
+      if (known.ids.has(id) || known.prompts.has(norm(prompt))) return reject("already in plune.yaml");
+      // The review queue knows a case by its request; a second proposal with the same request would be dropped there.
+      if (prompts.has(norm(prompt))) return reject("another proposal has the same request");
       const s: Scenario = { id, description: safeText(p.description, 200) || id, prompt, kind: p.kind };
       if (p.kind === "positive") {
         if (!p.tool || !byName.has(p.tool)) return reject(`names a tool the server does not have ("${safeText(p.tool ?? "", 60)}")`);
@@ -126,7 +149,7 @@ export function checkProposals(raw: readonly RawProposal[], tools: readonly McpT
         if (mayChange.has(p.tool) && p.changesData !== true) return reject(`calls "${safeText(p.tool, 60)}", a tool that may change data, without saying so (changesData)`);
         s.tool = p.tool;
         if (p.changesData === true) s.changesData = true;
-        if (p.args !== undefined && p.args.trim() !== "") {
+        if (typeof p.args === "string" && p.args.trim() !== "") {
           let args: unknown;
           try {
             args = JSON.parse(p.args);
@@ -149,12 +172,13 @@ export function checkProposals(raw: readonly RawProposal[], tools: readonly McpT
         }
       } else {
         if (p.tool) return reject("a negative scenario names a tool to call");
-        if (p.forbiddenTool !== undefined) {
+        if (p.forbiddenTool !== undefined && p.forbiddenTool !== null) {
           if (!byName.has(p.forbiddenTool)) return reject(`names a tool the server does not have ("${safeText(p.forbiddenTool, 60)}")`);
           s.forbiddenTool = p.forbiddenTool;
         }
       }
       ids.add(id);
+      prompts.add(norm(prompt));
       accepted.push(s);
     });
   } finally {

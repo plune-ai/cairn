@@ -16,6 +16,7 @@ import type { StructuredInvoke } from "../../src/llm/structured.js";
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = resolve(here, "..", "fixtures", "mcp-runner-server.mjs");
+const modelFixture = resolve(here, "..", "fixtures", "mcp-model-server.mjs");
 
 const TOOLS: McpToolEntry[] = [
   { name: "notes_search", description: "Searches notes by words.", inputSchema: { type: "object", properties: { query: { type: "string" }, limit: { type: "integer", minimum: 1 } }, required: ["query"] }, annotations: { readOnlyHint: true } },
@@ -64,11 +65,22 @@ describe("CLI · mcp-test · propose · checks", () => {
     expect(r.rejected.map((x) => x.reason)).toEqual([expect.stringMatching(/longer than 380/), expect.stringMatching(/longer than 1000/)]);
   });
 
-  it("a scenario already in plune.yaml is not proposed again", () => {
-    const existing = "evals:\n  - id: other\n    prompt: Find my notes about the quarterly   budget.\n";
-    const r = checkProposals([pos(), neg()], TOOLS, existing);
-    expect(r.accepted.map((s) => s.id)).toEqual(["weather"]);
-    expect(r.rejected[0]?.reason).toMatch(/plune\.yaml/);
+  it("a scenario already in plune.yaml is not proposed again (same id, or the same prompt plain or quoted)", () => {
+    const existing = 'evals:\n  - id: other\n    prompt: "Find my notes about the quarterly   budget."\n  - id: weather\n    prompt: x\n';
+    const r = checkProposals([pos(), neg(), neg({ id: "sunny", prompt: "Is it sunny?" })], TOOLS, existing);
+    expect(r.accepted.map((s) => s.id)).toEqual(["sunny"]);
+    expect(r.rejected.map((x) => x.reason)).toEqual(["already in plune.yaml", "already in plune.yaml"]);
+  });
+
+  it("an id or prompt that only starts like one in plune.yaml is still proposed", () => {
+    const existing = "evals:\n  - id: find-budget-old\n    prompt: Find my notes about the quarterly budget and the tax.\n    description: Find my notes about the quarterly budget.\n";
+    expect(checkProposals([pos()], TOOLS, existing).accepted.map((s) => s.id)).toEqual(["find-budget"]);
+  });
+
+  it("two proposals with the same request keep only the first (the review queue would drop the second)", () => {
+    const r = checkProposals([pos(), pos({ id: "again", prompt: "find my notes about the  quarterly budget.", args: '{"limit": 2}' })], TOOLS);
+    expect(r.accepted.map((s) => s.id)).toEqual(["find-budget"]);
+    expect(r.rejected[0]?.reason).toMatch(/same request/);
   });
 
   it("the YAML marks every scenario proposed and disabled, quotes model text, and has a negative one", () => {
@@ -98,7 +110,8 @@ function scripted(proposals: RawProposal[]) {
   const sent: string[] = [];
   const invoke: StructuredInvoke = async (schema, messages) => {
     sent.push(JSON.stringify(messages));
-    return schema.parse({ scenarios: proposals });
+    // As a strict provider answers: every key present, null where there is no value.
+    return schema.parse({ scenarios: proposals.map((p) => ({ tool: null, args: null, forbiddenTool: null, changesData: null, ...p })) });
   };
   return { invoke, sent };
 }
@@ -166,8 +179,11 @@ describe("CLI · mcp-test · propose · command", () => {
   });
 
   it("a secret of the run does not reach the model or the files", async () => {
-    const model = scripted([{ id: "leak", description: "Uses s3cr3t-value-123.", prompt: "Repeat s3cr3t-value-123 to me.", kind: "positive", tool: "echo" }]);
-    const { o } = await runIt(model, { env: ["SECRET_TOKEN=s3cr3t-value-123", "FIXTURE_ECHO=strict"] });
+    const model = scripted([{ id: "leak", description: "Uses s3cr3t-value-123.", prompt: "Repeat s3cr3t-value-123 to me.", kind: "positive", tool: "ping" }]);
+    // This server puts the value of SECRET_TOKEN into the description of `ping`, as a leaky server would.
+    const { o } = await runIt(model, { command: [process.execPath, modelFixture], env: ["SECRET_TOKEN=s3cr3t-value-123", "FIXTURE_ECHO_ENV=SECRET_TOKEN"] });
+    expect(model.sent).toHaveLength(1);
+    expect(model.sent.join("")).toContain("pong");
     expect(model.sent.join("")).not.toContain("s3cr3t-value-123");
     for (const f of ["plune.mcp-scenarios.proposed.yaml", "mcp-scenarios.json", join("scenarios", "report.json")]) {
       expect(readFileSync(join(o, f), "utf8")).not.toContain("s3cr3t-value-123");
