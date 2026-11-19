@@ -209,6 +209,8 @@ export function buildProgram(): Command {
     .option("--adversarial-max-string <n>", "adversarial: length of the long string (default 100000, at most 200000)")
     .option("--adversarial-max-depth <n>", "adversarial: nesting of the deep array (default 100, at most 100)")
     .option("--expect-auth", "adversarial: a call without credentials that goes through is a failure, not a finding")
+    .option("--propose-scenarios", "ask a model (one paid call, needs a provider key) for agent scenarios; writes plune.mcp-scenarios.proposed.yaml, each scenario disabled, and scenarios/ for plune ingest; runs none of them")
+    .option("--plune-config <file>", "with --propose-scenarios: the plune.yaml whose scenarios are not proposed again (default plune.yaml here); it is only read")
     .action(async (command: string[], opts: Record<string, unknown>) => {
       await runModality("mcp-test", { ...opts, command });
     });

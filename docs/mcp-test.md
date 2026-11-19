@@ -568,6 +568,43 @@ What a server writes (names, descriptions, answers) is untrusted text: it is pri
 is never run or handed to a model as an instruction. A line that would start with `::` or `##[` is prefixed, so a CI log
 does not read it as a workflow command.
 
+## 5. Propose agent scenarios (paid, optional)
+
+`--propose-scenarios` asks a model for scenarios that check how an AI agent uses your server: a request a user would type,
+the tool it should lead to, and negative requests that must lead to no call. It is the only part of `cairn mcp-test` that
+costs money: one model call, metered like every other model call of Cairn (the provider settings and keys are the same as
+for `cairn design`). Without the flag no model is asked and nothing is proposed.
+
+```text
+cairn mcp-test --propose-scenarios --plune-config plune.yaml --out runs/notes -- node dist/server.js
+```
+
+The model's answer is not trusted. Each proposal is checked before it is written, and one that fails goes to the rejected
+list with its reason:
+
+- the tool it names, or forbids, is a tool of the server (exact name);
+- the argument values it names fit the tool's `inputSchema` (the required list is not enforced: a proposal names only the
+  values the request itself gives);
+- a call of a tool that is not claimed read-only, or reads as destructive, carries `changes_data: true`;
+- the request does not repeat the tool's name, so the scenario tests more than word matching;
+- the request is not already in the file named by `--plune-config` (it is only read, never written);
+- the request fits the review queue (at most 380 characters, arguments at most 1000).
+
+What it writes, next to the other files of the run:
+
+| File | What is in it |
+|---|---|
+| `plune.mcp-scenarios.proposed.yaml` | the scenarios as `evals` entries, each `proposed: true` and `disabled: true`; every text is quoted |
+| `mcp-scenarios.json` | how many were kept, the rejected ones with their reasons, and the cost |
+| `scenarios/report.json` | the same scenarios as a run of designed cases, for the review queue |
+
+Cairn runs none of the scenarios. Send them to the review queue with `plune ingest runs/notes/scenarios`: each one is a
+proposal there, with no verdict, and nothing is created until a person accepts it. Move the ones you agree with into
+`plune.yaml` yourself, under an `mcp` server entry of your own, and run them with `plune run`.
+
+A server with two or more tools needs at least one negative scenario: when none passes the checks, the files are still
+written and the command exits `1`. A missing provider key is refused before the server is started.
+
 ## What a pass does not prove
 
 - **The cases come from the schema, not from what the tool means.** `passed` says the server answered as the schema
@@ -652,6 +689,8 @@ The list comes from `cairn mcp-test --help`.
 | `--adversarial-max-string <n>` | `100000, at most 200000` | adversarial: length of the long string |
 | `--adversarial-max-depth <n>` | `100, at most 100` | adversarial: nesting of the deep array |
 | `--expect-auth` | - | adversarial: a call without credentials that goes through is a failure, not a finding |
+| `--propose-scenarios` | - | ask a model (one paid call, needs a provider key) for agent scenarios; writes them disabled and runs none |
+| `--plune-config <file>` | `plune.yaml` | with --propose-scenarios: the plune.yaml whose scenarios are not proposed again; it is only read |
 
 ## See also
 
