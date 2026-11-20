@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-11-20
+
 ### Changed
 
 - **`cairn mcp-test --propose-scenarios` writes `scenarios/report.json` as an `mcp` run (`mode: "mcp"`), no longer a `design` one.** The proposals keep their shape (designed cases under `testCases`, one step `Ask the agent: …` each, no verdict), and `plune ingest` files them as proposals of an MCP server test. This needs a CLI that reads `testCases` of an `mcp` run (plune-ai/cli#325); an older one refuses the file for lacking `cases`.
