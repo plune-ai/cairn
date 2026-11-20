@@ -155,9 +155,9 @@ describe("CLI · mcp-test · propose · command", () => {
     const summary = JSON.parse(readFileSync(join(o, "mcp-scenarios.json"), "utf8")) as { rejected: Array<{ id: string; reason: string }>; cost: { totalCostUsd: number } };
     expect(summary.rejected.map((x) => x.id)).toEqual(["ghost"]);
     expect(summary.cost.totalCostUsd).toBe(0.0123);
-    // The review queue: a design-kind artifact `plune ingest` reads, one proposal per scenario, none with a verdict.
+    // The review queue: an mcp-kind artifact `plune ingest` reads, one proposal per scenario, none with a verdict.
     const report = JSON.parse(readFileSync(join(o, "scenarios", "report.json"), "utf8")) as { schemaVersion: number; mode: string; testCases: Array<{ stableId: string; title: string; steps: string[]; expected: string; verdict?: string }> };
-    expect(report).toMatchObject({ schemaVersion: 1, mode: "design" });
+    expect(report).toMatchObject({ schemaVersion: 1, mode: "mcp" });
     expect(report.testCases).toHaveLength(2);
     for (const c of report.testCases) {
       expect(c.stableId).toMatch(/^[0-9a-f]{12}$/);
