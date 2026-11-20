@@ -15,7 +15,7 @@ import { CannotBuild, OracleHost, scanSchema } from "./schema.js";
 
 export const PROPOSED_FILE = "plune.mcp-scenarios.proposed.yaml";
 export const SCENARIOS_SUMMARY_FILE = "mcp-scenarios.json";
-/** A `design`-kind run artifact: `plune ingest <run>/scenarios` puts every proposal in the review queue. */
+/** An `mcp`-kind run artifact (cases under `testCases`): `plune ingest <run>/scenarios` puts every proposal in the review queue. */
 export const SCENARIOS_DIR = "scenarios";
 /** The most proposals kept from one answer; the rest are rejected as over the limit. */
 export const MAX_PROPOSALS = 40;
@@ -230,13 +230,17 @@ function expectedOf(s: Scenario): string {
   return `The agent calls ${s.tool}${s.args ? ` with ${JSON.stringify(s.args)}` : ""}, and the call ends without an error.`;
 }
 
-/** A `design`-kind run artifact with one case per scenario and no verdict: `plune ingest` turns each into a proposal in the review queue. */
+/**
+ * An `mcp`-kind run artifact with one case per scenario under `testCases` and no verdict: `plune ingest` turns each
+ * into a proposal in the review queue, labelled as an MCP server test. It needs a CLI that reads `testCases` of an
+ * `mcp` run (plune-ai/cli#325); an older one refuses the artifact for lacking `cases`.
+ */
 export function buildScenarioReport(runId: string, target: string, server: string, scenarios: readonly Scenario[], cost: unknown): Record<string, unknown> {
   return {
     schemaVersion: 1,
     runId,
     url: target,
-    mode: "design",
+    mode: "mcp",
     testCases: scenarios.map((s) => ({
       stableId: stableCaseId(["mcp-scenario", server, s.kind, s.prompt, s.tool, s.forbiddenTool]),
       id: s.id,
