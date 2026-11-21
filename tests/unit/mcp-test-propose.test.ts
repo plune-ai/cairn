@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkProposals, renderProposedYaml, type RawProposal } from "../../src/mcp-test/scenarios.js";
 import { runMcpTest } from "../../src/mcp-test/run.js";
@@ -164,6 +166,31 @@ describe("CLI · mcp-test · propose · command", () => {
       expect(c.verdict).toBeUndefined();
     }
     expect(out).toMatch(/\$0\.0123/);
+  });
+
+  it("starts no process but the server: plune run is never called", async () => {
+    // Every way Node starts a process goes through this module: the SDK's stdio transport (cross-spawn) and any import of it.
+    const names = ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"] as const;
+    const spies = names.map((n) => vi.spyOn(childProcess, n));
+    syncBuiltinESMExports();
+    try {
+      const model = scripted([
+        { id: "echo-hello", description: "Echoing a word.", prompt: "Repeat the word hello back to me.", kind: "positive", tool: "echo" },
+        { id: "weather", description: "Outside the domain.", prompt: "What will the weather be tomorrow?", kind: "negative" },
+      ]);
+      const { r } = await runIt(model);
+      expect(r.exitCode).toBe(0);
+      const started = spies.flatMap((s) => s.mock.calls.map((c) => [c[0], ...(Array.isArray(c[1]) ? c[1] : [])].map(String)));
+      // The server itself was started (the spy sees it), and nothing that is not the server or its reaping on Windows.
+      expect(started.some((argv) => argv.includes(fixture))).toBe(true);
+      const others = started.filter((argv) => !argv.includes(fixture) && argv[0] !== "taskkill");
+      expect(others).toEqual([]);
+      // In particular no `plune` (the CLI or `npx @plune-ai/cli`): Cairn proposes scenarios and runs none of them.
+      expect(started.filter((argv) => argv.some((a) => /^plune(\.cmd|\.exe)?$/i.test(basename(a)) || a.startsWith("@plune-ai/cli")))).toEqual([]);
+    } finally {
+      for (const s of spies) s.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 
   it("without --propose-scenarios no model is asked, nothing is proposed and the cost is 0", async () => {
