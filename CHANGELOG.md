@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-11-22
+
 ### Fixed
 
 - **`cairn mcp-test` gives every run its own run id, whatever the `--out` folder is called.** The id was the folder name, so every run into the same `--out` (as in CI and scripts) wrote the same `runId` to `report.json` and `scenarios/report.json`, and `plune ingest` of the second run was answered with the first run's stored result: its results and proposals were never filed. The id is now a fresh UUID per run; the scenarios report keeps `<runId>-scenarios`, and the default folder stays `mcp-<runId>`.
