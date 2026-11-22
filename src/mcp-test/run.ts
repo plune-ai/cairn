@@ -235,7 +235,9 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
   const err = (s: string): void => io.err(printable(s));
   const out = (s: string): void => io.out(printable(s));
 
-  const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `mcp-${randomUUID()}`);
+  // One id per run, not the --out folder name: a repeated id is replayed as the first run's answer on ingest.
+  const runId = randomUUID();
+  const outDir = opts.out ? resolve(opts.out) : join(defaultRunsBaseDir(), `mcp-${runId}`);
   const timeoutMs = Math.round(timeoutSeconds * 1000);
   let conn: McpConnection | undefined;
   let pid: number | null = null;
@@ -388,7 +390,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
           [SCENARIOS_SUMMARY_FILE, `${JSON.stringify({ accepted: checked.accepted.length, rejected: checked.rejected, cost }, null, 2)}\n`],
         ]);
         await mkdir(join(outDir, SCENARIOS_DIR), { recursive: true });
-        const report = buildScenarioReport(`${basename(outDir)}-scenarios`, maskSecrets(url ?? (command?.[0] ?? ""), secrets), server, checked.accepted, cost);
+        const report = buildScenarioReport(`${runId}-scenarios`, maskSecrets(url ?? (command?.[0] ?? ""), secrets), server, checked.accepted, cost);
         await writeFile(join(outDir, SCENARIOS_DIR, REPORT_FILE), `${JSON.stringify(report, null, 2)}\n`, "utf8");
         out(`  Scenarios: ${checked.accepted.length} proposed (all disabled), ${checked.rejected.length} rejected: ${join(outDir, PROPOSED_FILE).replace(/\\/g, "/")}\n`);
         for (const r of checked.rejected) out(`    rejected ${safeText(r.id, 60)}: ${safeText(r.reason, 200)}\n`);
@@ -509,7 +511,7 @@ export async function runMcpTest(opts: McpTestOptions, io: McpTestIO): Promise<M
     const coverage = settle("coverage", lost, () => computeMcpCoverage(tools, coverCases, results));
     const gate = coverage && minCoverage !== undefined ? evaluateMcpGate(coverage, minCoverage, opts.countPartial === true) : undefined;
     const reportInput = {
-      runId: basename(outDir),
+      runId,
       url: maskSecrets(url ?? (command?.[0] ?? ""), secrets),
       results,
       cases: runnable,

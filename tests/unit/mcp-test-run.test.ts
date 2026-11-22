@@ -105,7 +105,7 @@ describe("CLI · mcp-test · runner · command level", () => {
     const x = await run({}, { allowTools: "echo,typed", maxCalls: 50 });
     const report = JSON.parse(x.read("report.json"));
     expect(report).toMatchObject({ schemaVersion: 1, mode: "mcp", cost: { usd: 0, tokens: 0, model: false } });
-    expect(report.runId).toBe(x.o.split(/[\\/]/).pop());
+    expect(report.runId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(report.mcp.toolCount).toBe(6);
     expect(report.mcp.total).toBe(x.calls.length);
     expect(report.mcp.passed).toBeGreaterThan(0);
