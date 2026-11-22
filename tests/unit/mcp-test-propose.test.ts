@@ -224,4 +224,24 @@ describe("CLI · mcp-test · propose · command", () => {
     expect(err).toMatch(/no negative scenario/);
     expect(existsSync(join(o, "plune.mcp-scenarios.proposed.yaml"))).toBe(true);
   });
+
+  it("two runs into the same --out get different run ids; the scenarios report of a run is its check report id plus -scenarios", async () => {
+    const work = mkdtempSync(join(tmpdir(), "cairn-propose-same-out-"));
+    dirs.push(work);
+    const same = join(work, "mcp-run");
+    const ids = [];
+    for (let i = 0; i < 2; i++) {
+      const model = scripted([
+        { id: "echo-hello", description: "Echoing a word.", prompt: "Repeat the word hello back to me.", kind: "positive", tool: "echo", args: '{"q": "hello"}' },
+        { id: "weather", description: "Outside the domain.", prompt: "What will the weather be tomorrow?", kind: "negative" },
+      ]);
+      await runIt(model, { out: same, allowTools: "echo", maxCalls: 50 });
+      const check = JSON.parse(readFileSync(join(same, "report.json"), "utf8")) as { runId: string };
+      const scenarios = JSON.parse(readFileSync(join(same, "scenarios", "report.json"), "utf8")) as { runId: string };
+      expect(check.runId).not.toBe(basename(same));
+      expect(scenarios.runId).toBe(`${check.runId}-scenarios`);
+      ids.push(check.runId);
+    }
+    expect(ids[0]).not.toBe(ids[1]);
+  });
 });
