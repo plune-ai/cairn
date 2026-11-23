@@ -3,6 +3,8 @@ import { HumanMessage } from "@langchain/core/messages";
 import type { StructuredInvoke } from "../llm/structured.js";
 import type { PromptRegistry } from "../prompts/index.js";
 import type { TestCase } from "../design/index.js";
+import { isAutomated } from "../design/schema.js";
+import type { ValidationReport } from "../validate/index.js";
 import { coverageScore, type ChecklistItem } from "../checklist/index.js";
 import type { Decider } from "../decider/types.js";
 import { deciderChecklistCoverage, type DeciderCoverage } from "../decider/uses/coverage.js";
@@ -23,17 +25,50 @@ export async function judgeTestCases(
   pageSemantics: string,
   invoke: StructuredInvoke,
   prompts: PromptRegistry,
+  /** #327: the run's test results. Without them the judge can only rate how the cases are written. */
+  run?: { validation: ValidationReport; url?: string; goal?: string },
 ): Promise<Score[]> {
   if (testCases.length === 0) return [];
-  const cases = testCases
-    .map((tc) => `- [${tc.technique}] ${tc.title}: ${tc.steps.join("; ")} ⇒ ${tc.expected}`)
-    .join("\n");
-  const prompt = await prompts.getPrompt("judge-test-cases", { pageSemantics, cases });
+  const prompt = run
+    ? await prompts.getPrompt("judge-test-cases-run", runVars(testCases, pageSemantics, run))
+    : await prompts.getPrompt("judge-test-cases", {
+        pageSemantics,
+        cases: testCases.map((tc) => `- [${tc.technique}] ${tc.title}: ${tc.steps.join("; ")} ⇒ ${tc.expected}`).join("\n"),
+      });
   const r = await invoke(JudgeSchema, [new HumanMessage(prompt.text)]);
   return [
-    { name: "test_case_quality", value: r.test_case_quality, comment: r.comment },
+    { name: "test_case_quality", value: r.test_case_quality, comment: run ? r.comment : `no run (cases only): ${r.comment}` },
     { name: "methodology_adherence", value: r.methodology_adherence },
   ];
+}
+
+// ponytail: a test is a case's when its name contains the case title (punctuation-blind); the spec writer names tests
+// after cases. A renamed test shows up under "other results" instead of being lost.
+const norm = (t: string): string => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+function runVars(
+  testCases: TestCase[],
+  pageSemantics: string,
+  run: { validation: ValidationReport; url?: string; goal?: string },
+): Record<string, string> {
+  const results = run.validation.results;
+  const ofCase = (tc: TestCase) => results.find((r) => norm(r.test).includes(norm(tc.title)));
+  const cases = testCases
+    .map((tc) => {
+      const status = !isAutomated(tc) ? "manual" : (ofCase(tc)?.status ?? "not run");
+      return `- [${status}] [${tc.technique}] ${tc.title}: ${tc.steps.join("; ")} => ${tc.expected}`;
+    })
+    .join("\n");
+  const matched = new Set(testCases.map(ofCase).filter(Boolean));
+  const other = results.filter((r) => !matched.has(r)).map((r) => `- [${r.status}] ${r.test}`);
+  return {
+    url: run.url ?? "(unknown)",
+    pageSemantics: pageSemantics || "(unknown)",
+    goal: run.goal || "(none: explore the page)",
+    greenRatio: results.length ? `${Math.round(run.validation.greenRatio * 100)}%` : "no automated tests ran",
+    cases,
+    suiteResults: other.length ? other.join("\n") : "(none)",
+  };
 }
 
 export const ChecklistCoverageSchema = z.object({

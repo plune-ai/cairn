@@ -7,6 +7,7 @@ import { QA_GAP_CASES } from "./qa-gap-cases.js";
 import { QA_PLAYWRIGHT_TS_WRITER } from "./qa-playwright-ts-writer.js";
 import { IDENTIFY_ELEMENTS } from "./identify-elements.js";
 import { JUDGE_TEST_CASES } from "./judge-test-cases.js";
+import { JUDGE_TEST_CASES_RUN } from "./judge-test-cases-run.js";
 import { JUDGE_CHECKLIST_COVERAGE } from "./judge-checklist-coverage.js";
 import { PILOT_REVIEW } from "./pilot-review.js";
 import { NAME_OVERLAYS } from "./name-overlays.js";
@@ -24,6 +25,7 @@ export const LOCAL_PROMPTS: Record<string, string> = {
   "qa-playwright-ts-writer": QA_PLAYWRIGHT_TS_WRITER,
   "identify-elements": IDENTIFY_ELEMENTS,
   "judge-test-cases": JUDGE_TEST_CASES,
+  "judge-test-cases-run": JUDGE_TEST_CASES_RUN,
   "judge-checklist-coverage": JUDGE_CHECKLIST_COVERAGE,
   "pilot-review": PILOT_REVIEW,
   "name-overlays": NAME_OVERLAYS,
