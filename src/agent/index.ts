@@ -435,7 +435,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
     // the callback so judge/pilot LLM calls fire the handler while the root span is still active.
     const result = await telemetry.runInTrace(
       "exploration",
-      { runId, backend: cfg.browser.backend, profile: cfg.llmProfile },
+      { metadata: { runId, backend: cfg.browser.backend, profile: cfg.llmProfile }, input: { url: input.url, runId } },
       async () => {
         const out = await runExploreGraph(deps, { url: input.url, runId });
 
@@ -874,7 +874,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
     // the callback so judge LLM calls fire the handler while the root span is still active.
     const result = await telemetry.runInTrace(
       "design",
-      { runId, backend: cfg.browser.backend, profile: cfg.llmProfile, mode: "design" },
+      { metadata: { runId, backend: cfg.browser.backend, profile: cfg.llmProfile, mode: "design" }, input: { url: input.url, runId } },
       async () => {
         const out = await runExploreGraph(designDeps, { url: input.url, runId });
 

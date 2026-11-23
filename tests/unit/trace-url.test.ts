@@ -139,13 +139,19 @@ const fake = vi.hoisted(() => ({
   traceUrl: undefined as undefined | ((warn: (line: string) => void) => Promise<string | undefined>),
   /** A fake Langfuse client: set, the run has a trace id and somewhere to send its scores. */
   client: undefined as undefined | { score: { create: (body: Record<string, unknown>) => void } },
+  /** What the run handed the root trace: its attributes and what its body returned. */
+  traces: [] as { attrs: unknown; result: unknown }[],
 }));
 vi.mock("../../src/telemetry/index.js", async (orig) => ({
   ...(await orig<typeof import("../../src/telemetry/index.js")>()),
   initTelemetry: async () => ({
     enabled: fake.traceUrl !== undefined || fake.client !== undefined,
     shutdown: async () => undefined,
-    runInTrace: (_n: string, _m: unknown, fn: () => Promise<unknown>) => fn(),
+    runInTrace: async (_n: string, attrs: unknown, fn: () => Promise<unknown>) => {
+      const result = await fn();
+      fake.traces.push({ attrs, result });
+      return result;
+    },
     ...(fake.traceUrl ? { traceUrl: fake.traceUrl } : {}),
     ...(fake.client ? { client: fake.client, callbackHandler: { last_trace_id: "trace-321" } } : {}),
   }),
@@ -254,5 +260,21 @@ describe.each([
     } finally {
       fake.client = undefined;
     }
+  });
+});
+
+// The root trace's Input was `undefined` in Langfuse: the run handed the trace no input, so a reviewer of an
+// annotation queue saw neither the page nor the cases they grade.
+describe.each([
+  ["design", runDesign],
+  ["explore", runExploration],
+] as const)("%s · the root trace gets the run's input", (_mode, run) => {
+  it("gives the trace {url, runId} as input, and its body returns the test cases", async () => {
+    fake.traces.length = 0;
+    const config = loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used" });
+    const result = await run({ url: "https://app.test/login", config, runsBaseDir: base, knowledgeDir: join(base, "none"), onProgress: () => undefined });
+    expect(fake.traces).toHaveLength(1);
+    expect((fake.traces[0]!.attrs as { input?: unknown }).input).toEqual({ url: "https://app.test/login", runId: result.runId });
+    expect((fake.traces[0]!.result as { testCases: unknown[] }).testCases).toHaveLength(2);
   });
 });
