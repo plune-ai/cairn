@@ -32,7 +32,7 @@ Rules (STRICT):
 - One test case → one test('<name>', async ({ page }) => { ... }) with verifiable await expect(...).
 - Wrap logical steps in await test.step('<step description>', async () => { ... }) — a more readable run report.
 - Assertions must match really observable behavior; do not invent elements outside the list.
-- Read-only assertions by default (toBeVisible/toBeEnabled/toBeChecked). For destructive controls (Delete, Submit, Convert, Log out, Add) — only await expect(...).toBeVisible(), do NOT click.
+- Page-only actions are automated: click, toggle, type, key press, hover, a browser dialog (accept / dismiss / answer), adding or removing an element on the page, opening or closing an overlay, sorting or filtering a table; their effect stays in the browser. Only an action that changes data on a server or the session (a submit that sends data, deleting a saved record, a payment, sending a message, signing out) is left to a human: check that its control is VISIBLE and do not perform it. Judge an action by what it does, never by a word in its label such as Add or Remove. A browser dialog is handled with page.once('dialog', ...) registered before the click.
 - Each test() is INDEPENDENT: starts with await page.goto('{{baseUrl}}') (clean state); do NOT rely on state from another test.
 - One or two RELATED assertions per test; no brittle chains or mega-tests.
 - The code is self-contained and must parse with tsc.

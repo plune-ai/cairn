@@ -23,6 +23,6 @@ Design journeys that cross page boundaries. For each journey:
 
 RULES (a journey is a TEST — keep it safe and runnable):
 - A journey MUST span at least TWO distinct pages (≥2 different page URLs across its steps). Single-page checks are NOT journeys — omit them.
-- Read-only by default: assert visibility/state. For destructive/irreversible controls (Delete, Remove, Submit that writes, Log out) only assert the control is VISIBLE — do NOT perform the action.
+- Page-only actions are automated: click, toggle, type, key press, hover, a browser dialog (accept / dismiss / answer), adding or removing an element on the page, opening or closing an overlay, sorting or filtering a table; their effect stays in the browser. Only an action that changes data on a server or the session (a submit that sends data, deleting a saved record, a payment, sending a message, signing out) is left to a human: check that its control is VISIBLE and do not perform it. Judge an action by what it does, never by a word in its label such as Add or Remove.
 - Each step is grounded on its page's observed elements; do not assume elements the graph did not show.
 - Prefer journeys that follow the OBSERVED transitions above (they are known to work).`;

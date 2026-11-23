@@ -23,4 +23,5 @@ Score test_case_quality on exactly one of three levels:
 
 Judge by the run results, not by how well the cases are written: well-written cases that no passing test confirms are not a 1.
 Also score methodology_adherence 0..1: whether the cases reflect ISO/IEC/IEEE 29119-4 techniques (EP / BVA / decision-table / state-transition / error-guessing).
+A core action that only changes the page (a click that adds or removes an element, a toggle, a key press, a hover, a browser dialog, sorting a table) and is left manual is not confirmed: such a suite is not a 1, and the comment says the action was left manual although it is page-only.
 The comment is one short sentence: the core action and whether a passing test confirms it.`;

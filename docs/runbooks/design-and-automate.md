@@ -12,8 +12,8 @@ First we write test cases (a human-valuable artifact in the ATC/MTC format), and
 cairn design --url https://app.example.com/page --session myapp --checklist plan.md
 ```
 Writes `runs/<id>/testcases/*.md`:
-- **ATC-<SUITE>-NNN.md** — `execution: auto` (read-only, verified locators) → can be automated; `status: ❌ Not implemented`.
-- **MTC-<SUITE>-NNN.md** — `execution: manual` (full generation/submit, security/XSS, UI-UX/visual, irreversible actions) → NOT automated; `status: 📋 Manual`.
+- **ATC-<SUITE>-NNN.md** — `execution: auto` (state checks and page-only actions, verified locators) → can be automated; `status: ❌ Not implemented`.
+- **MTC-<SUITE>-NNN.md** — `execution: manual` (server or session writes, security/XSS, UI-UX/visual) → NOT automated; `status: 📋 Manual`.
 
 Each case: frontmatter (id/suite/priority P1-3/type/execution/status/automation) + Preconditions + Steps + Expected + **Selectors** (recorded `getByRole` locators) + Traceability. Language = the language of the checklist/page.
 Metrics: grounding, verified_ratio, test_case_quality, methodology_adherence, **checklist_coverage** (semantic, cross-language), Pilot verdict.
