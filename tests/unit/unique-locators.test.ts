@@ -54,6 +54,15 @@ describe("codegen uses only locators that resolve to one visible element (#279)"
   it("the lint refuses a locator for an element outside the viewport", () => {
     const known: KnownElement[] = [el("link", "Skip", { offViewport: true })];
     expect(lintErrors(suite("await page.getByRole('link', { name: 'Skip', exact: true }).click();"), known).map((f) => f.kind)).toEqual(["ambiguous-locator"]);
+    expect(lintErrors(suite("await page.getByRole('link', { name: 'Skip', exact: true })\n  .hover();"), known).map((f) => f.kind)).toEqual(["ambiguous-locator"]);
+  });
+
+  it("an assertion on an element outside the viewport passes: only acting on it needs the viewport (#329)", () => {
+    const known: KnownElement[] = [el("link", "Skip to content", { offViewport: true })];
+    const kinds = (code: string): string[] => lintErrors(suite(code), known).map((f) => f.kind);
+    expect(kinds("await expect(page.getByRole('link', { name: 'Skip to content', exact: true })).toBeAttached();")).toEqual([]);
+    expect(kinds("await expect(page.getByRole('link', { name: 'Skip to content', exact: true })).toHaveCount(1);")).toEqual([]);
+    expect(kinds("const skip = page.getByRole('link', { name: 'Skip to content', exact: true });")).toEqual([]);
   });
 });
 
