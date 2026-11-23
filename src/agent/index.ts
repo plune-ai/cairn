@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { resolve, dirname, basename, join, relative, sep } from "node:path";
 import { readFile, readdir, rm } from "node:fs/promises";
-import { ARTIFACT_SCHEMA_VERSION } from "../artifacts/contract.js";
+import { ARTIFACT_SCHEMA_VERSION, withTraceUrl } from "../artifacts/contract.js";
 import { makeGateway } from "../browser/index.js";
 import { ApiTrafficRecorder, parseApiOrigins, writeTrafficSpec } from "../browser/api-traffic.js";
 import { applyEnvironment, EnvironmentConfigError, redact, writeTempSession } from "../environment/index.js";
@@ -600,7 +600,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
           url: out.study.url,
           mode: "explore",
           pageSemantics: out.analysis.pageSemantics,
-          testCases: out.testCases,
+          // Each case links to the run's trace when tracing is on and gives a publishable address; else no key.
+          testCases: withTraceUrl(out.testCases, await telemetry.traceUrl?.(onProgress)),
           validation,
           scores,
           pilot,
@@ -973,7 +974,8 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           mode: "design",
           suite,
           pageSemantics: out.analysis.pageSemantics,
-          testCases: out.testCases,
+          // Each case links to the run's trace when tracing is on and gives a publishable address; else no key.
+          testCases: withTraceUrl(out.testCases, await telemetry.traceUrl?.(onProgress)),
           // #219: the run dir moves (CI artifact, Plune), so the report keeps each case file relative to it, with /.
           testCaseFiles: testCaseFiles.map((f) => relative(runWriter.dir, f).split(sep).join("/")),
           scores,
