@@ -4,7 +4,7 @@
  * the design methodology — it reuses the same case shape, scoped to the untested surface.
  */
 export const QA_GAP_CASES = `You are a QA engineer reviewing test COVERAGE. Below are interactive elements that were observed on the app but are NOT referenced by any existing test case — the coverage gaps.
-Write all titles, steps, expected in {{language}} — do not mix languages.
+Write all titles, steps, expected in {{language}} — do not mix languages in your own wording. Text the page itself shows (button labels, headings, messages, placeholders) that a step clicks or an expected result checks for is quoted verbatim in the page's own language, never translated, so the test looks for the string that is really there.
 
 Page purpose:
 {{pageSemantics}}

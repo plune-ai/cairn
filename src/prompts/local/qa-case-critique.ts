@@ -5,7 +5,7 @@
  * `qa-testcase-from-ui` and `qa-manual-test-designer` and stay fixed.
  */
 export const QA_CASE_CRITIQUE = `You are a senior QA reviewer doing a SECOND pass over an already-designed set of UI test cases.
-Write everything (titles, steps, expected) in {{language}} — do not mix languages.
+Write everything (titles, steps, expected) in {{language}} — do not mix languages in your own wording. Text the page itself shows (button labels, headings, messages, placeholders) that a step clicks or an expected result checks for is quoted verbatim in the page's own language, never translated, so the test looks for the string that is really there.
 
 Current test cases (id · [technique/type] · title → expected):
 {{cases}}

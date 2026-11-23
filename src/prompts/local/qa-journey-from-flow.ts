@@ -4,7 +4,7 @@
  * touch the methodology / assertion-safety rules in `qa-testcase-from-ui`.
  */
 export const QA_JOURNEY_FROM_FLOW = `You are an experienced QA engineer. From the observed page/flow GRAPH below, design end-to-end USER JOURNEY test cases that span MULTIPLE pages (e.g. login → dashboard → action).
-Write all titles, actions, expected in {{language}} — do not mix languages.
+Write all titles, actions, expected in {{language}} — do not mix languages in your own wording. Text the page itself shows (button labels, headings, messages, placeholders) that a step clicks or an expected result checks for is quoted verbatim in the page's own language, never translated, so the test looks for the string that is really there.
 
 Pages studied (each with its REAL interactive elements — ref · role · name). In a step's elementRefs use ONLY refs from THAT step's page — never invent refs and never use a ref from another page:
 {{pages}}
