@@ -487,7 +487,8 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
               out.analysis.pageSemantics,
               router.invoke("judge", cfg.models.judge),
               prompts,
-              validation ? { validation, url: out.study.url, goal: input.goal } : undefined,
+              // #331: an explore run with no automated test still ran: no test is evidence of its own, not "no run"
+              { validation: validation ?? { results: [], greenRatio: 0, flakyCount: 0 }, url: out.study.url, goal: input.goal },
             )),
           );
         } catch {

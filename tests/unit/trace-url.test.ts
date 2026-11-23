@@ -141,6 +141,8 @@ const fake = vi.hoisted(() => ({
   client: undefined as undefined | { score: { create: (body: Record<string, unknown>) => void } },
   /** What the run handed the root trace: its attributes and what its body returned. */
   traces: [] as { attrs: unknown; result: unknown }[],
+  /** The arguments of each case-quality judge call. */
+  judgeCalls: [] as unknown[][],
 }));
 vi.mock("../../src/telemetry/index.js", async (orig) => ({
   ...(await orig<typeof import("../../src/telemetry/index.js")>()),
@@ -163,7 +165,10 @@ vi.mock("../../src/browser/index.js", async (orig) => ({
 }));
 vi.mock("../../src/eval/judge.js", async (orig) => ({
   ...(await orig<typeof import("../../src/eval/judge.js")>()),
-  judgeTestCases: async () => [],
+  judgeTestCases: async (...args: unknown[]) => {
+    fake.judgeCalls.push(args);
+    return [];
+  },
 }));
 vi.mock("../../src/eval/pilot.js", async (orig) => ({
   ...(await orig<typeof import("../../src/eval/pilot.js")>()),
@@ -276,5 +281,27 @@ describe.each([
     expect(fake.traces).toHaveLength(1);
     expect((fake.traces[0]!.attrs as { input?: unknown }).input).toEqual({ url: "https://app.test/login", runId: result.runId });
     expect((fake.traces[0]!.result as { testCases: unknown[] }).testCases).toHaveLength(2);
+  });
+});
+
+// #331: an explore run that generated no automated test still ran; the judge gets its (empty) results, not the
+// run-less prompt. Design has no run at all.
+describe("the case-quality judge · run results", () => {
+  const judgeRun = async (run: typeof runDesign | typeof runExploration): Promise<unknown> => {
+    fake.judgeCalls.length = 0;
+    const config = loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used" });
+    await run({ url: "https://app.test/login", config, runsBaseDir: base, knowledgeDir: join(base, "none"), onProgress: () => undefined });
+    expect(fake.judgeCalls).toHaveLength(1);
+    return fake.judgeCalls[0]![4];
+  };
+  it("explore with no validation hands the judge empty results", async () => {
+    expect(await judgeRun(runExploration)).toEqual({
+      validation: { results: [], greenRatio: 0, flakyCount: 0 },
+      url: "https://app.test/login",
+      goal: undefined,
+    });
+  });
+  it("design hands the judge no run", async () => {
+    expect(await judgeRun(runDesign)).toBeUndefined();
   });
 });
