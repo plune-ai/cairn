@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-23
+
+### Changed
+
+- **Actions whose effect stays in the page are automated (#333).** The case designer allowed `execution: "auto"` only for read-only checks and treated Add and Remove as destructive by name, so a page's core action (adding an element, pressing a key, answering a browser dialog, sorting a table) was always a manual case and the suite only checked that its controls were visible. Now click, toggle, typing, key press, hover, a browser dialog, adding or removing an element, opening or closing an overlay and sorting or filtering a table are automated, and only an action that changes data on a server or the session (a submit that sends data, deleting a saved record, a payment, sending a message, signing out) stays manual with a visibility check. An action is judged by what it does, not by a word in its label. The rule is the same in the case, gap, critique, journey and code prompts; the code writer handles a dialog with `page.once('dialog', …)` before the click. The write guard still blocks any write a test sends unless `--allow-mutations` names the origin.
+- **The case-quality judge sees the run's test results (#327).** With a run, `judgeTestCases` uses the new `judge-test-cases-run` prompt: each case with its test status (`passed`, `failed`, `flaky`, `manual`, `not run`), the results that match no case, the share of passing tests, the URL and the goal. It scores `test_case_quality` on three levels: 0 when no automated test passed or the cases describe what the page does not have, 0.5 when the page's core action is not confirmed by a passing test, 1 when it is. A page-only core action left manual is not confirmed. Without a run (`design`, experiments) the old prompt stays and its comment starts with `no run (cases only):`.
+
+### Fixed
+
+- **An `explore` run with no generated test still gives the judge its results (#331).** When every case was manual there was no validation report and the judge took the run-less path; it now gets an empty result list, which scores 0.
+- **An assertion on an element outside the viewport passes the lint (#329).** The off-viewport check refused any locator for such an element, so a `toBeAttached()` on a "Skip to content" link failed the whole spec file; it now refuses only a locator the test acts on (click, fill, press, hover and the like).
+- **Page text in cases is quoted verbatim (#325).** With `{{language}}` other than the page's own, the case prompts translated button labels and messages, and a text check then looked for a string the page never shows. The case's own wording follows `{{language}}`; text the page shows stays as the page shows it.
+- **The Langfuse root trace carries the run's input and output (#323).** The trace showed `undefined` for both.
+- **`design` sends its run scores to Langfuse like `explore` (#321).**
+
 ## [0.12.0] - 2026-11-23
 
 ### Added
