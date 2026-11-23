@@ -30,6 +30,25 @@ export interface DecisionTrace {
   minConfidence: number;
 }
 
+/** What the root trace carries besides its name: metadata, and the run's input (shown as the trace Input). */
+export interface TraceAttrs {
+  metadata: Record<string, unknown>;
+  input: unknown;
+}
+
+/**
+ * The run result as the trace Output: as is, but without the page screenshot (`study.screenshotB64`, base64 —
+ * it would bloat every trace; the screenshot stays in the run folder).
+ */
+export function traceOutput(result: unknown): unknown {
+  if (typeof result !== "object" || result === null || !("study" in result)) return result;
+  const study = (result as { study: unknown }).study;
+  if (typeof study !== "object" || study === null) return result;
+  const rest = { ...(study as Record<string, unknown>) };
+  delete rest["screenshotB64"];
+  return { ...result, study: rest };
+}
+
 export interface Telemetry {
   enabled: boolean;
   callbackHandler?: CallbackHandler;
@@ -47,7 +66,7 @@ export interface Telemetry {
    * generations are collected under ONE trace (rather than N separate traces). When
    * telemetry is disabled, `fn` is called directly (no-op path). (Task 2, ADR-0012)
    */
-  runInTrace: <T>(name: string, metadata: Record<string, unknown>, fn: () => Promise<T>) => Promise<T>;
+  runInTrace: <T>(name: string, attrs: TraceAttrs, fn: () => Promise<T>) => Promise<T>;
   /**
    * The web address of the active run trace, for `report.json` — call it inside `runInTrace`. Resolves to
    * `undefined`, after ONE `warn` line, when no address fit for a report can be built. Absent when tracing is off.
@@ -177,13 +196,15 @@ export async function initTelemetry(cfg: AppConfig): Promise<Telemetry> {
    * Wraps `fn` in a root Langfuse span via `startActiveObservation`, so that all nested
    * LangChain CallbackHandler generations attach to ONE trace instead of N separate traces.
    * The span name becomes the Langfuse trace name. `metadata` is stored as span metadata.
-   * (Task 2 — real API: `startActiveObservation(name, fn)`, callback receives `LangfuseSpan`;
-   * `span.updateTrace` does NOT exist in v5.4.1 — use `span.update({ metadata })` instead.)
+   * With `@langfuse/*` v6 the trace takes its Input and Output from the root observation (there is no
+   * trace-level setter), so the root span carries the run's input and its result as output.
    */
-  const runInTrace = <T>(name: string, metadata: Record<string, unknown>, fn: () => Promise<T>): Promise<T> =>
+  const runInTrace = <T>(name: string, attrs: TraceAttrs, fn: () => Promise<T>): Promise<T> =>
     lfTracing.startActiveObservation(name, async (span) => {
-      span.update({ metadata });
-      return fn();
+      span.update({ metadata: attrs.metadata, input: attrs.input });
+      const result = await fn();
+      span.update({ output: traceOutput(result) });
+      return result;
     }) as Promise<T>;
 
   const recordDecision = (d: DecisionTrace): void => {
