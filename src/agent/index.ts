@@ -11,7 +11,7 @@ import { ensureBrowsersInstalled } from "../browser/preflight.js";
 import { RoleRouter, type CostReport } from "../llm/index.js";
 import { CallBudget } from "../llm/structured.js";
 import { PromptRegistry } from "../prompts/index.js";
-import { initTelemetry } from "../telemetry/index.js";
+import { initTelemetry, type Telemetry } from "../telemetry/index.js";
 import { ArtifactStore, rmrf, type RunWriter } from "../artifacts/index.js";
 import { resolveProjectTarget, ejectSuiteToProject } from "../project/index.js";
 import { deadClicksOf, renderReportMd } from "../artifacts/report.js";
@@ -226,6 +226,22 @@ async function ejectToProjectIfRequested(opts: {
       `${target.configPath ? ` (config: ${displayPath(target.configPath)})` : ""}${renameNote}${skipNote}`,
   );
   return { projectSpecFiles: res.written, projectTestDir: res.testDir };
+}
+
+/**
+ * Best-effort: write the run's scores to Langfuse against its trace (requires a self-hosted instance).
+ * Call it inside `runInTrace`, where the trace is still active and `last_trace_id` is set.
+ */
+function sendScores(telemetry: Telemetry, scores: readonly Score[]): void {
+  const traceId = telemetry.callbackHandler?.last_trace_id;
+  if (!telemetry.enabled || !telemetry.client || !traceId) return;
+  try {
+    for (const sc of scores) {
+      telemetry.client.score.create({ traceId, name: sc.name, value: sc.value, comment: sc.comment, dataType: "NUMERIC" });
+    }
+  } catch {
+    // best-effort
+  }
 }
 
 /**
@@ -489,24 +505,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
         }
         onProgress(`score — ${scores.length} metrics`);
 
-        // Best-effort: write scores to Langfuse against the trace (requires a self-hosted instance).
-        // The trace is still active here (inside runInTrace) so last_trace_id is set.
-        const traceId = telemetry.callbackHandler?.last_trace_id;
-        if (telemetry.enabled && telemetry.client && traceId) {
-          try {
-            for (const sc of scores) {
-              telemetry.client.score.create({
-                traceId,
-                name: sc.name,
-                value: sc.value,
-                comment: sc.comment,
-                dataType: "NUMERIC",
-              });
-            }
-          } catch {
-            // best-effort
-          }
-        }
+        sendScores(telemetry, scores);
 
         // Pilot supervisor: a holistic verdict for the run (idea from explorbot).
         let pilot: PilotVerdict | undefined;
@@ -921,6 +920,7 @@ export async function runDesign(input: ExploreInput): Promise<DesignResult> {
           );
         }
 
+        sendScores(telemetry, scores); // #321: design sent none, explore did
         await runWriter.writeStudy(out.study);
         if (out.study.screenshotB64) await runWriter.writeScreenshot(out.study.screenshotB64);
         await runWriter.writeAria(out.study.ariaYaml);

@@ -135,14 +135,19 @@ describe("initTelemetry · tracing off", () => {
 
 // --- report.json, as `design` writes it. No browser and no model: the graph, the preflight, the gateway and the
 // judge are stubbed, and the telemetry is a fake whose trace link each test sets.
-const fake = vi.hoisted(() => ({ traceUrl: undefined as undefined | ((warn: (line: string) => void) => Promise<string | undefined>) }));
+const fake = vi.hoisted(() => ({
+  traceUrl: undefined as undefined | ((warn: (line: string) => void) => Promise<string | undefined>),
+  /** A fake Langfuse client: set, the run has a trace id and somewhere to send its scores. */
+  client: undefined as undefined | { score: { create: (body: Record<string, unknown>) => void } },
+}));
 vi.mock("../../src/telemetry/index.js", async (orig) => ({
   ...(await orig<typeof import("../../src/telemetry/index.js")>()),
   initTelemetry: async () => ({
-    enabled: fake.traceUrl !== undefined,
+    enabled: fake.traceUrl !== undefined || fake.client !== undefined,
     shutdown: async () => undefined,
     runInTrace: (_n: string, _m: unknown, fn: () => Promise<unknown>) => fn(),
     ...(fake.traceUrl ? { traceUrl: fake.traceUrl } : {}),
+    ...(fake.client ? { client: fake.client, callbackHandler: { last_trace_id: "trace-321" } } : {}),
   }),
 }));
 vi.mock("../../src/browser/preflight.js", () => ({ ensureBrowsersInstalled: () => undefined }));
@@ -227,5 +232,27 @@ describe.each([
     const { raw, progress } = await runReport(run);
     expect(raw).not.toContain("traceUrl");
     expect(progress.filter((l) => /trace link/.test(l))).toHaveLength(1);
+  });
+});
+
+// #321: `design` sent no score to Langfuse while `explore` did — both send every metric of the report.
+describe.each([
+  ["design", runDesign],
+  ["explore", runExploration],
+] as const)("%s · scores reach Langfuse", (_mode, run) => {
+  it("sends each metric of the report once, against the run's trace", async () => {
+    const create = vi.fn();
+    fake.traceUrl = undefined;
+    fake.client = { score: { create } };
+    try {
+      const { raw } = await runReport(run);
+      const scores = (JSON.parse(raw) as { scores: { name: string; value: number }[] }).scores;
+      expect(scores.length).toBeGreaterThan(0);
+      expect(create.mock.calls.map(([b]) => [b.traceId, b.name, b.value, b.dataType])).toEqual(
+        scores.map((sc) => ["trace-321", sc.name, sc.value, "NUMERIC"]),
+      );
+    } finally {
+      fake.client = undefined;
+    }
   });
 });
