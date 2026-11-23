@@ -3,9 +3,10 @@
 > **Status:** ✅ verified on `cvc.valtive.io` (behind a Google login). The procedure minimizes the risk to real data.
 
 ## Safety (why it's safe)
-- **read-only by default:** the design/code do `toBeVisible/toBeEnabled/toBeChecked`, not the consequences of actions.
-- **destructive controls** (Delete/Submit/Convert/Log out/Add) → only a VISIBILITY check, without a click.
-- **MTC/manual cases** (full generation, security, irreversible actions) → NOT automated (`automate` skips them).
+- **page-only actions are automated:** click, toggle, typing, key press, hover, a browser dialog, adding or removing an element; their effect stays in the browser.
+- **server or session writes** (a submit that sends data, deleting a saved record, payment, sign-out) → only a VISIBILITY check, without a click. An action is judged by what it does, not by a word in its label.
+- **write guard:** a request a test sends that would change data on the target is blocked unless `--allow-mutations` names that origin.
+- **MTC/manual cases** (server writes, security, visual) → NOT automated (`automate` skips them).
 - **expired-session detection:** if there's a redirect to login → a warning, not blind testing.
 
 ## Steps

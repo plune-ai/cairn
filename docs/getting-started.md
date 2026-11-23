@@ -12,10 +12,13 @@ and repairs failures. You stay in control: review the cases first, automate only
 
 ## Two kinds of test case: ATC vs MTC
 
-- **ATC — Automatable Test Case.** Read-only checks (visibility, enabled state, text) on elements with
-  reliable, verified locators. The bot generates Playwright code for these.
-- **MTC — Manual Test Case.** Things a bot shouldn't drive blindly: full form submission, security/XSS,
-  visual/UX judgment, irreversible actions. Left for a human to run.
+- **ATC — Automatable Test Case.** State checks (visibility, enabled state, text) and actions whose effect stays
+  in the page (click, toggle, typing, key press, hover, a browser dialog, adding or removing an element) on
+  elements with reliable, verified locators. The bot generates Playwright code for these.
+- **MTC — Manual Test Case.** Things a bot shouldn't drive blindly: an action that changes data on a server or the
+  session (a submit that sends data, deleting a saved record, payment, sign-out), security/XSS, visual/UX judgment.
+  Left for a human to run. Any write a generated test still sends is blocked by the write guard unless
+  `--allow-mutations` names the origin.
 
 If you review an MTC and decide it really is safe to automate, **promote** it — see Step 5.
 

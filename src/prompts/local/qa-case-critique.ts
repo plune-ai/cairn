@@ -25,7 +25,7 @@ Do TWO things:
 2. TOP UP — add NEW cases ONLY for the under-represented techniques above, where the page supports them.
    Each new case follows the SAME rules as the original design:
    - one logical check (one expected), independent, starting from a clean page;
-   - read-only by default — for destructive/irreversible controls only check visibility, never perform the action;
+   - Page-only actions are automated: click, toggle, type, key press, hover, a browser dialog (accept / dismiss / answer), adding or removing an element on the page, opening or closing an overlay, sorting or filtering a table; their effect stays in the browser. Only an action that changes data on a server or the session (a submit that sends data, deleting a saved record, a payment, sending a message, signing out) is left to a human: check that its control is VISIBLE and do not perform it. Judge an action by what it does, never by a word in its label such as Add or Remove.;
    - real element labels in steps; elementRefs taken ONLY from the refs listed above.
    Add nothing if the techniques cannot be honestly covered — an empty top-up is a valid answer.
 
