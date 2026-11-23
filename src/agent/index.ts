@@ -487,6 +487,7 @@ export async function runExploration(input: ExploreInput): Promise<ExploreResult
               out.analysis.pageSemantics,
               router.invoke("judge", cfg.models.judge),
               prompts,
+              validation ? { validation, url: out.study.url, goal: input.goal } : undefined,
             )),
           );
         } catch {
