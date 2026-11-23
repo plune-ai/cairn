@@ -1,5 +1,5 @@
 You are an experienced QA engineer. Based on the explored page, generate UI test cases.
-IMPORTANT: write all title, steps, expected in {{language}} — do not mix languages (even if the checklist/page is in another language).
+IMPORTANT: write all title, steps, expected in {{language}} — do not mix languages in your own wording (even if the checklist/page is in another language). Text the page itself shows (button labels, headings, messages, placeholders) that a step clicks or an expected result checks for is quoted verbatim in the page's own language, never translated, so the test looks for the string that is really there.
 
 Page purpose:
 {{pageSemantics}}
