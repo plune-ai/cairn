@@ -35,6 +35,25 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 > Enablement is all-or-nothing: Langfuse turns on only when **all three** variables are set; otherwise
 > telemetry is a no-op and the bot behaves exactly as offline.
 
+## Trace link in `report.json`
+
+With tracing on, `explore` and `design` write the link to the run's trace into `report.json`: every case under
+`testCases` gets a `traceUrl`, the address of the trace in the Langfuse UI.
+
+```json
+{ "id": "tc-1", "stableId": "3f9c2a71b0de", "title": "…", "traceUrl": "https://cloud.langfuse.com/project/<project id>/traces/<trace id>" }
+```
+
+- A run is one trace, so all cases of a run carry the same link.
+- It needs no setting beyond the three `LANGFUSE_*` variables: the address is `LANGFUSE_BASE_URL` plus the project
+  the keys belong to (asked from the server once, at the end of the run) plus the trace id.
+- Without tracing the key is absent. It is never empty.
+- The link is written only when it is an `https` address with no user name, password, key, query (`?…`) or
+  fragment (`#…`) in it and at most 2048 characters; so `LANGFUSE_BASE_URL` must carry none of these. Otherwise, or when the server does not give the project within 5 seconds, the cases have no
+  `traceUrl` and the run prints one line starting with `trace link — not written to the report:`. A self-hosted
+  server reached over `http://` is traced as before, but gets no link.
+- `api` and `mcp-test` runs are not traced and write no `traceUrl`.
+
 ## Decision layer
 
 With a [decider](decider.md) on, each of its calls is a span `decider.<use>` (`decider.repair-triage`,

@@ -48,6 +48,78 @@ export interface Telemetry {
    * telemetry is disabled, `fn` is called directly (no-op path). (Task 2, ADR-0012)
    */
   runInTrace: <T>(name: string, metadata: Record<string, unknown>, fn: () => Promise<T>) => Promise<T>;
+  /**
+   * The web address of the active run trace, for `report.json` — call it inside `runInTrace`. Resolves to
+   * `undefined`, after ONE `warn` line, when no address fit for a report can be built. Absent when tracing is off.
+   */
+  traceUrl?: (warn: (line: string) => void) => Promise<string | undefined>;
+}
+
+/** The longest trace link a report carries; readers of the report keep no longer one. */
+const TRACE_URL_MAX = 2048;
+
+/**
+ * A trace address as a report may carry it, or `undefined`: https only, a host, no user name or password, no
+ * query or fragment, no space or control character, at most `TRACE_URL_MAX` characters, and none of `keys`
+ * anywhere in it, percent-encoded or in another case included. A doubled
+ * slash in the path (a base URL written with a trailing slash) is folded.
+ */
+export function reportableTraceUrl(raw: string, keys: readonly (string | undefined)[] = []): string | undefined {
+  if (!URL.canParse(raw)) return undefined;
+  const parsed = new URL(raw);
+  parsed.pathname = parsed.pathname.replace(/\/{2,}/g, "/");
+  const url = parsed.href;
+  if (parsed.protocol !== "https:" || parsed.hostname === "" || parsed.username !== "" || parsed.password !== "") return undefined;
+  if (url.length > TRACE_URL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(url)) return undefined;
+  // The SDK's address has neither; one in the base URL is where a token would ride along.
+  if (parsed.search !== "" || parsed.hash !== "") return undefined;
+  // Keys are looked for in the decoded, lower-cased address, so `%2D` for `-` or another case hides none.
+  let plain: string;
+  try {
+    plain = decodeURIComponent(url).toLowerCase();
+  } catch {
+    return undefined;
+  }
+  if (keys.some((k) => k && plain.includes(k.toLowerCase()))) return undefined;
+  return url;
+}
+
+/**
+ * The run trace's web address through the tracing SDK's own `lookup` (it knows the base URL and asks the server
+ * for the project the keys belong to), bounded by `timeoutMs` so a silent server cannot hold the report back.
+ * No address, or one `reportableTraceUrl` refuses, costs only the link: `undefined`, and one `warn` line that
+ * shows neither the address nor the lookup's error (either can carry a credential).
+ */
+export async function resolveTraceUrl(deps: {
+  traceId: string | undefined;
+  lookup: (traceId: string) => Promise<string>;
+  keys?: readonly (string | undefined)[];
+  warn: (line: string) => void;
+  timeoutMs?: number;
+}): Promise<string | undefined> {
+  const skip = (why: string): undefined => {
+    deps.warn(`trace link — not written to the report: ${why}`);
+    return undefined;
+  };
+  if (!deps.traceId) return skip("the run has no active trace");
+  let timer: NodeJS.Timeout | undefined;
+  let raw: string;
+  try {
+    raw = await Promise.race([
+      deps.lookup(deps.traceId),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), deps.timeoutMs ?? 5000);
+      }),
+    ]);
+  } catch {
+    return skip("the tracing server did not give the trace's address (check LANGFUSE_BASE_URL and the keys)");
+  } finally {
+    clearTimeout(timer);
+  }
+  return (
+    reportableTraceUrl(raw, deps.keys) ??
+    skip("the trace's address must be https, with no user name, password, key, query or fragment in it (check LANGFUSE_BASE_URL)")
+  );
 }
 
 /** The offline / not-configured / packages-absent result: a no-op so the bot runs without tracing. */
@@ -160,5 +232,13 @@ export async function initTelemetry(cfg: AppConfig): Promise<Telemetry> {
     }
   };
 
-  return { enabled: true, callbackHandler, client, shutdown, runInTrace, recordDecision, recordScore };
+  const traceUrl = (warn: (line: string) => void): Promise<string | undefined> =>
+    resolveTraceUrl({
+      traceId: lfTracing.getActiveTraceId(),
+      lookup: (traceId) => client.getTraceUrl(traceId),
+      keys: [publicKey, secretKey],
+      warn,
+    });
+
+  return { enabled: true, callbackHandler, client, shutdown, runInTrace, recordDecision, recordScore, traceUrl };
 }

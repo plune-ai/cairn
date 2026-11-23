@@ -21,6 +21,16 @@ export const ARTIFACT_SCHEMA_VERSION = 1;
 export type RunMode = "explore" | "design" | "api" | "mcp";
 
 /**
+ * The cases of a report, each with the link to the run's trace as `traceUrl` — the name a result's trace link has
+ * downstream. Without a link the cases are returned as they are: the key is absent, never empty.
+ *
+ * The trace is one per run, so every case of a run carries the same address.
+ */
+export function withTraceUrl<T extends object>(cases: readonly T[], traceUrl: string | undefined): (T & { traceUrl?: string })[] {
+  return traceUrl === undefined ? [...cases] : cases.map((c) => ({ ...c, traceUrl }));
+}
+
+/**
  * A stable, content-derived identity for a generated case.
  *
  * The ids a run hands out — `tc-3`, `ATC-LOGIN-003` — answer "which case is this *within this run*".
