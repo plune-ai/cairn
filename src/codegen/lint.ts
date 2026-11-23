@@ -229,6 +229,8 @@ export function knownFromOverlays(states: readonly { elements: readonly { role: 
 const GET_BY_ROLE_CALL = /getByRole\(\s*(['"])(\w+)\1\s*,\s*\{\s*name:\s*(['"])((?:\\.|(?!\3).)*)\3([^}]*)\}\s*\)/g;
 /** Roles a test acts on: a locator for one of them that matches nothing the page has was made up. */
 const ACTED_ON = new Set(["button", "link", "menuitem", "tab", "checkbox", "radio", "switch", "textbox", "combobox", "option"]);
+/** An action chained right after a locator call (also on the next line), the only use that needs the element on screen. */
+const ACTION_NEXT = /^\s*\.\s*(?:click|dblclick|fill|press|pressSequentially|type|hover|tap|check|uncheck|setChecked|selectOption|dragTo|focus)\s*\(/;
 
 /**
  * Why a `page.getByRole(role, { name })` in `text` does not resolve to one visible element, judged by the elements read
@@ -251,7 +253,10 @@ function ambiguousLocators(text: string, known: readonly KnownElement[]): [numbe
     const clash = (k: KnownElement): boolean => !!k.ambiguous || (k.count > 1 && !k.narrowedBy);
     const bad = same.length > 0 && same.every(clash) ? same[0] : undefined;
     if (bad) at(`getByRole('${role}', { name: '${name}' }) matches ${bad.count} visible elements and nothing narrows it: reach it through its dialog, row or section`);
-    else if (same.some((k) => k.offViewport)) at(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
+    // #329: only acting on it needs the viewport; an assertion (toBeAttached, toHaveCount) works off-screen. A locator kept
+    // in a variable and acted on later is left to the run, where it fails one test instead of the whole file.
+    else if (same.some((k) => k.offViewport) && ACTION_NEXT.test(text.slice(m.index! + m[0].length)))
+      at(`getByRole('${role}', { name: '${name}' }) is outside the viewport and cannot be clicked`);
     else if (same.length === 0 && ACTED_ON.has(role)) {
       const lower = name.toLowerCase();
       const hit = known.some((k) => k.role === role && k.name && (exact ? k.name === name : k.name.toLowerCase().includes(lower)));
