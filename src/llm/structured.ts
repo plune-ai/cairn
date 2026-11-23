@@ -94,9 +94,11 @@ function schemaNameOf(schema: unknown): string {
 }
 
 function structuredOutputError(schema: ZodType<unknown>, rawMsg: unknown): StructuredOutputError {
-  const m = (rawMsg ?? {}) as { content?: unknown; tool_calls?: Array<{ args?: unknown }> };
+  const m = (rawMsg ?? {}) as { content?: unknown; text?: unknown; tool_calls?: Array<{ args?: unknown }> };
   const call = m.tool_calls?.[0]?.args;
-  const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
+  // `text` joins only the text blocks: with thinking on, `content` also carries thinking blocks.
+  const text =
+    typeof m.content === "string" ? m.content : typeof m.text === "string" ? m.text : JSON.stringify(m.content ?? "");
   const rawText = call !== undefined ? JSON.stringify(call) : text;
   let parseError: string;
   try {

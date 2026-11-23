@@ -113,7 +113,7 @@ export const ProviderSchema = z.enum(["anthropic", "openrouter"]);
 
 export const ModelTierSchema = z.object({
   provider: ProviderSchema,
-  model: z.string(),                     // e.g. "claude-opus-4-8" | "deepseek/deepseek-r1"
+  model: z.string(),                     // e.g. "claude-opus-5-5" | "deepseek/deepseek-r1"
   supportsVision: z.boolean().default(false),
   temperature: z.number().optional(),    // ignored where the provider doesn't support it
 });

@@ -12,7 +12,7 @@ describe("loadConfig — profiles (ADR-0002)", () => {
     const cfg = loadConfig({ ...baseEnv });
     expect(cfg.llmProfile).toBe("anthropic");
     expect(cfg.models.reasoning.provider).toBe("anthropic");
-    expect(cfg.models.reasoning.model).toBe("claude-opus-4-8");
+    expect(cfg.models.reasoning.model).toBe("claude-opus-5-5");
     expect(cfg.models.reasoning.supportsVision).toBe(true);
     expect(cfg.models.bulk.provider).toBe("anthropic");
     expect(cfg.models.judge.provider).toBe("anthropic");
@@ -152,9 +152,9 @@ describe("loadConfig — per-role routing is additive + backward-compatible (L1-
   it("no routing config → roles undefined, profile/tier map unchanged (behaves as today)", () => {
     const cfg = loadConfig({ ...baseEnv, LLM_PROFILE: "anthropic" });
     expect(cfg.roles).toBeUndefined();
-    expect(cfg.models.reasoning.model).toBe("claude-opus-4-8");
-    expect(cfg.models.bulk.model).toBe("claude-sonnet-4-6");
-    expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+    expect(cfg.models.reasoning.model).toBe("claude-opus-5-5");
+    expect(cfg.models.bulk.model).toBe("claude-sonnet-5-5");
+    expect(cfg.models.judge.model).toBe("claude-haiku-5-5");
   });
 
   it("every LLM_PROFILE still resolves its tier map unchanged (no roles)", () => {
@@ -167,17 +167,17 @@ describe("loadConfig — per-role routing is additive + backward-compatible (L1-
     expect(cfg.roles?.worker?.provider).toBe("openrouter");
     expect(cfg.roles?.worker?.model).toBe("deepseek/deepseek-chat");
     expect(cfg.roles?.reasoner?.provider).toBe("anthropic");
-    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
+    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-5-5");
     // routing does NOT touch the profile tiers (incl. the cheap judge scorer)
-    expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+    expect(cfg.models.judge.model).toBe("claude-haiku-5-5");
   });
 
   it("LLM_ROUTING=volume-fast → worker=Anthropic Sonnet (fast codegen), reasoner=Anthropic; judge stays cheap (#110)", () => {
     const cfg = loadConfig({ ...baseEnv, LLM_PROFILE: "openrouter", LLM_ROUTING: "volume-fast" });
     expect(cfg.roles?.worker?.provider).toBe("anthropic");
-    expect(cfg.roles?.worker?.model).toBe("claude-sonnet-4-6");
+    expect(cfg.roles?.worker?.model).toBe("claude-sonnet-5-5");
     expect(cfg.roles?.reasoner?.provider).toBe("anthropic");
-    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
+    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-5-5");
     // the cheap judge scorer is NOT a role → it keeps the OpenRouter profile tier (cheap bulk stays on OpenRouter).
     expect(cfg.models.judge.provider).toBe("openrouter");
   });
@@ -193,9 +193,9 @@ describe("loadConfig — per-role routing is additive + backward-compatible (L1-
     expect(cfg.roles?.worker?.provider).toBe("groq");
     expect(cfg.roles?.worker?.model).toBe("llama-3.3-70b-versatile");
     expect(cfg.roles?.reasoner?.provider).toBe("anthropic");
-    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-4-8");
+    expect(cfg.roles?.reasoner?.model).toBe("claude-opus-5-5");
     // routing does NOT touch the profile tiers (incl. the cheap judge scorer)
-    expect(cfg.models.judge.model).toBe("claude-haiku-4-5");
+    expect(cfg.models.judge.model).toBe("claude-haiku-5-5");
   });
 
   it("LLM_ROUTING=volume stays on OpenRouter, unchanged by L1-02 (no Groq leakage)", () => {

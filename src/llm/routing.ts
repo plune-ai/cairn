@@ -56,8 +56,8 @@ export class RoleRouter {
    */
   invoke(role: string, tier: ModelTier): StructuredInvoke {
     const model = this.makeModelFn(tier, this.keys);
-    // Groq needs functionCalling (its OpenAI-compat endpoint rejects json_schema) — L1-02 fix.
-    const method = structuredMethodFor(tier.provider);
+    // Groq needs functionCalling (L1-02); the Claude 5.5 models need jsonSchema (forced tool_choice 400s).
+    const method = structuredMethodFor(tier.provider, tier.model);
     const config = this.callbacks ? { callbacks: this.callbacks } : undefined;
     const metered = meteredInvoker(model, (u, m) => this.ledger.record(role, m, u), tier.model, method, config);
     // #110: bound the whole step (incl. retries) so a slow provider fails with an actionable error

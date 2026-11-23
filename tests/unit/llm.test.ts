@@ -1,8 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { z } from "zod";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
-import { resolveModelSpec, makeModel, imageBlock, structuredMethodFor, OPENROUTER_BASE_URL, GROQ_BASE_URL } from "../../src/llm/index.js";
+import {
+  resolveModelSpec,
+  makeModel,
+  imageBlock,
+  structuredMethodFor,
+  structuredInvoker,
+  OPENROUTER_BASE_URL,
+  GROQ_BASE_URL,
+} from "../../src/llm/index.js";
 import type { ModelTier } from "../../src/config/index.js";
 
 const anthropicTier: ModelTier = {
@@ -72,9 +80,66 @@ describe("structuredMethodFor — provider → withStructuredOutput method (L1-0
   it("forces functionCalling for Groq (llama-3.3-70b lacks json_schema response_format)", () => {
     expect(structuredMethodFor("groq")).toBe("functionCalling");
   });
-  it("leaves Anthropic and OpenRouter on the LangChain default (undefined)", () => {
+  it("leaves older Anthropic models and OpenRouter on the LangChain default (undefined)", () => {
+    expect(structuredMethodFor("anthropic", "claude-opus-4-8")).toBeUndefined();
     expect(structuredMethodFor("anthropic")).toBeUndefined();
-    expect(structuredMethodFor("openrouter")).toBeUndefined();
+    expect(structuredMethodFor("openrouter", "deepseek/deepseek-chat")).toBeUndefined();
+  });
+  it("uses jsonSchema (output_config.format) on the 5.5 models: their forced tool_choice answers 400", () => {
+    for (const model of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      expect(structuredMethodFor("anthropic", model)).toBe("jsonSchema");
+    }
+  });
+});
+
+describe("makeModel — request shape on the 5.5 models", () => {
+  const tier = (model: string, temperature?: number): ModelTier => ({ provider: "anthropic", model, supportsVision: false, temperature });
+  const params = (m: unknown) => (m as ChatAnthropic).invocationParams({} as never) as Record<string, unknown>;
+
+  it("temperature never reaches a 4.7+ model; the config gets a warning naming the model", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    for (const model of ["claude-opus-4-7", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      expect(params(makeModel(tier(model, 0.2), keys))).not.toHaveProperty("temperature");
+      expect(warn).toHaveBeenLastCalledWith(expect.stringContaining(model));
+    }
+    warn.mockRestore();
+  });
+  it("an older model still gets the configured temperature", () => {
+    expect(params(makeModel(tier("claude-sonnet-4-6", 0.2), keys)).temperature).toBe(0.2);
+  });
+  it("thinking is adaptive (disabled answers 400 on Opus/Sonnet 5.5) with room for thinking + reply", () => {
+    for (const model of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      const p = params(makeModel(tier(model), keys));
+      expect(p.thinking).toEqual({ type: "adaptive" });
+      expect(p.max_tokens).toBe(16000);
+    }
+  });
+  it("the request a 5.5 structured call sends: output_config.format, no forced tool_choice, adaptive thinking, no temperature", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    // Capture the wire body; answer 400 so neither the SDK nor LangChain retries.
+    vi.stubGlobal("fetch", async (_url: unknown, init?: { body?: unknown }) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "stub" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (const model of ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]) {
+        const invoke = structuredInvoker(makeModel(tier(model, 0.3), keys), structuredMethodFor("anthropic", model));
+        await expect(invoke(z.object({ a: z.string() }), [["user", "hi"]])).rejects.toThrow();
+        const body = bodies.at(-1) ?? {};
+        expect(body.model).toBe(model);
+        expect(body.tool_choice).toBeUndefined();
+        expect((body.output_config as { format?: { type?: string } } | undefined)?.format?.type).toBe("json_schema");
+        expect(body.thinking).toEqual({ type: "adaptive" });
+        expect(body).not.toHaveProperty("temperature");
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
   });
 });
 

@@ -36,19 +36,19 @@ export const PRESETS: PresetSpec[] = [
     name: "default",
     routing: undefined,
     requiredKeys: ["ANTHROPIC_API_KEY"],
-    models: { worker: "claude-sonnet-4-6", reasoner: "claude-opus-4-8" },
+    models: { worker: "claude-sonnet-5-5", reasoner: "claude-opus-5-5" },
   },
   {
     name: "volume",
     routing: "volume",
     requiredKeys: ["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY"],
-    models: { worker: "deepseek/deepseek-chat", reasoner: "claude-opus-4-8" },
+    models: { worker: "deepseek/deepseek-chat", reasoner: "claude-opus-5-5" },
   },
   {
     name: "fast",
     routing: "fast",
     requiredKeys: ["GROQ_API_KEY", "ANTHROPIC_API_KEY"],
-    models: { worker: "llama-3.3-70b-versatile", reasoner: "claude-opus-4-8" },
+    models: { worker: "llama-3.3-70b-versatile", reasoner: "claude-opus-5-5" },
   },
 ];
 

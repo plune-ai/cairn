@@ -315,11 +315,11 @@ export function buildProgram(): Command {
         {
           designInvoke: structuredInvoker(
             makeModel(config.models.reasoning, keys),
-            structuredMethodFor(config.models.reasoning.provider),
+            structuredMethodFor(config.models.reasoning.provider, config.models.reasoning.model),
           ),
           judgeInvoke: structuredInvoker(
             makeModel(config.models.judge, keys),
-            structuredMethodFor(config.models.judge.provider),
+            structuredMethodFor(config.models.judge.provider, config.models.judge.model),
           ),
         },
         { target: opts.target },

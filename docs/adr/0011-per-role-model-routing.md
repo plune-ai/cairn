@@ -31,7 +31,7 @@ The cheap LLM-as-judge scorer (`judgeTestCases`, `judgeChecklistCoverage`) keeps
 
 ### 2. Config / env override (additive over `LLM_PROFILE`)
 
-- `LLM_ROUTING=<preset>` selects a named **routing preset**. Built-in: **`volume`** = `worker`→cheap OpenRouter (`deepseek/deepseek-chat`) + `reasoner`→Anthropic (`claude-opus-4-8`); **`fast`** = `worker`→Groq (`llama-3.3-70b-versatile`) + `reasoner`→Anthropic (`claude-opus-4-8`) — see the L1-02 addendum.
+- `LLM_ROUTING=<preset>` selects a named **routing preset**. Built-in: **`volume`** = `worker`→cheap OpenRouter (`deepseek/deepseek-chat`) + `reasoner`→Anthropic (`claude-opus-5-5`); **`fast`** = `worker`→Groq (`llama-3.3-70b-versatile`) + `reasoner`→Anthropic (`claude-opus-5-5`) — see the L1-02 addendum.
 - `CAIRN_ROLE_WORKER` / `CAIRN_ROLE_REASONER` = `provider:model` give explicit per-role overrides (which win over a preset).
 - `LLM_PROFILE` still selects the tier map unchanged; routing layers on top (`cfg.roles?`). Unknown preset / unknown role → **warn + fall back** to the tier default. A routed role with a missing provider key → error naming **role + provider**.
 - CLI: `--routing <preset>` on `explore` / `design` / `automate`.

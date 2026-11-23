@@ -25,13 +25,18 @@ The config maps **each tier → `{ provider, model, supportsVision }`**. Profile
 
 | Tier | `anthropic` (quality, default) | `openrouter` (economy) |
 |------|------------------------------|--------------------------|
-| reasoning | `claude-opus-4-8` | `deepseek/deepseek-r1` |
-| bulk (codegen) | `claude-sonnet-4-6` | `deepseek/deepseek-chat` / `qwen/qwen-2.5-72b-instruct` |
-| judge (cheap) | `claude-haiku-4-5` | `qwen/qwen-2.5-72b-instruct` (or smaller) |
-| vision | `claude-opus-4-8` / `claude-haiku-4-5` | a vision model (e.g. `qwen/qwen-2-vl-72b-instruct`) |
+| reasoning | `claude-opus-5-5` | `deepseek/deepseek-r1` |
+| bulk (codegen) | `claude-sonnet-5-5` | `deepseek/deepseek-chat` / `qwen/qwen-2.5-72b-instruct` |
+| judge (cheap) | `claude-haiku-5-5` | `qwen/qwen-2.5-72b-instruct` (or smaller) |
+| vision | `claude-opus-5-5` / `claude-haiku-5-5` | a vision model (e.g. `qwen/qwen-2-vl-72b-instruct`) |
 
 The profile can be **mixed** (e.g. vision on Anthropic-Haiku, bulk+judge on OpenRouter) — the main
 cost lever: cheap models where the volume is large (codegen, judging), Claude — where quality is critical.
+
+> **2026-11-23:** the Anthropic column moved from Opus 4.8 / Sonnet 4.6 / Haiku 4.5 to the 5.5 generation
+> (Haiku 4.5 passed its "not sooner than" retirement date). On these models Cairn asks for structured output
+> through `output_config.format` (`jsonSchema`), not forced tool use, which Opus 5.5 and Sonnet 5.5 answer with
+> 400; thinking is adaptive and a configured `temperature` is dropped with a warning on Claude 4.7+.
 
 > The exact OpenRouter model ids are confirmed during setup (they move) — see Spike S6.
 

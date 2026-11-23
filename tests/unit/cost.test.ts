@@ -27,9 +27,21 @@ describe("priceFor", () => {
     expect(priceFor("m-cheap", PRICES)).toEqual({ inputPer1M: 1, outputPer1M: 2 });
     expect(priceFor("nope", PRICES)).toBeUndefined();
   });
-  it("default table prices the Anthropic profile models (claude-api skill)", () => {
+  it("default table prices the Anthropic profile models (pricing page, read 2026-11-23)", () => {
+    expect(priceFor("claude-opus-5-5", DEFAULT_PRICING)).toEqual({ inputPer1M: 4, outputPer1M: 20 });
+    expect(priceFor("claude-sonnet-5-5", DEFAULT_PRICING)).toEqual({ inputPer1M: 2, outputPer1M: 10 });
+    expect(priceFor("claude-haiku-5-5", DEFAULT_PRICING)).toMatchObject({ inputPer1M: 0.1, outputPer1M: 0.5 });
+  });
+  it("Haiku 5.5 is priced by prompt length: up to 100K input tokens 0.10/0.50, above that 0.50/2.50", () => {
+    const l = new CostLedger();
+    l.record("judge", "claude-haiku-5-5", { inputTokens: 100_000, outputTokens: 1_000_000 });
+    expect(l.report().perRole[0]?.costUsd).toBe(0.51);
+    const long = new CostLedger();
+    long.record("judge", "claude-haiku-5-5", { inputTokens: 100_001, outputTokens: 1_000_000 });
+    expect(long.report().perRole[0]?.costUsd).toBeCloseTo(2.55, 5);
+  });
+  it("the retired-soon previous generation stays priced for configs that still pin it", () => {
     expect(priceFor("claude-opus-4-8", DEFAULT_PRICING)).toEqual({ inputPer1M: 5, outputPer1M: 25 });
-    expect(priceFor("claude-sonnet-4-6", DEFAULT_PRICING)).toEqual({ inputPer1M: 3, outputPer1M: 15 });
     expect(priceFor("claude-haiku-4-5", DEFAULT_PRICING)).toEqual({ inputPer1M: 1, outputPer1M: 5 });
   });
   it("default table prices the Groq fast-preset worker (L1-02, approximate/movable)", () => {
@@ -46,6 +58,11 @@ describe("the models the profiles and routing presets name (#212)", () => {
   const named = [...Object.values(PROFILES), ...Object.values(ROUTING_PRESETS)]
     .flatMap((tiers) => Object.values(tiers))
     .flatMap((tier) => (tier ? [tier.model] : []));
+  it("every Anthropic one is the 5.5 generation (Haiku 4.5 passed its not-sooner-than date)", () => {
+    const anthropic = named.filter((m) => m.startsWith("claude-"));
+    expect(anthropic.length).toBeGreaterThan(0);
+    expect(anthropic.filter((m) => !/^claude-(opus|sonnet|haiku)-5-5$/.test(m))).toEqual([]);
+  });
   it("every one has a price in the default table", () => {
     expect(named.filter((model) => priceFor(model, DEFAULT_PRICING) === undefined)).toEqual([]);
   });
