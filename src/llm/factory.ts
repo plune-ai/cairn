@@ -7,12 +7,32 @@ import type { StructuredMethod } from "./structured.js";
 /**
  * Which `withStructuredOutput` method to use for a provider. Groq's OpenAI-compatible endpoint
  * rejects `response_format: json_schema` for most models (e.g. llama-3.3-70b-versatile → HTTP 400),
- * so force `functionCalling` (tool-calling), which those models support (L1-02 fix). Anthropic and
- * OpenRouter keep the LangChain default (`undefined`).
+ * so force `functionCalling` (tool-calling), which those models support (L1-02 fix). OpenRouter and the
+ * older Claude models keep the LangChain default (`undefined`).
  */
-export function structuredMethodFor(provider: ModelTier["provider"]): StructuredMethod | undefined {
-  return provider === "groq" ? "functionCalling" : undefined;
+export function structuredMethodFor(provider: ModelTier["provider"], model = ""): StructuredMethod | undefined {
+  if (provider === "groq") return "functionCalling";
+  // LangChain's Anthropic default is functionCalling = forced `tool_choice: {type: "tool"}`, which Opus 5.5 and
+  // Sonnet 5.5 answer with 400; `jsonSchema` sends `output_config.format` instead (structured outputs).
+  if (provider === "anthropic" && isAdaptiveGeneration(model)) return "jsonSchema";
+  return undefined;
 }
+
+/** Claude 4.7 and later reject a non-default `temperature` (and API version 2026-10-21 drops it everywhere). */
+export function rejectsSampling(model: string): boolean {
+  return /^claude-(opus-4-[7-9]|(opus|sonnet|haiku)-[5-9]|fable|mythos)/.test(model);
+}
+
+/**
+ * The 5.x generation thinks by default; Opus 5.5 and Sonnet 5.5 answer `thinking: {type: "disabled"}` (LangChain's
+ * default) with 400, so these get adaptive thinking, structured outputs and room for thinking plus the reply.
+ */
+function isAdaptiveGeneration(model: string): boolean {
+  return /^claude-((opus|sonnet|haiku)-[5-9]|fable|mythos)/.test(model);
+}
+
+/** Non-streaming cap that fits thinking + reply under the SDK's HTTP timeout. */
+const ADAPTIVE_MAX_TOKENS = 16000;
 
 /** OpenRouter — OpenAI-compatible API; we connect via the ChatOpenAI baseURL (ADR-0002). */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
@@ -101,7 +121,11 @@ export function makeModel(tier: ModelTier, keys: ProviderKeys): BaseChatModel {
   const temperature = spec.temperature !== undefined ? { temperature: spec.temperature } : {};
 
   if (spec.provider === "anthropic") {
-    return new ChatAnthropic({ model: spec.model, apiKey: spec.apiKey, ...temperature });
+    if (spec.temperature !== undefined && rejectsSampling(spec.model)) {
+      console.warn(`temperature ${spec.temperature} is ignored for ${spec.model}: Claude 4.7+ models reject it.`);
+      return makeAnthropic(spec.model, spec.apiKey, {});
+    }
+    return makeAnthropic(spec.model, spec.apiKey, temperature);
   }
   return new ChatOpenAI({
     model: spec.model,
@@ -109,4 +133,11 @@ export function makeModel(tier: ModelTier, keys: ProviderKeys): BaseChatModel {
     configuration: { baseURL: spec.baseURL },
     ...temperature,
   });
+}
+
+function makeAnthropic(model: string, apiKey: string, temperature: { temperature?: number }): ChatAnthropic {
+  const adaptive = isAdaptiveGeneration(model)
+    ? { thinking: { type: "adaptive" as const }, maxTokens: ADAPTIVE_MAX_TOKENS }
+    : {};
+  return new ChatAnthropic({ model, apiKey, ...temperature, ...adaptive });
 }

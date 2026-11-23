@@ -7,10 +7,10 @@ import type { LlmProfile, ModelsConfig, RolesConfig } from "./schema.js";
 export const PROFILES: Record<LlmProfile, ModelsConfig> = {
   // Quality, more expensive.
   anthropic: {
-    reasoning: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: true },
-    bulk: { provider: "anthropic", model: "claude-sonnet-4-6", supportsVision: false },
-    judge: { provider: "anthropic", model: "claude-haiku-4-5", supportsVision: false },
-    vision: { provider: "anthropic", model: "claude-haiku-4-5", supportsVision: true },
+    reasoning: { provider: "anthropic", model: "claude-opus-5-5", supportsVision: true },
+    bulk: { provider: "anthropic", model: "claude-sonnet-5-5", supportsVision: false },
+    judge: { provider: "anthropic", model: "claude-haiku-5-5", supportsVision: false },
+    vision: { provider: "anthropic", model: "claude-haiku-5-5", supportsVision: true },
   },
   // Economical: DeepSeek/Qwen. reasoning has no vision → the vision-tier provides Qwen-VL.
   // #212: deepseek-r1 is gone from OpenRouter (404) → its R1 successor; qwen-2-vl-72b only aliases qwen2.5-vl-72b.
@@ -22,10 +22,10 @@ export const PROFILES: Record<LlmProfile, ModelsConfig> = {
   },
   // Balanced: high-quality reasoning+vision on Anthropic, cheap bulk+judge on OpenRouter.
   mixed: {
-    reasoning: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: true },
+    reasoning: { provider: "anthropic", model: "claude-opus-5-5", supportsVision: true },
     bulk: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
     judge: { provider: "openrouter", model: "qwen/qwen-2.5-72b-instruct", supportsVision: false },
-    vision: { provider: "anthropic", model: "claude-haiku-4-5", supportsVision: true },
+    vision: { provider: "anthropic", model: "claude-haiku-5-5", supportsVision: true },
   },
 };
 
@@ -56,14 +56,14 @@ export const ROUTING_PRESETS: Record<string, RolesConfig> = {
     // supportsVision:false → identifyElements falls back to aria-only (ADR-0002, vision-optional).
     worker: { provider: "openrouter", model: "deepseek/deepseek-chat", supportsVision: false },
     // reasoner = designTestCases + Pilot verdict → quality model.
-    reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
+    reasoner: { provider: "anthropic", model: "claude-opus-5-5", supportsVision: false },
   },
   "volume-fast": {
     // worker (codegen + analyze) → Anthropic Sonnet: fast, finishes in ~90s where deepseek-chat
     // overruns interactive/MCP timeouts (#110). supportsVision:false → identifyElements aria-only.
-    worker: { provider: "anthropic", model: "claude-sonnet-4-6", supportsVision: false },
+    worker: { provider: "anthropic", model: "claude-sonnet-5-5", supportsVision: false },
     // reasoner = designTestCases + Pilot verdict → Anthropic Opus (also avoids the deepseek-r1 hang).
-    reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
+    reasoner: { provider: "anthropic", model: "claude-opus-5-5", supportsVision: false },
   },
   fast: {
     // worker → Groq llama-3.3-70b-versatile: lowest latency/cost. This model does NOT support
@@ -72,6 +72,6 @@ export const ROUTING_PRESETS: Record<string, RolesConfig> = {
     // identifyElements falls back to aria-only (ADR-0002). Model id overridable via CAIRN_ROLE_WORKER.
     worker: { provider: "groq", model: "llama-3.3-70b-versatile", supportsVision: false },
     // reasoner = designTestCases + Pilot verdict → keep the quality model (Anthropic Opus).
-    reasoner: { provider: "anthropic", model: "claude-opus-4-8", supportsVision: false },
+    reasoner: { provider: "anthropic", model: "claude-opus-5-5", supportsVision: false },
   },
 };

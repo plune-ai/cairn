@@ -13,15 +13,25 @@ export interface TokenUsage {
 export interface ModelPrice {
   inputPer1M: number;
   outputPer1M: number;
+  /** A second rate card for calls whose prompt is longer than `aboveInputTokens` (Claude Haiku 5.5). */
+  longPrompt?: { aboveInputTokens: number; inputPer1M: number; outputPer1M: number };
 }
 
 /**
  * Default price table (USD per 1M tokens). Anthropic prices are authoritative
- * (claude-api skill, 2026-06). OpenRouter prices are APPROXIMATE and move
+ * (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-11-23). OpenRouter prices are APPROXIMATE and move
  * (ADR-0002) — any model absent here yields a null (unknown) cost; tokens are
  * still counted. Override by passing a table to `CostLedger`.
  */
 export const DEFAULT_PRICING: Record<string, ModelPrice> = {
+  "claude-opus-5-5": { inputPer1M: 4, outputPer1M: 20 },
+  "claude-sonnet-5-5": { inputPer1M: 2, outputPer1M: 10 },
+  "claude-haiku-5-5": {
+    inputPer1M: 0.1,
+    outputPer1M: 0.5,
+    longPrompt: { aboveInputTokens: 100_000, inputPer1M: 0.5, outputPer1M: 2.5 },
+  },
+  // Previous generation, kept priced for configs that still pin it.
   "claude-opus-4-8": { inputPer1M: 5, outputPer1M: 25 },
   "claude-sonnet-4-6": { inputPer1M: 3, outputPer1M: 15 },
   "claude-haiku-4-5": { inputPer1M: 1, outputPer1M: 5 },
@@ -116,7 +126,8 @@ export class CostLedger {
     row.in += usage.inputTokens;
     row.out += usage.outputTokens;
     row.models.add(model);
-    const p = price ?? this.pricing[model];
+    const listed = price ?? this.pricing[model];
+    const p = listed?.longPrompt && usage.inputTokens > listed.longPrompt.aboveInputTokens ? listed.longPrompt : listed;
     if (p) row.cost += (usage.inputTokens / 1e6) * p.inputPer1M + (usage.outputTokens / 1e6) * p.outputPer1M;
     else row.costKnown = false;
     this.rows.set(role, row);

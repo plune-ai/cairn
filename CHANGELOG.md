@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`explore` and `design` write the link to the run's Langfuse trace into `report.json`.** With the three `LANGFUSE_*` variables set, every case under `testCases` carries `traceUrl`: `LANGFUSE_BASE_URL`, the project the keys belong to and the trace id, as `https://cloud.langfuse.com/project/<project id>/traces/<trace id>`. A run is one trace, so its cases share the link. Without tracing the key is absent. A link that is not an `https` address, carries a user name, password, key, query or fragment, or is longer than 2048 characters is not written, and neither is one the server gave no project for within 5 seconds: the run prints one `trace link — not written to the report: …` line and the report is otherwise the same. The field is optional and additive, so `schemaVersion` stays 1. `api` and `mcp-test` runs are not traced and write none. Before, nothing in the report pointed at the trace.
 
+### Changed
+
+- **The Anthropic models move to the 5.5 generation.** The `anthropic` profile, the `mixed` profile's Claude tiers and every routing preset's Claude role now use `claude-opus-5-5` (reasoning / reasoner), `claude-sonnet-5-5` (bulk / worker) and `claude-haiku-5-5` (judge, vision), instead of Opus 4.8, Sonnet 4.6 and Haiku 4.5; Haiku 4.5 is past its "not sooner than" retirement date. The cost table prices them at $4 / $20, $2 / $10 and $0.10 / $0.50 per 1M tokens in / out, Haiku 5.5 at $0.50 / $2.50 for a call whose prompt is over 100,000 tokens. The previous models stay priced for configs that pin them.
+- **Structured output on the Claude 5.x models goes through `output_config.format`.** LangChain's default for `ChatAnthropic` is a forced tool call, which Opus 5.5 and Sonnet 5.5 answer with 400; on these models Cairn asks for `jsonSchema` instead, turns on adaptive thinking (their `disabled` default is a 400 too) and allows 16,000 output tokens for thinking plus the answer.
+- **A configured `temperature` is no longer sent to Claude 4.7 and later.** Those models reject it; Cairn drops it and prints one warning naming the model. Older models still get it.
+
 ## [0.11.6] - 2026-11-22
 
 ### Fixed

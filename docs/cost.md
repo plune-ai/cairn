@@ -24,6 +24,13 @@ Reproduce: `npm run bench -- --url https://demoqa.com/text-box --session <name>`
 > Token counts vary run-to-run (LLM nondeterminism). OpenRouter/Groq prices are approximate and movable ([ADR-0002](adr/0002-llm-anthropic-tiering.md)); Anthropic prices follow the published rates. `$/run` is `—` when a model has no configured price (tokens are still counted).
 <!-- BENCHMARK:END -->
 
+> **Models since 2026-11-23:** the snapshot above was measured on Opus 4.8 / Sonnet 4.6 / Haiku 4.5. The
+> profiles now use Opus 5.5 ($4 / $20 per 1M tokens in / out), Sonnet 5.5 ($2 / $10) and Haiku 5.5 ($0.10 / $0.50
+> for a prompt up to 100,000 tokens, $0.50 / $2.50 above), per
+> https://platform.claude.com/docs/en/about-claude/pricing (read 2026-11-23). Their tokenizer counts the same
+> text as roughly 30% more tokens than Haiku 4.5 / Sonnet 4.6 did, and adaptive thinking adds output tokens, so
+> the per-token price drop does not carry over one-for-one: re-run `npm run bench` for a current figure.
+
 Regenerate it yourself — you need the provider keys for the presets you want measured and, ideally, a
 [captured session](sessions.md) so the target is a real page rather than `example.com`:
 
