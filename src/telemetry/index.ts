@@ -60,7 +60,8 @@ const TRACE_URL_MAX = 2048;
 
 /**
  * A trace address as a report may carry it, or `undefined`: https only, a host, no user name or password, no
- * space or control character, at most `TRACE_URL_MAX` characters, and none of `keys` anywhere in it. A doubled
+ * query or fragment, no space or control character, at most `TRACE_URL_MAX` characters, and none of `keys`
+ * anywhere in it, percent-encoded or in another case included. A doubled
  * slash in the path (a base URL written with a trailing slash) is folded.
  */
 export function reportableTraceUrl(raw: string, keys: readonly (string | undefined)[] = []): string | undefined {
@@ -70,7 +71,16 @@ export function reportableTraceUrl(raw: string, keys: readonly (string | undefin
   const url = parsed.href;
   if (parsed.protocol !== "https:" || parsed.hostname === "" || parsed.username !== "" || parsed.password !== "") return undefined;
   if (url.length > TRACE_URL_MAX || /[\s\p{Cc}\p{Cf}]/u.test(url)) return undefined;
-  if (keys.some((k) => k && url.includes(k))) return undefined;
+  // The SDK's address has neither; one in the base URL is where a token would ride along.
+  if (parsed.search !== "" || parsed.hash !== "") return undefined;
+  // Keys are looked for in the decoded, lower-cased address, so `%2D` for `-` or another case hides none.
+  let plain: string;
+  try {
+    plain = decodeURIComponent(url).toLowerCase();
+  } catch {
+    return undefined;
+  }
+  if (keys.some((k) => k && plain.includes(k.toLowerCase()))) return undefined;
   return url;
 }
 
@@ -108,7 +118,7 @@ export async function resolveTraceUrl(deps: {
   }
   return (
     reportableTraceUrl(raw, deps.keys) ??
-    skip("the trace's address must be https, with no user name, password or key in it (check LANGFUSE_BASE_URL)")
+    skip("the trace's address must be https, with no user name, password, key, query or fragment in it (check LANGFUSE_BASE_URL)")
   );
 }
 

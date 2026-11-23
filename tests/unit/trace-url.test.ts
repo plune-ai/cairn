@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config/index.js";
-import { runDesign } from "../../src/agent/index.js";
-import { initTelemetry, reportableTraceUrl, resolveTraceUrl } from "../../src/telemetry/index.js";
+import { runDesign, runExploration } from "../../src/agent/index.js";
+import { reportableTraceUrl, resolveTraceUrl } from "../../src/telemetry/index.js";
 import { withTraceUrl } from "../../src/artifacts/contract.js";
 
 // The trace link a run writes into report.json: the tracing SDK gives the address (base URL + project + trace id),
@@ -68,12 +68,16 @@ describe("resolveTraceUrl · the address of the run's trace", () => {
     ["a user and password", "https://user:hunter2@langfuse.example.test"],
     ["an address over 2048 characters", `https://langfuse.example.test/${"a".repeat(2100)}`],
     ["the secret key", `https://langfuse.example.test/${SECRET_KEY}`],
-    ["the public key", `https://langfuse.example.test/?k=${PUBLIC_KEY}`],
+    ["the public key", `https://langfuse.example.test/${PUBLIC_KEY}`],
+    ["a query", "https://langfuse.example.test/?token=abc"],
+    ["a fragment", "https://langfuse.example.test/#token=abc"],
+    ["the secret key percent-encoded", `https://langfuse.example.test/${SECRET_KEY.replaceAll("-", "%2D")}`],
+    ["the secret key in upper case", `https://langfuse.example.test/${SECRET_KEY.toUpperCase()}`],
   ])("writes no link for %s, and the one line shows neither the address nor a key", async (_what, baseUrl) => {
     const { url, lines } = await resolveWith({ lookup: sdkLookup(baseUrl) });
     expect(url).toBeUndefined();
     expect(lines).toHaveLength(1);
-    expect(lines[0]).not.toMatch(/hunter2|proj-1|sk-lf|pk-lf|\?k=/);
+    expect(lines[0]).not.toMatch(/hunter2|proj-1|langfuse\.example|token|sk.lf|pk.lf/i);
   });
 });
 
@@ -86,9 +90,20 @@ describe("reportableTraceUrl · what may go into the report", () => {
     expect(reportableTraceUrl(raw)).toBeUndefined();
   });
 
-  it("never returns an address that holds a key", () => {
-    expect(reportableTraceUrl(`https://host/project/p/traces/t?key=${SECRET_KEY}`, [PUBLIC_KEY, SECRET_KEY])).toBeUndefined();
+  it.each([
+    ["as it is", SECRET_KEY],
+    ["percent-encoded", SECRET_KEY.replaceAll("-", "%2D")],
+    ["in upper case", SECRET_KEY.toUpperCase()],
+  ])("never returns an address that holds a key %s", (_how, key) => {
+    expect(reportableTraceUrl(`https://host/project/${key}/traces/t`, [PUBLIC_KEY, SECRET_KEY])).toBeUndefined();
   });
+
+  it.each(["https://host/project/p/traces/t?token=abc", "https://host/project/p/traces/t#frag", "https://host/project/%E0%A4%A/traces/t"])(
+    "refuses %j: a query, a fragment, or a path that does not decode",
+    (raw) => {
+      expect(reportableTraceUrl(raw, [SECRET_KEY])).toBeUndefined();
+    },
+  );
 });
 
 describe("withTraceUrl · the field on each case", () => {
@@ -110,7 +125,10 @@ describe("withTraceUrl · the field on each case", () => {
 
 describe("initTelemetry · tracing off", () => {
   it("offers no trace link", async () => {
+    // The real function: this file's mock of the telemetry module replaces `initTelemetry` for the runs below.
+    const { initTelemetry } = await vi.importActual<typeof import("../../src/telemetry/index.js")>("../../src/telemetry/index.js");
     const tel = await initTelemetry(loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used" }));
+    expect(tel.enabled).toBe(false);
     expect(tel.traceUrl).toBeUndefined();
   });
 });
@@ -136,6 +154,12 @@ vi.mock("../../src/eval/judge.js", async (orig) => ({
   ...(await orig<typeof import("../../src/eval/judge.js")>()),
   judgeTestCases: async () => [],
 }));
+vi.mock("../../src/eval/pilot.js", async (orig) => ({
+  ...(await orig<typeof import("../../src/eval/pilot.js")>()),
+  pilotReview: async () => {
+    throw new Error("no model in this test");
+  },
+}));
 vi.mock("../../src/agent/graph.js", () => ({
   runExploreGraph: async () => ({
     study: { url: "https://app.test/login", screenshotB64: "", ariaYaml: "", capturedBy: "lib", elements: [] },
@@ -155,6 +179,7 @@ vi.mock("../../src/agent/graph.js", () => ({
       priority: "high",
       elementRefs: [],
     })),
+    suite: { files: [] },
     stoppedEarly: false,
     attempts: 0,
     clicks: [],
@@ -164,10 +189,10 @@ vi.mock("../../src/agent/graph.js", () => ({
 const base = await mkdtemp(join(tmpdir(), "cairn-trace-url-"));
 afterAll(() => rm(base, { recursive: true, force: true }));
 
-async function designReport(): Promise<{ raw: string; cases: Record<string, unknown>[]; progress: string[] }> {
+async function runReport(run: typeof runDesign | typeof runExploration): Promise<{ raw: string; cases: Record<string, unknown>[]; progress: string[] }> {
   const progress: string[] = [];
   const config = loadConfig({ ANTHROPIC_API_KEY: "test-key-not-used" });
-  const result = await runDesign({
+  const result = await run({
     url: "https://app.test/login",
     config,
     runsBaseDir: base,
@@ -178,10 +203,13 @@ async function designReport(): Promise<{ raw: string; cases: Record<string, unkn
   return { raw, cases: (JSON.parse(raw) as { testCases: Record<string, unknown>[] }).testCases, progress };
 }
 
-describe("design report.json · traceUrl", () => {
+describe.each([
+  ["design", runDesign],
+  ["explore", runExploration],
+] as const)("%s report.json · traceUrl", (_mode, run) => {
   it("each case carries the run's trace link when tracing gives one", async () => {
     fake.traceUrl = async () => "https://cloud.langfuse.com/project/proj-1/traces/abc";
-    const { cases } = await designReport();
+    const { cases } = await runReport(run);
     expect(cases.map((c) => c["traceUrl"])).toEqual([
       "https://cloud.langfuse.com/project/proj-1/traces/abc",
       "https://cloud.langfuse.com/project/proj-1/traces/abc",
@@ -190,13 +218,13 @@ describe("design report.json · traceUrl", () => {
 
   it("no case has the key when tracing is off", async () => {
     fake.traceUrl = undefined;
-    const { raw } = await designReport();
+    const { raw } = await runReport(run);
     expect(raw).not.toContain("traceUrl");
   });
 
   it("no case has the key when the link could not be built, and the run says so once", async () => {
     fake.traceUrl = (warn) => resolveTraceUrl({ traceId: "abc", lookup: sdkLookup("http://langfuse.local:3000"), warn });
-    const { raw, progress } = await designReport();
+    const { raw, progress } = await runReport(run);
     expect(raw).not.toContain("traceUrl");
     expect(progress.filter((l) => /trace link/.test(l))).toHaveLength(1);
   });
