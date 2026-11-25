@@ -22,6 +22,11 @@ Commands:
                                    with an --allow-* flag, run them: cairn
                                    mcp-test -- <command> [args] | --url
                                    <address>
+  propose-failures [options]       Propose variants of one eval of plune.yaml
+                                   under a provider failure, from a stub file
+                                   recorded with \`plune mock --record\`; calls no
+                                   model, runs nothing, and only reads
+                                   plune.yaml
   collect-docs|docs [options]      Walk the app's screens and overlays and write
                                    its user docs: runs/docs-<id>/docs.md with
                                    screenshots, and openapi.derived.json from
