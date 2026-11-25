@@ -95,10 +95,11 @@ function uncomment(line: string): string {
 function providerText(lines: readonly string[], indent: number, where: string): string {
   const at = lines.findIndex((l) => indentOf(l) === indent && l.trimStart().startsWith("provider:"));
   if (at < 0) return "";
-  const inline = uncomment((lines[at] as string).trimStart().slice("provider:".length)).trim();
+  // An anchor on the key line names the value and is no part of it.
+  const inline = uncomment((lines[at] as string).trimStart().slice("provider:".length)).trim().replace(/^&\S+\s*/, "");
   const first = lines.slice(at + 1).map(uncomment).find((l) => l.trim() !== "");
-  // A list may sit at the indent of its key, so the dash is looked for from there on.
-  if (inline.startsWith("[") || (inline === "" && first !== undefined && indentOf(first) >= indent && /^-(\s|$)/.test(first.trimStart()))) {
+  // A list may sit at the indent of its key, so its dash, or the bracket of a flow list, is looked for from there on.
+  if (inline.startsWith("[") || (inline === "" && first !== undefined && indentOf(first) >= indent && /^(\[|-(\s|$))/.test(first.trimStart()))) {
     throw new Error(`${where} is a list of models: plune run runs every eval once for every model of the list, and a recording answers one of them. Make the variants from a plune.yaml with one provider.`);
   }
   const text = nested(lines, "provider", indent).split("\n").map(uncomment).join("\n");

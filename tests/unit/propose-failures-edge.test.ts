@@ -98,6 +98,18 @@ describe("CLI · propose-failures · reading · what is refused", () => {
     }
   });
 
+  it("a provider list on the line after the key, in flow form or under an anchor, is refused too", () => {
+    for (const provider of [
+      ["provider:", "  [{ model: example-model-1 }, { model: example-model-2 }]"],
+      ["provider: &all", "  - model: example-model-1", "  - model: example-model-2"],
+      ["provider: &all # two", "  # first", "  [{ model: example-model-1 }, { model: example-model-2 }]"],
+    ]) {
+      expect(() => readEval(plan(provider, EVAL), "refund-answer"), provider.join("|")).toThrow(/provider.*list.*every model/s);
+    }
+    // An anchor on one provider object is still read.
+    expect(readEval(plan(["provider: &one", "  model: example-model-1"], EVAL), "refund-answer").provider).toEqual({ model: "example-model-1" });
+  });
+
   it("a provider given as a YAML alias is refused, at the root and on the eval", () => {
     expect(() => readEval(plan(["provider: *fast"], EVAL), "refund-answer")).toThrow(/alias/);
     expect(() => readEval(plan(PROVIDER, [...EVAL, "    provider: *fast"]), "refund-answer")).toThrow(/alias/);
