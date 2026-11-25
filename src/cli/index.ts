@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * CLI `cairn`. Commands: observe · explore · design · automate · dataset-add · experiment ·
- * promote · session · login · collect-docs (alias docs) · check-docs, plus GATED modality stubs (ui|e2e / unit — C1-01).
+ * promote · session · login · collect-docs (alias docs) · check-docs · propose-failures, plus GATED modality stubs (ui|e2e / unit — C1-01).
  * The umbrella router is thin: each modality command dispatches through the shared core
  * (`runModality`), so a future modality is a thin add, not a fork.
  * `lex-bot` stays as a hidden, deprecated alias (see ./lex-bot.ts) → same code path.
@@ -36,6 +36,7 @@ import type { PageStudy } from "../observe/index.js";
 // C1-01 — shared umbrella core: flag→config, the cost footer, and the modality registry/dispatch.
 import { resolveConfig, printCost, runModality, MODALITIES, makeCliProgress } from "../core/index.js";
 import { dirGlyph } from "../eval/legend.js";
+import { runProposeFailures, type ProposeFailuresOptions } from "../failure-variants/index.js";
 import { ENV_FILE_HELP, environmentForRun, loadEnvironment } from "../environment/index.js";
 
 /**
@@ -213,6 +214,20 @@ export function buildProgram(): Command {
     .option("--plune-config <file>", "with --propose-scenarios: the plune.yaml whose scenarios are not proposed again (default plune.yaml here); it is only read")
     .action(async (command: string[], opts: Record<string, unknown>) => {
       await runModality("mcp-test", { ...opts, command });
+    });
+
+  // Failure variants of an eval of plune.yaml. No model call: the answer after the failure is one the person recorded.
+  program
+    .command("propose-failures")
+    .description("Propose variants of one eval of plune.yaml under a provider failure, from a stub file recorded with `plune mock --record`; calls no model, runs nothing, and only reads plune.yaml")
+    .requiredOption("--eval <id>", "the id of the eval in plune.yaml to make variants of")
+    .requiredOption("--recording <file>", "the stub file recorded with `plune mock --record` while that eval ran; it is only read")
+    .option("--plune-config <file>", "the plune.yaml that holds the eval (default plune.yaml here); it is only read")
+    .option("--failures <kinds>", "failure kinds, comma separated: http_500,http_429,reset,timeout,slow_stream,truncated_json (default all six)")
+    .option("--out <dir>", "where to write plune.failures.proposed.yaml, stubs/ and variants/ for plune ingest (default runs/failures-<id>/)")
+    .action(async (opts: ProposeFailuresOptions) => {
+      const result = await runProposeFailures(opts, { out: (s) => void process.stdout.write(s), err: (s) => void process.stderr.write(s) });
+      if (result.exitCode !== 0) process.exitCode = result.exitCode;
     });
 
   // #24: the docs modality. `cairn docs` is its alias, as `login` is `session capture`'s.
