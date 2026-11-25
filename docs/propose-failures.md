@@ -61,7 +61,7 @@ exit 0
 | `--recording <file>` | required | the stub file recorded with `plune mock --record` while that eval ran; it is only read |
 | `--plune-config <file>` | `plune.yaml` | the `plune.yaml` that holds the eval; it is only read |
 | `--failures <kinds>` | all six | failure kinds to propose, comma separated |
-| `--out <dir>` | `runs/failures-<id>/` | where the files are written |
+| `--out <dir>` | `runs/failures-<id>/` | where the files are written: a new folder or an empty one |
 
 ## What it writes
 
@@ -98,7 +98,9 @@ Its stub file is the recorded stub with these lines added, and nothing else chan
       }
 ```
 
-The stub files hold the recorded prompts and answers, as the recording does. Read them before you commit them.
+The stub files hold the recorded prompts and answers, as the recording does. Read them before you commit them. They and
+`plune.failures.proposed.yaml` are written readable by their owner only (mode `0600`), as the recorder writes a
+recording.
 
 ## The six variants
 
@@ -111,7 +113,7 @@ The failure kinds are the six of the stub file format. For each, the variant's s
 | `-reset` | `reset`, `first: 1` | passes: the dropped connection is tried again |
 | `-timeout` | `timeout`, `first: 1` | passes: the first call ends at `provider.timeout` and is tried again |
 | `-slow-stream` | `slow_stream`, `bytes_per_sec: 256` | passes, later: the whole answer arrives slowly |
-| `-truncated-json` | `truncated_json` | the row is errored and the run exits `2`: a cut body is not tried again by CLI 0.40 |
+| `-truncated-json` | `truncated_json`, no `first` | the row is errored and the run exits `2`: every call gets half of the answer, so trying again gets the half again |
 
 A variant that cannot work is not written. It is listed as rejected, with the reason, in the output and in
 `failure-variants.json`:
@@ -121,7 +123,7 @@ A variant that cannot work is not written. It is listed as rejected, with the re
 - `-truncated-json`, when the recorded answer is a stream or a text and not JSON;
 - a variant whose id `plune.yaml` already has.
 
-When every kind is rejected the files are still written and the command exits `1`.
+When every kind asked for is rejected, nothing is written and the command exits `1` with the reasons.
 
 ## Review and run a variant
 
@@ -182,8 +184,17 @@ Each of these ends with exit `1` and writes nothing:
 ✗ propose-failures: no eval "ghost" under evals: in the plune.yaml (it is read line by line: a block list of "- id: ghost" items).
 ```
 
-(The second line is shown with the model's name replaced by `example-model`.) An eval with `mcp` is refused too: a stub
-file answers the model call of an eval without `mcp`. So is a `--failures` name that is not one of the six.
+(The second line is shown with the model's name replaced by `example-model`.) Refused the same way:
+
+- an eval with `mcp`: a stub file answers the model call of an eval without `mcp`;
+- a root `provider` that is a list of models: `plune run` runs every eval once for every model of the list, and a
+  recording answers one of them, so the other runs of the variant would error while it says it passes;
+- a `provider` given as a YAML alias (`provider: *name`, or a `<<:` merge inside it): its values are written somewhere
+  else and are not read;
+- an eval id longer than 64 characters: the texts of its variants would not fit the review queue;
+- an `--out` folder that already holds files: stub files of an earlier run would stay beside the new ones;
+- a `--failures` value that is empty or names a kind that is not one of the six;
+- a `plune.yaml` or a recording over 1 MiB.
 
 ## Limits
 
@@ -193,16 +204,17 @@ file answers the model call of an eval without `mcp`. So is a `--failures` name 
   2xx with a body. Two evals that use the same model and were recorded into one file both get their stubs in the
   variant's file; `plune run` then warns about the stubs no request reached. Record one eval per file to avoid it.
 - **`plune.yaml` is read line by line, not parsed.** `evals` has to be a block list (`- id: refund-answer` items, one
-  key per line), and the provider's `model`, `timeout` and `max_retries` plain values. An eval written another way is
-  reported as not found. A matrix of models is not read.
+  key per line), and `provider` one object whose `model`, `timeout` and `max_retries` are plain or quoted values. An
+  eval written another way is reported as not found. Comments are not read as values. A `#` line indented deeper than
+  the eval's keys is kept as text: it may be the last line of a multi-line prompt.
 - **The recording is read in the form the recorder writes it**: comment lines, then JSON. A stub file rewritten by hand
   as YAML is refused. At most 1 MiB, which is also the most `plune run` reads.
 - **A request recorded more than once keeps its last recording.** The recorder replays repeats in order; a failure that
   counts calls needs one stub per request, so the earlier recordings are left out and the output says how many.
 - **Judge calls are not stubbed.** An eval with a model-graded check still asks the real provider for the judgement, at
   its price, as in any stubbed run.
-- **Retries and the cut body follow the CLI.** The expectations in the table are those of `@plune-ai/cli` 0.40; a later
-  CLI that tries a cut body again would pass the `-truncated-json` variant.
+- **The retry expectations follow the CLI.** `first: 2` passes on the two retries the client of `@plune-ai/cli` 0.40
+  makes by default; an eval whose provider allows fewer gets fewer failed calls, or no such variant.
 
 ## See also
 

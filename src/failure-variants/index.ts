@@ -8,7 +8,7 @@
  * how the eval (its prompt, its checks, the client's retries) survives the failure, not how the user's product does.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { stableCaseId } from "../artifacts/contract.js";
 import { defaultRunsBaseDir } from "../fs/run-dir.js";
@@ -24,6 +24,8 @@ export const FAILURE_KINDS = ["http_500", "http_429", "reset", "timeout", "slow_
 export type FailureKind = (typeof FAILURE_KINDS)[number];
 /** `plune run` reads a stub file of at most 1 MiB, so a larger recording gives no variant it could run. */
 const MAX_FILE_BYTES = 1024 * 1024;
+/** The longest eval id whose variants fit the review queue: its title takes 300 characters, its explanation 400. */
+export const MAX_EVAL_ID = 64;
 /** The retries of the `plune run` client when the config names none. */
 const DEFAULT_MAX_RETRIES = 2;
 /** Slow enough to notice, fast enough to end: a 1 KiB answer takes four seconds. A person changes it in the stub file. */
@@ -73,8 +75,42 @@ function nested(lines: readonly string[], key: string, indent: number): string {
   return [lines[at], ...(end < 0 ? rest : rest.slice(0, end))].join("\n");
 }
 
+/** A line without its comment: a `#` at the start of the line or after a space, outside quotes. */
+function uncomment(line: string): string {
+  let quote = "";
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i] as string;
+    if (quote !== "") quote = c === quote ? "" : quote;
+    else if (c === '"' || c === "'") quote = c;
+    else if (c === "#" && (i === 0 || /\s/.test(line[i - 1] as string))) return line.slice(0, i);
+  }
+  return line;
+}
+
+/**
+ * The `provider` key at exactly `indent` with what is nested under it, comments taken out; empty when it is not there.
+ * Refused, not guessed: a list of providers (`plune run` then runs every eval once per model, and a recording answers
+ * one of them) and a YAML alias, whose values are written somewhere else.
+ */
+function providerText(lines: readonly string[], indent: number, where: string): string {
+  const at = lines.findIndex((l) => indentOf(l) === indent && l.trimStart().startsWith("provider:"));
+  if (at < 0) return "";
+  const inline = uncomment((lines[at] as string).trimStart().slice("provider:".length)).trim();
+  const first = lines.slice(at + 1).map(uncomment).find((l) => l.trim() !== "");
+  // A list may sit at the indent of its key, so the dash is looked for from there on.
+  if (inline.startsWith("[") || (inline === "" && first !== undefined && indentOf(first) >= indent && /^-(\s|$)/.test(first.trimStart()))) {
+    throw new Error(`${where} is a list of models: plune run runs every eval once for every model of the list, and a recording answers one of them. Make the variants from a plune.yaml with one provider.`);
+  }
+  const text = nested(lines, "provider", indent).split("\n").map(uncomment).join("\n");
+  if (inline.startsWith("*") || /<<[ \t]*:/.test(text)) throw new Error(`${where} is given as a YAML alias, which is not read here: write its model, timeout and max_retries out.`);
+  return text;
+}
+
 function providerIn(text: string): Provider {
-  const word = (key: string): string | undefined => new RegExp(`\\b${key}:[ \\t]*["']?([^\\s"',}#]+)`).exec(text)?.[1];
+  const word = (key: string): string | undefined => {
+    const m = new RegExp(`\\b${key}:[ \\t]*(?:"([^"]*)"|'([^']*)'|([^\\s"',}\\]]+))`).exec(text);
+    return m?.[1] ?? m?.[2] ?? m?.[3];
+  };
   const num = (key: string): number | undefined => (/^\d+$/.test(word(key) ?? "") ? Number(word(key)) : undefined);
   const p: Provider = {};
   const model = word("model");
@@ -90,11 +126,12 @@ function providerIn(text: string): Provider {
  * The eval `id` of a `plune.yaml`, read line by line: its lines as written and the provider it runs on (the root
  * `provider`, overridden by the eval's own).
  * Limit: not a YAML parse (Cairn has no YAML dependency). `evals` has to be a block list (`- id: x` items, one key per
- * line), and the provider's `model`, `timeout` and `max_retries` plain values; an eval written another way is
- * reported as not found.
+ * line), and the provider one object with `model`, `timeout` and `max_retries` as plain or quoted values; an eval
+ * written another way is reported as not found, and a provider that is a list or an alias is refused.
  */
 export function readEval(planText: string, id: string): SourceEval {
   if (!/^[a-z0-9_-]+$/.test(id)) throw new Error(`--eval must be an eval id of plune.yaml: lowercase letters, digits, "-" and "_" (got "${safeText(id, 60)}").`);
+  if (id.length > MAX_EVAL_ID) throw new Error(`--eval: the id is longer than ${MAX_EVAL_ID} characters, and the texts of its variants would not fit the review queue (a title of 300 characters, an explanation of 400). Give the eval a shorter id.`);
   const lines = planText.split(/\r?\n/);
   const top = lines.findIndex((l) => /^evals:[ \t]*(#.*)?$/.test(l));
   const body = top < 0 ? [] : lines.slice(top + 1);
@@ -108,7 +145,10 @@ export function readEval(planText: string, id: string): SourceEval {
     if (!isItem(evals[i] as string)) continue;
     const next = evals.findIndex((l, j) => j > i && isItem(l));
     const item = evals.slice(i, next < 0 ? evals.length : next);
-    while (item.length > 0 && idle(item.at(-1) as string)) item.pop();
+    // Blank lines and the comments above the next item are not the eval's. A `#` line indented deeper than the item is
+    // kept: it may be the last line of a block scalar, which is text of the prompt and not a comment.
+    const trailing = (l: string): boolean => l.trim() === "" || (idle(l) && indentOf(l) <= listIndent);
+    while (item.length > 0 && trailing(item.at(-1) as string)) item.pop();
     // The keys of the item sit two columns in from its dash; a deeper `id:` belongs to something nested.
     const keyIndent = listIndent + 2;
     if (!item.some((l, j) => idLine.test(l) && (j === 0 || indentOf(l) === keyIndent))) continue;
@@ -118,7 +158,7 @@ export function readEval(planText: string, id: string): SourceEval {
     return {
       id,
       block: item.map((l) => (idle(l) && indentOf(l) < listIndent ? l.trimStart() : `  ${l.slice(listIndent)}`)),
-      provider: { ...providerIn(nested(lines, "provider", 0)), ...providerIn(nested(keys, "provider", keyIndent)) },
+      provider: { ...providerIn(providerText(lines, 0, "the root provider of plune.yaml")), ...providerIn(providerText(keys, keyIndent, `the provider of eval "${id}"`)) },
     };
   }
   throw new Error(`no eval "${id}" under evals: in the plune.yaml (it is read line by line: a block list of "- id: ${id}" items).`);
@@ -187,7 +227,8 @@ function failureOf(kind: FailureKind, source: SourceEval, stubs: readonly Record
       return {
         failure: { type: kind },
         what: "half of the provider's answer arrives and the connection ends",
-        expected: "The row is errored and plune run exits 2: a cut body is not tried again by plune 0.40. Keep the variant only to pin that the eval reports the failure, not a pass.",
+        // No `first`: the stub cuts the answer of every call, so a client that tries again gets the half again.
+        expected: "The row is errored and plune run exits 2: every call gets half of the recorded answer, so no attempt gets a whole one. Keep the variant only to pin that the eval reports the failure, not a pass.",
       };
   }
 }
@@ -255,7 +296,6 @@ export function renderProposedYaml(source: SourceEval, variants: readonly Varian
       else lines.push(line);
     });
   }
-  if (variants.length === 0) lines[lines.length - 1] = "evals: []";
   return `${lines.join("\n")}\n`;
 }
 
@@ -334,10 +374,16 @@ export async function runProposeFailures(opts: ProposeFailuresOptions, io: { out
     const recorded = readRecording(await readSmall(recordingFile, "the recording", "Record the eval's own call with plune mock --record and name the file with --recording."));
     const { accepted, rejected, repeatsLeftOut } = proposeVariants(source, recorded, kinds, planText);
 
+    if (accepted.length === 0) throw new Error(`no variant can be proposed for eval "${source.id}", so nothing was written:${rejected.map((r) => `\n  ${r.id}: ${r.reason}`).join("")}`);
+    // Stub files of an earlier run would stay beside the new ones and be copied next to plune.yaml with them.
+    if ((await readdir(outDir).catch(() => [])).length > 0) throw new Error(`--out is not empty: ${shown(outDir)}. Name a new or an empty folder.`);
+
     await mkdir(join(outDir, STUBS_DIR), { recursive: true });
     await mkdir(join(outDir, VARIANTS_DIR), { recursive: true });
-    await writeFile(join(outDir, PROPOSED_FILE), renderProposedYaml(source, accepted), "utf8");
-    for (const v of accepted) await writeFile(join(outDir, stubPath(v)), renderStubFile(v, source, basename(recordingFile)), "utf8");
+    // The prompts and the recorded answers, for their owner only, as the recorder writes a recording.
+    const own = { encoding: "utf8", mode: 0o600 } as const;
+    await writeFile(join(outDir, PROPOSED_FILE), renderProposedYaml(source, accepted), own);
+    for (const v of accepted) await writeFile(join(outDir, stubPath(v)), renderStubFile(v, source, basename(recordingFile)), own);
     await writeFile(join(outDir, SUMMARY_FILE), `${JSON.stringify({ eval: source.id, accepted: accepted.length, rejected, repeatsLeftOut }, null, 2)}\n`, "utf8");
     await writeFile(join(outDir, VARIANTS_DIR, "report.json"), `${JSON.stringify(buildVariantReport(`${runId}-variants`, basename(planFile), source, accepted), null, 2)}\n`, "utf8");
 
@@ -348,8 +394,7 @@ export async function runProposeFailures(opts: ProposeFailuresOptions, io: { out
     io.out(`  Stub files (they hold the recorded prompts and answers): ${shown(join(outDir, STUBS_DIR))}\n`);
     io.out(`  Review queue: plune ingest ${shown(join(outDir, VARIANTS_DIR))}\n`);
     io.out("  No model was called. Nothing was run and plune.yaml was not changed.\n");
-    // Every kind refused is a run with nothing to review.
-    return { exitCode: accepted.length > 0 ? 0 : 1, outDir };
+    return { exitCode: 0, outDir };
   } catch (e) {
     io.err(`✗ propose-failures: ${(e as Error).message}\n`);
     return { exitCode: 1, outDir };

@@ -252,10 +252,12 @@ describe("CLI · propose-failures · command", () => {
     const noEval = await runIt({ "plune.yaml": PLAN, "recorded.stubs.yaml": recording([answer()]) }, { eval: "ghost" });
     expect(noEval.r.exitCode).toBe(1);
     expect(noEval.err).toMatch(/no eval "ghost"/);
+    expect(existsSync(noEval.o)).toBe(false);
 
     const noPlan = await runIt({ "recorded.stubs.yaml": recording([answer()]) });
     expect(noPlan.r.exitCode).toBe(1);
     expect(noPlan.err).toMatch(/plune\.yaml.*not found/s);
+    expect(existsSync(noPlan.o)).toBe(false);
   });
 
   it("a line break character inside a recorded text survives the stub file unchanged", async () => {
